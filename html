@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>SIOS · TAE Runtime</title>
+
+<style>
+html,body{
+  margin:0;
+  padding:0;
+  background:#000;
+  overflow:hidden;
+  height:100%;
+  font-family:monospace;
+}
+
+/* ORB CANVAS */
+canvas{
+  position:fixed;
+  top:0;
+  left:0;
+  width:100%;
+  height:100%;
+}
+
+/* CENTER UI */
+#center{
+  position:absolute;
+  top:50%;
+  left:50%;
+  transform:translate(-50%,-50%);
+  text-align:center;
+}
+
+#gid{
+  font-size:48px;
+  letter-spacing:.4em;
+  background:linear-gradient(#fff,#666);
+  -webkit-background-clip:text;
+  color:transparent;
+}
+
+#sub{
+  font-size:10px;
+  letter-spacing:.3em;
+  margin-top:12px;
+  color:#777;
+}
+
+/* COMMAND BAR */
+#cmd{
+  position:fixed;
+  bottom:20px;
+  left:50%;
+  transform:translateX(-50%);
+  width:90%;
+  max-width:520px;
+  display:flex;
+  border:1px solid #111;
+  background:#050505;
+}
+
+#cmd input{
+  flex:1;
+  background:none;
+  border:none;
+  color:#aaa;
+  padding:14px;
+  outline:none;
+}
+
+#cmd button{
+  background:none;
+  border:none;
+  color:#0f0;
+  padding:14px;
+  cursor:pointer;
+}
+</style>
+</head>
+
+<body>
+
+<canvas id="orb"></canvas>
+
+<div id="center">
+  <div id="gid">399152573423</div>
+  <div id="sub">THIS IS NOT AN APP. THIS IS ME.</div>
+</div>
+
+<div id="cmd">
+  <input id="input" placeholder="TAE, enter Demo Mode"/>
+  <button onclick="send()">SEND</button>
+</div>
+
+<script>
+const canvas = document.getElementById("orb");
+const ctx = canvas.getContext("2d");
+
+let w,h;
+function resize(){
+  w = canvas.width = window.innerWidth;
+  h = canvas.height = window.innerHeight;
+}
+window.onresize = resize;
+resize();
+
+let t = 0;
+let amp = 20;
+let targetAmp = 20;
+
+function draw(){
+  ctx.fillStyle="#000";
+  ctx.fillRect(0,0,w,h);
+
+  const cx = w/2;
+  const cy = h/2;
+
+  let radius = 120 + Math.sin(t)*10;
+
+  let grad = ctx.createRadialGradient(cx,cy,20,cx,cy,radius);
+  grad.addColorStop(0,"#ffffff22");
+  grad.addColorStop(1,"#000000");
+
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(cx,cy,radius,0,Math.PI*2);
+  ctx.fill();
+
+  for(let i=0;i<20;i++){
+    let y = cy + Math.sin(t + i)*amp;
+    ctx.strokeStyle="rgba(255,255,255,0.05)";
+    ctx.beginPath();
+    ctx.arc(cx,y,radius,0,Math.PI*2);
+    ctx.stroke();
+  }
+
+  amp += (targetAmp - amp)*0.05;
+  t += 0.02;
+
+  requestAnimationFrame(draw);
+}
+draw();
+
+/* TAE COMMAND */
+function send(){
+  const val = document.getElementById("input").value.toLowerCase();
+
+  if(val.includes("demo")){
+    targetAmp = 80;
+    speak("Demo Mode active. Welcome back Jorge.");
+  }
+
+  if(val.includes("not an app")){
+    speak("Identity confirmed. System anchored.");
+  }
+}
+
+/* VOICE */
+function speak(text){
+  const u = new SpeechSynthesisUtterance(text);
+  u.rate = 0.9;
+  speechSynthesis.speak(u);
+}
+</script>
+
+</body>
+</html>
