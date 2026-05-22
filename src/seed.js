@@ -97,7 +97,7 @@ async function seed() {
     const existing = await prisma.user.findUnique({ where: { email: emailLower } });
 
     if (existing) {
-      // Update: grant whitelist + upgrade plan
+      // Idempotent: ensure whitelist + plan are correct
       const updated = await prisma.user.update({
         where: { email: emailLower },
         data: {
@@ -108,9 +108,7 @@ async function seed() {
           display_name: u.display_name || existing.display_name,
         },
       });
-      console.log(`  ✓ UPDATED  ${updated.email}`);
-      console.log(`             GID: ${updated.gid} | Role: ${updated.role} | Plan: ${updated.plan}`);
-      console.log();
+      console.log(`  ✓ OK (exists)  ${updated.email}  GID: ${updated.gid}`);
     } else {
       // Create new whitelisted user
       const tempPassword = crypto.randomBytes(16).toString('hex');

@@ -3,7 +3,7 @@ services:
     name: sioslive
     runtime: node
     plan: free
-    buildCommand: npm install
+    buildCommand: npm install && npx prisma db push && node src/seed.js
     startCommand: npm start
     envVars:
       - key: NODE_ENV
@@ -13,6 +13,8 @@ services:
           name: sios-db
           property: connectionString
       - key: JWT_SECRET
+        generateValue: true
+      - key: ADMIN_KEY
         generateValue: true
       - key: STRIPE_SECRET_KEY
         sync: false
