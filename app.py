@@ -1,3 +1,3 @@
 from routes import create_app
 
-asgi = create_app("./dist")
+asgi = create_app("./dist-live")

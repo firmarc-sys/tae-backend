@@ -1,0 +1,13 @@
+{
+  "backend": {
+    "root": ".",
+    "entry": "app:asgi",
+    "runner": "uvicorn"
+  },
+  "frontend": {
+    "root": ".",
+    "dist": "dist",
+    "install": "bun install",
+    "build": "bunx --bun vite build"
+  }
+}

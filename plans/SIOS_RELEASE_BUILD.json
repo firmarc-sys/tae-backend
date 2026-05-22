@@ -1,0 +1,27 @@
+[
+  {
+    "content": "[PHASE 2] Supabase auth: fix redirect to sios.website, session persistence, auto-restore on refresh",
+    "id": "phase-2",
+    "status": "completed"
+  },
+  {
+    "content": "[PHASE 3] Subscription tiers: FREE/BETA/ALPHA with Stripe payment links, store in metadata + localStorage",
+    "id": "phase-3",
+    "status": "completed"
+  },
+  {
+    "content": "[PHASE 5] MP4 environment engine: wire VideoSampler to orb reflections, background glow, chrome bands",
+    "id": "phase-5",
+    "status": "completed"
+  },
+  {
+    "content": "[PHASE 6] Voice activation: SpeechRecognition API, TAE command routing, visual listening feedback",
+    "id": "phase-6",
+    "status": "completed"
+  },
+  {
+    "content": "[POLISH] Test complete auth → subscription → voice → demo mode flow end-to-end",
+    "id": "polish",
+    "status": "completed"
+  }
+]

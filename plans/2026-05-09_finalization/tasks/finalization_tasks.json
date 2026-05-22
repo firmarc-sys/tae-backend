@@ -1,0 +1,27 @@
+[
+  {
+    "id": "audit-identity",
+    "status": "completed",
+    "content": "Audit `src/lib/identity.ts` vs Master Architect specs [P1]"
+  },
+  {
+    "id": "verify-homeview",
+    "status": "completed",
+    "content": "Verify `src/components/HomeView.tsx` identity-aware rendering [P2]"
+  },
+  {
+    "content": "Hardening `routes.py` and API state machine [P3]",
+    "status": "in_progress",
+    "id": "harden-routes"
+  },
+  {
+    "content": "Final cinematic tune-up (boot/audio) [P4]",
+    "id": "cinematic-polish",
+    "status": "pending"
+  },
+  {
+    "status": "pending",
+    "id": "verify-production",
+    "content": "Production verification [P5]"
+  }
+]

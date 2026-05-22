@@ -1,0 +1,32 @@
+[
+  {
+    "content": "Map uploaded assets into public/assets and inspect current routing/runtime files",
+    "id": "[build-1]",
+    "status": "completed"
+  },
+  {
+    "content": "Implement subscriber access model with owner override, trial window, manual approval, and localStorage fallback",
+    "id": "[build-2]",
+    "status": "completed"
+  },
+  {
+    "content": "Build routed shell for 10 pages with persistent orb, locked states, and cinematic transitions",
+    "id": "[build-3]",
+    "status": "completed"
+  },
+  {
+    "content": "Wire every visible action to page navigation, modal/detail overlays, toggles, or command feedback",
+    "id": "[build-4]",
+    "status": "completed"
+  },
+  {
+    "content": "Integrate opening cinematic trigger phrase and owner verification flow using uploaded MP4/assets",
+    "id": "[build-5]",
+    "status": "completed"
+  },
+  {
+    "content": "Run build/test flow and verify owner access, locked subscriber states, and no dead buttons",
+    "id": "[build-6]",
+    "status": "completed"
+  }
+]

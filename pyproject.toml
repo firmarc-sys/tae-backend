@@ -10,6 +10,12 @@ dependencies = [
     "httpx==0.28.1",
     "python-multipart==0.0.22",
     "watchfiles==1.1.1",
+    "psycopg2-binary>=2.9.12",
+    "sqlalchemy>=2.0.49",
+    "openai>=2.32.0",
+    "websockets>=16.0",
+    "mcp>=1.27.0",
+    "docx2txt>=0.9",
 ]
 
 [tool.uv]

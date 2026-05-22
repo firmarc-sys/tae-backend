@@ -8,6 +8,12 @@ export default defineConfig({
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
+    dedupe: ["react", "react-dom", "react/jsx-runtime"],
+  },
+  build: {
+    outDir: "dist-live",
+    assetsDir: "_assets",
+    emptyOutDir: false,
   },
   server: {
     strictPort: true,

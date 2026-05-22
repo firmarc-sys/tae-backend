@@ -1,0 +1,47 @@
+[
+  {
+    "content": "[CORE] Build TAE state machine orchestrator (src/runtime/TAE.ts) with 8 states + state transitions",
+    "id": "1-tae-orchestrator",
+    "status": "completed"
+  },
+  {
+    "content": "[AUDIO] Create reactive ambient audio engine (src/runtime/AudioReactor.ts) with state-driven synthesis",
+    "id": "2-audio-system",
+    "status": "completed"
+  },
+  {
+    "content": "[VIDEO] Implement MP4 environmental render sampler (src/runtime/VideoSampler.ts) + color extraction",
+    "id": "3-video-sampling",
+    "status": "completed"
+  },
+  {
+    "content": "[RENDER] Build liquid orb UI emission system (src/components/OrbRuntime.tsx) with organic growth",
+    "id": "4-orb-emission",
+    "status": "completed"
+  },
+  {
+    "content": "[IDENTITY] Create identity-responsive rendering engine (src/runtime/IdentityRender.ts)",
+    "id": "5-identity-render",
+    "status": "completed"
+  },
+  {
+    "content": "[API] Build 5 TAE API endpoints (routes.py) + runtime state management",
+    "id": "6-api-endpoints",
+    "status": "completed"
+  },
+  {
+    "content": "[PWA] Configure manifest.json + service worker for immersive fullscreen",
+    "id": "7-pwa-setup",
+    "status": "completed"
+  },
+  {
+    "content": "[INTEGRATION] Wire TAE into App.tsx + HomeView for complete activation",
+    "id": "8-integration",
+    "status": "completed"
+  },
+  {
+    "content": "[VERIFY] Build + test demo mode activation + all state transitions + audio reactivity",
+    "id": "9-verify",
+    "status": "in_progress"
+  }
+]

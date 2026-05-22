@@ -1,0 +1,22 @@
+[
+  {
+    "content": "[runtime] Finalize cinematic boot + MP4 trigger + orb state flow",
+    "id": "9",
+    "status": "pending"
+  },
+  {
+    "content": "[ui] Ensure all approved pages are hardcoded and functional",
+    "id": "10",
+    "status": "pending"
+  },
+  {
+    "content": "[access] Implement owner/subscriber/trial locking overlays",
+    "id": "11",
+    "status": "pending"
+  },
+  {
+    "content": "[qa] Run production build and verify mobile responsiveness",
+    "id": "12",
+    "status": "pending"
+  }
+]
