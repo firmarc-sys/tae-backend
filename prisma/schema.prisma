@@ -1,0 +1,50 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  password_hash String
+  display_name  String?
+  gid           String   @unique @default(uuid())
+  role          String   @default("user")
+  plan          String   @default("demo")
+  whitelisted   Boolean  @default(false)
+  stripe_customer_id  String?  @unique
+  stripe_subscription_id String?
+  tokens_used   Int      @default(0)
+  tokens_limit  Int      @default(5000)
+  renewal_date  DateTime?
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+
+  alerts        Alert[]
+  refresh_tokens RefreshToken[]
+}
+
+model Alert {
+  id         String   @id @default(uuid())
+  user_id    String
+  type       String
+  message    String
+  status     String   @default("active")
+  created_at DateTime @default(now())
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+}
+
+model RefreshToken {
+  id         String   @id @default(uuid())
+  user_id    String
+  token      String   @unique
+  expires_at DateTime
+  created_at DateTime @default(now())
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+}
