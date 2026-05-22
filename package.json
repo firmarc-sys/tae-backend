@@ -1,6 +1,6 @@
 {
   "name": "tae-backend",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "TAE Backend — SIOS Spatial Operating System",
   "main": "src/server.js",
   "scripts": {

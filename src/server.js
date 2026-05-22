@@ -8,6 +8,7 @@ const authRouter = require('./routes/auth');
 const userRouter = require('./routes/user');
 const billingRouter = require('./routes/billing');
 const taeRouter = require('./routes/tae');
+const adminRouter = require('./routes/admin');
 
 const app = express();
 const PORT = process.env.PORT || 3100;
@@ -25,7 +26,7 @@ app.use(express.json({ limit: '1mb' }));
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: '0.6.0',
+    version: '0.7.0',
     service: 'TAE Backend',
     timestamp: new Date().toISOString(),
   });
@@ -36,6 +37,7 @@ app.use('/auth', authRouter);
 app.use('/user', userRouter);
 app.use('/billing', billingRouter);
 app.use('/api/tae', taeRouter);
+app.use('/admin', adminRouter);
 
 // ─── Stripe Webhook (raw body) ────────────────────────────
 const stripeWebhook = require('./routes/stripe-webhook');
@@ -53,5 +55,5 @@ app.use((err, req, res, _next) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`TAE Backend v0.6.0 listening on :${PORT}`);
+  console.log(`TAE Backend v0.7.0 listening on :${PORT}`);
 });

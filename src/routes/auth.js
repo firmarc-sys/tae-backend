@@ -14,7 +14,44 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ error: 'Email and password required' });
     }
 
-    const existing = await prisma.user.findUnique({ where: { email: email.toLowerCase() } });
+    const emailLower = email.toLowerCase();
+    const existing = await prisma.user.findUnique({ where: { email: emailLower } });
+
+    // If user exists and is whitelisted but hasn't set a real password yet,
+    // allow them to "register" (activate their account)
+    if (existing && existing.whitelisted) {
+      const password_hash = await bcrypt.hash(password, 12);
+      const updated = await prisma.user.update({
+        where: { email: emailLower },
+        data: {
+          password_hash,
+          display_name: display_name || existing.display_name,
+        },
+      });
+
+      const tokens = generateTokens(updated.id);
+      await prisma.refreshToken.create({
+        data: {
+          user_id: updated.id,
+          token: tokens.refresh_token,
+          expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        },
+      });
+
+      return res.json({
+        access_token: tokens.access_token,
+        refresh_token: tokens.refresh_token,
+        user: {
+          id: updated.id,
+          email: updated.email,
+          display_name: updated.display_name,
+          gid: updated.gid,
+          role: updated.role,
+          plan: updated.plan,
+        },
+      });
+    }
+
     if (existing) {
       return res.status(409).json({ error: 'Email already registered' });
     }
@@ -24,7 +61,7 @@ router.post('/register', async (req, res) => {
 
     const user = await prisma.user.create({
       data: {
-        email: email.toLowerCase(),
+        email: emailLower,
         password_hash,
         display_name: display_name || email.split('@')[0],
         gid,
@@ -52,6 +89,7 @@ router.post('/register', async (req, res) => {
         email: user.email,
         display_name: user.display_name,
         gid: user.gid,
+        role: user.role || 'user',
         plan: user.plan,
       },
     });
@@ -97,6 +135,7 @@ router.post('/login', async (req, res) => {
         email: user.email,
         display_name: user.display_name,
         gid: user.gid,
+        role: user.role || 'user',
         plan: user.plan,
       },
     });
@@ -157,6 +196,7 @@ router.get('/me', requireAuth, async (req, res) => {
       email: user.email,
       display_name: user.display_name,
       gid: user.gid,
+      role: user.role || 'user',
       plan: user.plan,
     });
   } catch (err) {

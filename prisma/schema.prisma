@@ -13,7 +13,9 @@ model User {
   password_hash String
   display_name  String?
   gid           String   @unique @default(uuid())
+  role          String   @default("user")
   plan          String   @default("demo")
+  whitelisted   Boolean  @default(false)
   stripe_customer_id  String?  @unique
   stripe_subscription_id String?
   tokens_used   Int      @default(0)
