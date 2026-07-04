@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@100;200;300;400;500;600;700&family=Marcellus&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  html,body{margin:0;background:#000;}
+  *{box-sizing:border-box}
+  input,textarea{font-family:inherit}
+  @keyframes tOrb{0%,100%{transform:scale(1);opacity:.92}50%{transform:scale(1.05);opacity:1}}
+  @keyframes tSpin{to{transform:rotate(360deg)}}
+  @keyframes tSpinR{to{transform:rotate(-360deg)}}
+  @keyframes tTwinkle{0%,100%{opacity:.3}50%{opacity:.9}}
+  @keyframes tRise{0%{opacity:0;transform:translateY(12px)}100%{opacity:1;transform:translateY(0)}}
+  @keyframes tPulseRing{0%{transform:translate(-50%,-50%) scale(.7);opacity:.65}80%,100%{transform:translate(-50%,-50%) scale(1.4);opacity:0}}
+  @keyframes tSheet{0%{transform:translateY(100%)}100%{transform:translateY(0)}}
+  @keyframes tDash{to{stroke-dashoffset:-40}}
+</style>
+</helmet>
+
+<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;background:#000;font-family:'Archivo',sans-serif;overflow:hidden">
+  <div data-device="1" style="position:relative;width:404px;height:876px;border-radius:60px;padding:12px;background:linear-gradient(155deg,#3a3d45,#0c0d10 34%,#15171d 62%,#2b2e36);box-shadow:0 70px 150px -34px rgba(0,0,0,.95),0 0 0 1px rgba(255,255,255,.09),inset 0 1px 0 rgba(255,255,255,.28),inset 0 -2px 6px rgba(0,0,0,.7);transform-origin:center center">
+    <div style="position:relative;width:100%;height:100%;border-radius:48px;overflow:hidden;background:#000;--acc:#45c6ff;--accGlow:rgba(69,198,255,.45)">
+
+      <div style="position:absolute;inset:0;background:radial-gradient(120% 60% at 50% 32%,#06182a 0%,#05080e 46%,#000 80%)"></div>
+      <div style="position:absolute;inset:0;background-image:linear-gradient(rgba(90,190,235,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(90,190,235,.05) 1px,transparent 1px);background-size:30px 30px;opacity:.45;mask-image:radial-gradient(120% 80% at 50% 36%,#000 30%,transparent 84%)"></div>
+      <div style="position:absolute;inset:0;background:radial-gradient(1.4px 1.4px at 14% 16%,#fff,transparent),radial-gradient(1px 1px at 28% 42%,rgba(255,255,255,.85),transparent),radial-gradient(1.5px 1.5px at 72% 14%,#fff,transparent),radial-gradient(1px 1px at 84% 32%,rgba(255,255,255,.8),transparent),radial-gradient(1.2px 1.2px at 44% 9%,rgba(255,255,255,.7),transparent),radial-gradient(1px 1px at 90% 60%,rgba(255,255,255,.7),transparent),radial-gradient(1.3px 1.3px at 16% 66%,rgba(255,255,255,.8),transparent),radial-gradient(1px 1px at 56% 78%,rgba(255,255,255,.6),transparent);background-repeat:no-repeat;animation:tTwinkle 5s ease-in-out infinite;animation-play-state:var(--motion,running)"></div>
+
+      <!-- status bar -->
+      <div style="position:absolute;left:0;right:0;top:0;height:50px;display:flex;align-items:center;justify-content:space-between;padding:0 26px;z-index:40;pointer-events:none">
+        <span style="font-family:'Space Mono',monospace;font-size:14px;font-weight:700;color:#fff">9:41</span>
+        <span style="display:flex;align-items:center;gap:7px"><span style="display:flex;align-items:flex-end;gap:2px;height:12px"><i style="width:3px;height:5px;background:#fff;border-radius:1px"></i><i style="width:3px;height:8px;background:#fff;border-radius:1px"></i><i style="width:3px;height:11px;background:#fff;border-radius:1px"></i></span><span style="width:16px;height:12px;border-radius:2px;border:1.5px solid rgba(255,255,255,.7);position:relative"><i style="position:absolute;inset:1.5px;right:4px;background:#fff;border-radius:1px"></i></span></span>
+      </div>
+
+      <!-- header -->
+      <div style="position:absolute;left:0;right:0;top:50px;z-index:20;display:flex;align-items:center;padding:6px 20px 0">
+        <a href="CSIOS Gateway.dc.html" style="text-decoration:none;width:34px;height:34px;border-radius:50%;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.14);color:#eef0f4;font-size:16px;display:flex;align-items:center;justify-content:center">‹</a>
+        <div style="flex:1;text-align:center;margin-right:34px">
+          <div style="font-family:'Space Mono',monospace;font-size:19px;font-weight:700;letter-spacing:.16em;color:var(--acc)">TAE</div>
+          <div style="font-family:'Space Mono',monospace;font-size:7.5px;letter-spacing:.24em;color:rgba(200,224,240,.5);margin-top:3px">CSIOS · {{ stepLabel }}</div>
+        </div>
+      </div>
+
+      <!-- flow progress -->
+      <div style="position:absolute;left:20px;right:20px;top:100px;z-index:20;display:flex;gap:5px">
+        <sc-for list="{{ flowSteps }}" as="fs" hint-placeholder-count="6">
+          <span style="flex:1;height:3px;border-radius:2px;background:{{ fs.bg }};box-shadow:{{ fs.glow }};transition:all .3s"></span>
+        </sc-for>
+      </div>
+
+      <!-- BODY -->
+      <div style="position:absolute;left:0;right:0;top:118px;bottom:100px;z-index:10;overflow-y:auto;overflow-x:hidden;padding:14px 20px 20px">
+
+        <!-- SPLASH -->
+        <sc-if value="{{ isSplash }}" hint-placeholder-val="{{ true }}">
+          <div style="min-height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;animation:tRise .5s ease both">
+            <div style="position:relative;width:196px;height:196px;display:flex;align-items:center;justify-content:center;animation:tOrb 5s ease-in-out infinite;animation-play-state:var(--motion,running)">
+              <div style="position:absolute;inset:-20%;border-radius:50%;background:radial-gradient(circle,var(--accGlow),transparent 62%);filter:blur(16px)"></div>
+              <div style="position:absolute;width:192px;height:192px;border-radius:50%;border:1px solid var(--acc);opacity:.4;animation:tSpin 26s linear infinite;animation-play-state:var(--motion,running)"></div>
+              <div style="position:absolute;width:184px;height:184px;border-radius:50%;border:1px dashed var(--acc);opacity:.35;animation:tSpinR 20s linear infinite;animation-play-state:var(--motion,running)"></div>
+              <div style="position:absolute;left:50%;top:50%;width:150px;height:150px;border-radius:50%;border:1px solid var(--acc);opacity:.5;animation:tPulseRing 3s ease-out infinite;animation-play-state:var(--motion,running)"></div>
+              <div style="position:relative;width:118px;height:118px;border-radius:50%;background:radial-gradient(circle at 38% 28%,#0a2033,#060a12 62%,#01020400);box-shadow:inset 0 8px 26px rgba(0,0,0,.8),inset 0 -6px 20px var(--accGlow),0 0 30px -4px var(--accGlow);display:flex;align-items:center;justify-content:center;color:var(--acc)" dangerouslySetInnerHTML="{{ icHero }}"></div>
+            </div>
+            <div style="font-family:'Marcellus',serif;font-size:33px;letter-spacing:.05em;margin-top:24px;background:linear-gradient(180deg,#fff,#9aa6b5);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent">Intent Routing Engine</div>
+            <div style="font-family:'Space Mono',monospace;font-size:8.5px;letter-spacing:.2em;color:var(--acc);margin-top:10px">DESCRIBE ANY GOAL. TAE ORCHESTRATES THE PATH.</div>
+            <div style="font-size:14px;line-height:1.55;color:rgba(210,224,240,.62);margin-top:16px;max-width:290px">TAE translates natural language into an executable plan — routing intent across every CSIOS ecosystem, agent and runtime.</div>
+          </div>
+        </sc-if>
+
+        <!-- INTAKE -->
+        <sc-if value="{{ isIntake }}" hint-placeholder-val="{{ false }}">
+          <div style="animation:tRise .4s ease both">
+            <div style="font-family:'Space Mono',monospace;font-size:8px;letter-spacing:.24em;color:var(--acc)">01 · ONBOARDING INTAKE</div>
+            <div style="font-family:'Marcellus',serif;font-size:26px;color:#f4f6fa;margin-top:8px">Calibrate your orchestration</div>
+            <div style="font-size:13px;color:rgba(210,224,240,.6);margin-top:8px;line-height:1.5">Tell TAE the domains you operate in and how far ahead to plan. It shapes the routing model around you.</div>
+
+            <div style="margin-top:20px;font-family:'Space Mono',monospace;font-size:7.5px;letter-spacing:.2em;color:rgba(200,224,240,.5)">FOCUS DOMAINS</div>
+            <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:9px">
+              <sc-for list="{{ domains }}" as="d" hint-placeholder-count="6">
+                <button onClick="{{ d.pick }}" style="padding:10px 15px;border-radius:12px;cursor:pointer;font-family:'Space Mono',monospace;font-size:10px;letter-spacing:.04em;background:{{ d.bg }};border:1px solid {{ d.border }};color:{{ d.color }};transition:all .2s">{{ d.label }}</button>
+              </sc-for>
+            </div>
+
+            <div style="margin-top:20px;font-family:'Space Mono',monospace;font-size:7.5px;letter-spacing:.2em;color:rgba(200,224,240,.5)">PLANNING HORIZON</div>
+            <div style="margin-top:10px;display:flex;gap:9px">
+              <sc-for list="{{ horizons }}" as="h" hint-placeholder-count="3">
+                <button onClick="{{ h.pick }}" style="flex:1;padding:12px 6px;border-radius:12px;cursor:pointer;font-family:'Space Mono',monospace;font-size:11px;letter-spacing:.04em;background:{{ h.bg }};border:1px solid {{ h.border }};color:{{ h.color }};transition:all .2s">{{ h.label }}</button>
+              </sc-for>
+            </div>
+
+            <div style="margin-top:20px;font-family:'Space Mono',monospace;font-size:7.5px;letter-spacing:.2em;color:rgba(200,224,240,.5)">AUTONOMY</div>
+            <div style="margin-top:10px;display:flex;gap:9px">
+              <sc-for list="{{ autonomy }}" as="a" hint-placeholder-count="3">
+                <button onClick="{{ a.pick }}" style="flex:1;padding:12px 6px;border-radius:12px;cursor:pointer;font-family:'Space Mono',monospace;font-size:10px;letter-spacing:.04em;background:{{ a.bg }};border:1px solid {{ a.border }};color:{{ a.color }};transition:all .2s">{{ a.label }}</button>
+              </sc-for>
+            </div>
+          </div>
+        </sc-if>
+
+        <!-- DESCRIBE -->
+        <sc-if value="{{ isDescribe }}" hint-placeholder-val="{{ false }}">
+          <div style="animation:tRise .4s ease both">
+            <div style="font-family:'Space Mono',monospace;font-size:8px;letter-spacing:.24em;color:var(--acc)">02 · FIRST ACTION</div>
+            <div style="font-family:'Marcellus',serif;font-size:26px;color:#f4f6fa;margin-top:8px">What do you want to achieve?</div>
+            <div style="font-size:13px;color:rgba(210,224,240,.6);margin-top:8px;line-height:1.5">Describe your intent in plain language. TAE will route it into a plan across the runtime.</div>
+
+            <div style="margin-top:18px;padding:14px 16px;border-radius:16px;background:rgba(10,14,20,.72);border:1px solid rgba(69,198,255,.3);box-shadow:inset 0 1px 0 rgba(255,255,255,.12)">
+              <textarea value="{{ intent }}" onInput="{{ onIntent }}" placeholder="I want to launch a subscription business in 90 days…" style="width:100%;height:96px;resize:none;background:transparent;border:none;outline:none;color:#eef2f8;font-size:15px;line-height:1.5"></textarea>
+            </div>
+            <div style="margin-top:12px;font-family:'Space Mono',monospace;font-size:7.5px;letter-spacing:.2em;color:rgba(200,224,240,.5)">TRY AN INTENT</div>
+            <div style="margin-top:9px;display:flex;flex-direction:column;gap:8px">
+              <sc-for list="{{ examples }}" as="e" hint-placeholder-count="3">
+                <button onClick="{{ e.use }}" style="text-align:left;padding:11px 14px;border-radius:12px;cursor:pointer;background:rgba(12,14,18,.55);border:1px dashed rgba(69,198,255,.3);color:rgba(210,224,240,.8);font-size:12px" style-hover="border-color:var(--acc);color:var(--acc)">“{{ e.t }}”</button>
+              </sc-for>
+            </div>
+          </div>
+        </sc-if>
+
+        <!-- ROUTING (live generation) -->
+        <sc-if value="{{ isRouting }}" hint-placeholder-val="{{ false }}">
+          <div style="animation:tRise .4s ease both">
+            <div style="font-family:'Space Mono',monospace;font-size:8px;letter-spacing:.24em;color:var(--acc)">03 · LIVE ROUTING</div>
+            <div style="font-family:'Marcellus',serif;font-size:24px;color:#f4f6fa;margin-top:8px">Routing your intent…</div>
+
+            <!-- node graph -->
+            <div style="position:relative;height:210px;margin-top:14px">
+              <svg viewBox="0 0 300 200" style="position:absolute;inset:0;width:100%;height:100%">
+                <sc-for list="{{ edges }}" as="e" hint-placeholder-count="6">
+                  <line x1="{{ e.x1 }}" y1="{{ e.y1 }}" x2="{{ e.x2 }}" y2="{{ e.y2 }}" stroke="{{ e.stroke }}" stroke-width="1.4" stroke-dasharray="4 4" style="{{ e.style }}"></line>
+                </sc-for>
+              </svg>
+              <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:58px;height:58px;border-radius:50%;background:radial-gradient(circle at 38% 30%,#eaf6ff,var(--acc) 60%,#062033);box-shadow:0 0 22px -2px var(--accGlow),inset 0 -4px 10px rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;color:#052030;font-family:'Space Mono',monospace;font-size:9px;font-weight:700">TAE</div>
+              <sc-for list="{{ nodes }}" as="n" hint-placeholder-count="6">
+                <div style="position:absolute;left:{{ n.left }};top:{{ n.top }};transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:4px;transition:all .3s;opacity:{{ n.op }}">
+                  <span style="width:34px;height:34px;border-radius:10px;background:{{ n.bg }};border:1px solid {{ n.border }};display:flex;align-items:center;justify-content:center;color:{{ n.color }};box-shadow:{{ n.glow }}" dangerouslySetInnerHTML="{{ n.icon }}"></span>
+                  <span style="font-family:'Space Mono',monospace;font-size:6px;letter-spacing:.06em;color:{{ n.label2 }}">{{ n.label }}</span>
+                </div>
+              </sc-for>
+            </div>
+
+            <!-- stage rail -->
+            <div style="margin-top:8px;display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+              <span style="font-family:'Space Mono',monospace;font-size:8px;letter-spacing:.18em;color:rgba(200,224,240,.5)">ORCHESTRATION</span>
+              <span style="font-family:'Space Mono',monospace;font-size:8px;letter-spacing:.14em;color:var(--acc)">{{ stageName }}</span>
+            </div>
+            <div style="display:flex;gap:5px">
+              <sc-for list="{{ stages }}" as="s" hint-placeholder-count="8">
+                <span style="flex:1;height:4px;border-radius:2px;background:{{ s.bg }};box-shadow:{{ s.glow }};transition:all .3s"></span>
+              </sc-for>
+            </div>
+            <div style="margin-top:14px;display:flex;flex-direction:column;gap:7px">
+              <sc-for list="{{ routingLog }}" as="l" hint-placeholder-count="3">
+                <div style="display:flex;align-items:center;gap:10px;opacity:{{ l.op }};transition:opacity .3s"><span style="color:{{ l.dot }};font-size:9px">{{ l.mark }}</span><span style="font-family:'Space Mono',monospace;font-size:9px;letter-spacing:.06em;color:rgba(214,226,242,.8)">{{ l.t }}</span></div>
+              </sc-for>
+            </div>
+          </div>
+        </sc-if>
+
+        <!-- PLAN (output) -->
+        <sc-if value="{{ isPlan }}" hint-placeholder-val="{{ false }}">
+          <div style="animation:tRise .45s ease both">
+            <div style="display:flex;flex-direction:column;align-items:center;text-align:center">
+              <div style="position:relative;width:88px;height:88px;display:flex;align-items:center;justify-content:center">
+                <div style="position:absolute;inset:0;border-radius:50%;background:radial-gradient(circle,var(--accGlow),transparent 62%);filter:blur(10px)"></div>
+                <div style="width:60px;height:60px;border-radius:50%;background:radial-gradient(circle at 40% 32%,#fff,#cfe8ff 20%,var(--acc) 120%);display:flex;align-items:center;justify-content:center;box-shadow:inset 0 -4px 10px rgba(0,0,0,.4),inset 0 3px 6px rgba(255,255,255,.7)"><span style="color:#05202f;font-size:28px;font-weight:800">✓</span></div>
+              </div>
+              <div style="font-family:'Space Mono',monospace;font-size:8.5px;letter-spacing:.22em;color:var(--acc);margin-top:14px">✓ FIRST AI ORCHESTRATION COMPLETE</div>
+              <div style="font-family:'Marcellus',serif;font-size:22px;color:#f4f6fa;margin-top:6px">Your plan is ready.</div>
+            </div>
+
+            <div style="margin-top:18px;padding:15px 16px;border-radius:16px;background:rgba(10,14,20,.75);border:1px solid rgba(69,198,255,.28);box-shadow:inset 0 1px 0 rgba(255,255,255,.14)">
+              <div style="font-family:'Space Mono',monospace;font-size:8px;letter-spacing:.18em;color:rgba(200,224,240,.5)">EXECUTION PLAN · {{ planHorizon }}</div>
+              <div style="margin-top:12px;display:flex;flex-direction:column;gap:0">
+                <sc-for list="{{ milestones }}" as="m" hint-placeholder-count="4">
+                  <div style="display:flex;gap:12px;padding:11px 0;border-top:1px solid rgba(255,255,255,.06)">
+                    <span style="flex:none;width:22px;height:22px;border-radius:50%;border:1px solid var(--acc);color:var(--acc);display:flex;align-items:center;justify-content:center;font-family:'Space Mono',monospace;font-size:9px;font-weight:700">{{ m.n }}</span>
+                    <div style="flex:1"><div style="font-size:13px;color:#eaf2fb">{{ m.t }}</div><div style="font-family:'Space Mono',monospace;font-size:8px;letter-spacing:.1em;color:rgba(200,224,240,.5);margin-top:3px">{{ m.eco }} · {{ m.when }}</div></div>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+            <div style="margin-top:12px;display:flex;gap:10px">
+              <div style="flex:1;padding:12px;border-radius:13px;background:rgba(12,14,18,.6);border:1px solid rgba(255,255,255,.08)"><div style="font-family:'Space Mono',monospace;font-size:7px;letter-spacing:.14em;color:rgba(200,224,240,.5)">MILESTONES</div><div style="font-family:'Marcellus',serif;font-size:20px;color:#eaf2fb;margin-top:3px">{{ milestoneCount }}</div></div>
+              <div style="flex:1;padding:12px;border-radius:13px;background:rgba(12,14,18,.6);border:1px solid rgba(255,255,255,.08)"><div style="font-family:'Space Mono',monospace;font-size:7px;letter-spacing:.14em;color:rgba(200,224,240,.5)">ECOSYSTEMS</div><div style="font-family:'Marcellus',serif;font-size:20px;color:#eaf2fb;margin-top:3px">3</div></div>
+              <div style="flex:1;padding:12px;border-radius:13px;background:rgba(12,14,18,.6);border:1px solid rgba(255,255,255,.08)"><div style="font-family:'Space Mono',monospace;font-size:7px;letter-spacing:.14em;color:rgba(200,224,240,.5)">AGENTS</div><div style="font-family:'Marcellus',serif;font-size:20px;color:#eaf2fb;margin-top:3px">5</div></div>
+            </div>
+          </div>
+        </sc-if>
+
+        <!-- DASHBOARD -->
+        <sc-if value="{{ isDashboard }}" hint-placeholder-val="{{ false }}">
+          <div style="animation:tRise .4s ease both">
+            <div style="display:flex;align-items:center;gap:12px;padding:13px 15px;border-radius:16px;background:linear-gradient(160deg,rgba(18,40,60,.7),rgba(8,10,14,.85));border:1px solid rgba(69,198,255,.3);box-shadow:inset 0 1px 0 rgba(255,255,255,.14)">
+              <span style="width:42px;height:42px;border-radius:11px;background:radial-gradient(circle at 38% 30%,#eaf6ff,var(--acc) 60%,#062033);box-shadow:inset 0 -3px 8px rgba(0,0,0,.5),inset 0 2px 4px rgba(255,255,255,.6)"></span>
+              <span style="flex:1"><span style="display:block;font-family:'Space Mono',monospace;font-size:13px;font-weight:700;letter-spacing:.04em;color:#eaf2fb">TAE RUNTIME</span><span style="display:block;font-family:'Space Mono',monospace;font-size:8px;letter-spacing:.16em;color:rgba(200,224,240,.5);margin-top:3px">1 PLAN ACTIVE · {{ autonomyLabel }}</span></span>
+              <span style="display:flex;align-items:center;gap:6px"><span style="width:7px;height:7px;border-radius:50%;background:#3ad07f;box-shadow:0 0 7px 1px rgba(58,208,127,.7)"></span><span style="font-family:'Space Mono',monospace;font-size:10px;font-weight:700;color:#eaf5ee">LIVE</span></span>
+            </div>
+
+            <div style="margin-top:12px;display:grid;grid-template-columns:repeat(3,1fr);gap:9px">
+              <sc-for list="{{ stats }}" as="s" hint-placeholder-count="3">
+                <div style="padding:13px 12px;border-radius:14px;background:rgba(12,14,18,.62);border:1px solid rgba(255,255,255,.08);box-shadow:inset 0 1px 0 rgba(255,255,255,.1)">
+                  <div style="font-family:'Marcellus',serif;font-size:22px;color:#eaf2fb">{{ s.v }}</div>
+                  <div style="font-family:'Space Mono',monospace;font-size:7px;letter-spacing:.14em;color:rgba(200,224,240,.5);margin-top:4px">{{ s.k }}</div>
+                </div>
+              </sc-for>
+            </div>
+
+            <!-- active plan progress -->
+            <div style="margin-top:14px;padding:14px 16px;border-radius:16px;background:rgba(12,14,18,.6);border:1px solid rgba(255,255,255,.08)">
+              <div style="display:flex;justify-content:space-between;align-items:center"><span style="font-family:'Space Mono',monospace;font-size:8px;letter-spacing:.16em;color:rgba(200,224,240,.55)">ACTIVE PLAN</span><span style="font-family:'Space Mono',monospace;font-size:9px;color:var(--acc)">32%</span></div>
+              <div style="margin-top:9px;height:6px;border-radius:4px;background:rgba(255,255,255,.08);overflow:hidden"><div style="height:100%;width:32%;border-radius:4px;background:linear-gradient(90deg,#2f7fbf,var(--acc));box-shadow:0 0 8px var(--acc)"></div></div>
+              <div style="font-size:12px;color:rgba(214,226,242,.7);margin-top:10px">{{ planTitle }}</div>
+            </div>
+
+            <div style="margin-top:18px;font-family:'Space Mono',monospace;font-size:8px;letter-spacing:.2em;color:rgba(200,224,240,.45)">MODULE SUITE</div>
+            <div style="margin-top:11px;display:grid;grid-template-columns:repeat(4,1fr);gap:9px">
+              <sc-for list="{{ modules }}" as="m" hint-placeholder-count="8">
+                <button onClick="{{ m.open }}" style="display:flex;flex-direction:column;align-items:center;gap:8px;padding:14px 4px;border-radius:15px;background:rgba(12,14,18,.6);border:1px solid rgba(255,255,255,.09);box-shadow:inset 0 1px 0 rgba(255,255,255,.12);cursor:pointer;transition:border-color .2s" style-hover="border-color:var(--acc)">
+                  <span style="color:var(--acc);display:flex" dangerouslySetInnerHTML="{{ m.icon }}"></span>
+                  <span style="font-family:'Space Mono',monospace;font-size:7px;letter-spacing:.02em;color:rgba(220,230,244,.72);text-align:center;line-height:1.25">{{ m.label }}</span>
+                </button>
+              </sc-for>
+            </div>
+
+            <div style="margin-top:18px;font-family:'Space Mono',monospace;font-size:8px;letter-spacing:.2em;color:rgba(200,224,240,.45)">INTENT STREAM</div>
+            <div style="margin-top:11px;display:flex;flex-direction:column;gap:7px">
+              <sc-for list="{{ stream }}" as="l" hint-placeholder-count="4">
+                <div style="display:flex;align-items:center;gap:11px;padding:11px 13px;border-radius:12px;background:rgba(12,14,18,.55);border:1px solid rgba(255,255,255,.07)">
+                  <span style="width:7px;height:7px;border-radius:50%;background:{{ l.dot }};box-shadow:0 0 6px {{ l.dot }}"></span>
+                  <span style="flex:1;font-size:12px;color:#dbe4f2">{{ l.t }}</span>
+                  <span style="font-family:'Space Mono',monospace;font-size:8px;letter-spacing:.1em;color:rgba(200,224,240,.42)">{{ l.time }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </sc-if>
+      </div>
+
+      <!-- CTA -->
+      <sc-if value="{{ hasCta }}" hint-placeholder-val="{{ true }}">
+        <button onClick="{{ cta }}" style="position:absolute;left:20px;right:20px;bottom:104px;z-index:22;height:52px;border-radius:15px;border:none;cursor:pointer;background:{{ ctaBg }};color:{{ ctaFg }};font-family:'Space Mono',monospace;font-size:12px;font-weight:700;letter-spacing:.14em;box-shadow:0 12px 28px -10px var(--accGlow);transition:transform .2s;opacity:{{ ctaOp }}" style-active="transform:scale(.97)">{{ ctaLabel }}</button>
+      </sc-if>
+
+      <!-- module sheet -->
+      <sc-if value="{{ sheetOpen }}" hint-placeholder-val="{{ false }}">
+        <div onClick="{{ closeSheet }}" style="position:absolute;inset:0;z-index:50;background:rgba(0,0,0,.6);backdrop-filter:blur(3px)"></div>
+        <div style="position:absolute;left:0;right:0;bottom:0;z-index:51;border-radius:26px 26px 0 0;background:linear-gradient(180deg,rgba(16,22,30,.98),rgba(6,8,12,.99));border:1px solid rgba(69,198,255,.28);border-bottom:none;box-shadow:0 -20px 50px -12px #000;padding:16px 22px 30px;animation:tSheet .34s cubic-bezier(.22,1,.36,1) both">
+          <div style="width:42px;height:4px;border-radius:3px;background:rgba(255,255,255,.2);margin:0 auto 16px"></div>
+          <div style="display:flex;align-items:center;gap:13px">
+            <span style="width:44px;height:44px;border-radius:12px;background:rgba(69,198,255,.12);border:1px solid rgba(69,198,255,.4);display:flex;align-items:center;justify-content:center;color:var(--acc)" dangerouslySetInnerHTML="{{ sheet.icon }}"></span>
+            <div style="flex:1"><div style="font-family:'Space Mono',monospace;font-size:15px;font-weight:700;letter-spacing:.05em;color:#eaf2fb">{{ sheet.label }}</div><div style="font-family:'Space Mono',monospace;font-size:8px;letter-spacing:.14em;color:var(--acc);margin-top:3px">CSIOS · {{ sheet.tag }}</div></div>
+          </div>
+          <div style="font-size:13px;color:rgba(210,224,240,.62);margin-top:14px;line-height:1.55">{{ sheet.desc }}</div>
+          <div style="margin-top:16px;display:flex;flex-direction:column;gap:9px">
+            <sc-for list="{{ sheet.rows }}" as="r" hint-placeholder-count="3">
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:13px 15px;border-radius:13px;background:rgba(12,14,18,.6);border:1px solid rgba(255,255,255,.08)">
+                <span style="font-size:13px;color:#dbe4f2">{{ r.k }}</span>
+                <span style="font-family:'Space Mono',monospace;font-size:10px;letter-spacing:.08em;padding:5px 10px;border-radius:8px;color:{{ r.color }};border:1px solid {{ r.color }};background:{{ r.bg }}">{{ r.v }}</span>
+              </div>
+            </sc-for>
+          </div>
+          <button onClick="{{ closeSheet }}" style="margin-top:16px;width:100%;height:48px;border-radius:14px;border:1px solid var(--acc);background:transparent;color:var(--acc);cursor:pointer;font-family:'Space Mono',monospace;font-size:11px;font-weight:700;letter-spacing:.12em">CLOSE WORKSPACE</button>
+        </div>
+      </sc-if>
+
+      <!-- bottom nav -->
+      <div style="position:absolute;left:12px;right:12px;bottom:12px;height:76px;z-index:30;border-radius:26px;background:linear-gradient(180deg,rgba(20,22,28,.82),rgba(6,7,10,.9));border:1px solid rgba(255,255,255,.14);box-shadow:inset 0 1.5px 0 rgba(255,255,255,.32),0 16px 34px -12px rgba(0,0,0,.8);backdrop-filter:blur(20px);display:flex;align-items:center;justify-content:space-between;padding:0 30px">
+        <a href="CSIOS Gateway.dc.html" style="text-decoration:none;display:flex;flex-direction:column;align-items:center;gap:5px;width:44px;color:rgba(255,255,255,.55)"><span dangerouslySetInnerHTML="{{ icHome }}"></span><span style="font-family:'Space Mono',monospace;font-size:6.5px;letter-spacing:.1em">HOME</span></a>
+        <button onClick="{{ goDash }}" style="background:none;border:none;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:5px;width:44px;color:{{ dashColor }}"><span dangerouslySetInnerHTML="{{ icGrid }}"></span><span style="font-family:'Space Mono',monospace;font-size:6.5px;letter-spacing:.1em">MODULES</span></button>
+        <div style="width:52px"></div>
+        <button onClick="{{ restart }}" style="background:none;border:none;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:5px;width:44px;color:rgba(255,255,255,.55)"><span dangerouslySetInnerHTML="{{ icRefresh }}"></span><span style="font-family:'Space Mono',monospace;font-size:6.5px;letter-spacing:.1em">RESTART</span></button>
+        <button onClick="{{ goDash }}" style="background:none;border:none;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:5px;width:44px;color:rgba(255,255,255,.55)"><span dangerouslySetInnerHTML="{{ icGear }}"></span><span style="font-family:'Space Mono',monospace;font-size:6.5px;letter-spacing:.1em">SETTINGS</span></button>
+      </div>
+      <div onClick="{{ centerTap }}" style="position:absolute;left:50%;bottom:52px;transform:translateX(-50%);width:62px;height:62px;cursor:pointer;z-index:31;animation:tOrb 4s ease-in-out infinite;animation-play-state:var(--motion,running)">
+        <div style="position:absolute;inset:-24%;border-radius:50%;background:radial-gradient(circle,var(--accGlow),transparent 62%);filter:blur(7px)"></div>
+        <div style="position:absolute;inset:0;border-radius:50%;border:1px solid rgba(150,210,250,.5);animation:tSpin 16s linear infinite;animation-play-state:var(--motion,running)"></div>
+        <div style="position:absolute;inset:5px;border-radius:50%;background:radial-gradient(circle at 38% 30%,#fff,#cfd3da 12%,#5f636b 36%,#141519 66%,#020204);box-shadow:inset 0 -6px 14px rgba(0,0,0,.85),inset 0 5px 10px rgba(255,255,255,.55),0 8px 18px -4px rgba(0,0,0,.7)"></div>
+      </div>
+
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:428,&quot;height&quot;:924}}">
+const IC = {
+  hero:'<svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="12" cy="12" r="2.4"/><circle cx="5" cy="6" r="1.8"/><circle cx="19" cy="6" r="1.8"/><circle cx="6" cy="18" r="1.8"/><circle cx="18" cy="18" r="1.8"/><path d="M10.1 10.7 6.4 7.2M13.9 10.7l3.7-3.5M10.4 13.7 7 16.6M13.6 13.7l3.4 2.9"/></svg>',
+  capture:'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 7a2 2 0 0 1 2-2h3l1.5 2H18a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><circle cx="12" cy="12.5" r="2.6"/></svg>',
+  context:'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="4.5" r="1.6"/><circle cx="12" cy="19.5" r="1.6"/><circle cx="5" cy="8.5" r="1.6"/><circle cx="19" cy="8.5" r="1.6"/><path d="M12 9V6M12 15v3M9.5 10.5 6.4 9M14.5 10.5 17.6 9"/></svg>',
+  agent:'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="6" y="8" width="12" height="9" rx="2.5"/><path d="M12 8V5M9 4.5h6"/><circle cx="9.5" cy="12.5" r="1"/><circle cx="14.5" cy="12.5" r="1"/><path d="M3.5 12v3M20.5 12v3"/></svg>',
+  plan:'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 3.5v3M16 3.5v3M4 9.5h16M8 13h3M8 16.5h6"/></svg>',
+  orchestrate:'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 6h8M4 12h6M4 18h10"/><circle cx="16" cy="6" r="2.2"/><circle cx="14" cy="12" r="2.2"/><circle cx="18" cy="18" r="2.2"/></svg>',
+  progress:'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 18V9M9.5 18V5M15 18v-6M20.5 18v-9"/></svg>',
+  deliver:'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 12l4 4 12-12"/><path d="M4 18l4 4 3-3"/></svg>',
+  learn:'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M4 12a8 8 0 1 1 2.4 5.7"/><path d="M4 20v-4h4"/><circle cx="12" cy="12" r="2.2"/></svg>',
+  home:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 11l8-6 8 6v8a1 1 0 0 1-1 1h-4v-6h-6v6H5a1 1 0 0 1-1-1z"/></svg>',
+  grid:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="4" y="4" width="6.5" height="6.5" rx="1.4"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.4"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.4"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.4"/></svg>',
+  refresh:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M4 12a8 8 0 0 1 13.7-5.6L20 8M20 4v4h-4"/><path d="M20 12a8 8 0 0 1-13.7 5.6L4 16M4 20v-4h4"/></svg>',
+  gear:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3.2"/><path d="M12 3.5v2.2M12 18.3v2.2M4.7 7.3l1.9 1.1M17.4 15.6l1.9 1.1M4.7 16.7l1.9-1.1M17.4 8.4l1.9-1.1"/></svg>',
+};
+const H = (s)=>({ __html:s });
+const hexA = (hex,a)=>{ const n=parseInt(hex.slice(1),16); return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`; };
+const ACC = '#45c6ff';
+const FLOW = ['splash','intake','describe','routing','plan','dashboard'];
+const STEP_LABEL = { splash:'INTENT ROUTING ENGINE', intake:'ONBOARDING INTAKE', describe:'FIRST ACTION', routing:'LIVE ROUTING', plan:'PLAN OUTPUT', dashboard:'RUNTIME DASHBOARD' };
+const STAGES = ['parse','map','route','select','plan','orchestrate','validate','deliver'];
+const DOMAINS = ['Business','Creative','Life','Finance','Product','Growth'];
+const HORIZONS = ['30 days','90 days','1 year'];
+const AUTONOMY = ['Assist','Co-pilot','Autonomous'];
+const EXAMPLES = ['I want to start a business.','Plan my product launch.','Grow my audience to 10k.'];
+const NODE_DEFS = [
+  { icon:IC.capture, label:'CAPTURE',  left:'50%',  top:'12%'  },
+  { icon:IC.context, label:'CONTEXT',  left:'86%',  top:'34%'  },
+  { icon:IC.agent,   label:'AGENTS',   left:'86%',  top:'70%'  },
+  { icon:IC.plan,    label:'PLAN',     left:'50%',  top:'90%'  },
+  { icon:IC.orchestrate, label:'ROUTE',left:'14%',  top:'70%'  },
+  { icon:IC.deliver, label:'DELIVER',  left:'14%',  top:'34%'  },
+];
+const NODE_XY = [ [150,24],[258,68],[258,140],[150,180],[42,140],[42,68] ];
+const MODULES = [
+  { id:'ic', label:'Intent Capture',    icon:IC.capture,     tag:'INTAKE',    desc:'Capture and structure raw intent into machine-routable goals.',       rows:[['Captured','24','#45c6ff'],['Parsed','100%','#3ad07f'],['Backlog','0','#3ad07f']] },
+  { id:'cm', label:'Context Mapping',   icon:IC.context,     tag:'REASONING', desc:'Map intent against your history, assets and connected ecosystems.',   rows:[['Signals','48','#45c6ff'],['Ecosystems','8','#45c6ff'],['Confidence','92%','#3ad07f']] },
+  { id:'as', label:'Agent Selection',   icon:IC.agent,       tag:'ROUTING',   desc:'Choose the right agents and models for each step of the plan.',       rows:[['Agents','5 active','#45c6ff'],['Models','GPT · CS-1','#45c6ff'],['Cost','Optimized','#3ad07f']] },
+  { id:'rp', label:'Runtime Planning',  icon:IC.plan,        tag:'PLANNING',  desc:'Sequence tasks into a dependency-aware runtime timeline.',            rows:[['Milestones','12','#45c6ff'],['Critical path','5','#e0a24a'],['Slack','3d','#3ad07f']] },
+  { id:'to', label:'Task Orchestration',icon:IC.orchestrate, tag:'EXECUTION', desc:'Dispatch and coordinate tasks across ecosystems in real time.',       rows:[['Running','3','#45c6ff'],['Queued','7','#45c6ff'],['Failed','0','#3ad07f']] },
+  { id:'pt', label:'Progress Tracking', icon:IC.progress,    tag:'MONITOR',   desc:'Live telemetry on every milestone and dependency.',                   rows:[['Complete','32%','#45c6ff'],['On track','Yes','#3ad07f'],['Blocked','0','#3ad07f']] },
+  { id:'rd', label:'Results Delivery',  icon:IC.deliver,     tag:'OUTPUT',    desc:'Package and hand off finished outputs to the right destination.',      rows:[['Delivered','8','#45c6ff'],['Pending','2','#e0a24a'],['Quality','A','#3ad07f']] },
+  { id:'ll', label:'Learning Loop',     icon:IC.learn,       tag:'ADAPTIVE',  desc:'TAE improves routing from every completed orchestration.',            rows:[['Runs learned','142','#45c6ff'],['Accuracy','+6%','#3ad07f'],['Model','CS-1.3','#45c6ff']] },
+];
+
+class Component extends DCLogic {
+  state = { step:'splash', domains:[0], horizon:1, autonomy:1, intent:'', stageIndex:-1, sheet:null };
+  componentDidMount(){ this.fit(); this._onR=()=>this.fit(); window.addEventListener('resize',this._onR); }
+  componentWillUnmount(){ if(this._onR) window.removeEventListener('resize',this._onR); if(this._timers) this._timers.forEach(clearTimeout); }
+  fit(){ const el=document.querySelector('[data-device="1"]'); if(!el) return; const s=Math.min(1,(window.innerHeight-32)/902); el.style.zoom = s>0?s:1; }
+  clearT(){ if(this._timers) this._timers.forEach(clearTimeout); this._timers=[]; }
+
+  goStep(s){ this.clearT(); this.setState({ step:s }); }
+  toggleDomain(i){ const d=this.state.domains.slice(); const k=d.indexOf(i); if(k>=0){ if(d.length>1) d.splice(k,1); } else d.push(i); this.setState({ domains:d }); }
+  startRouting(){
+    this.clearT(); this.setState({ step:'routing', stageIndex:0 });
+    const t=[];
+    for(let i=1;i<STAGES.length;i++){ t.push(setTimeout(()=>this.setState({ stageIndex:i }), i*320)); }
+    t.push(setTimeout(()=>this.setState({ step:'plan', stageIndex:STAGES.length }), STAGES.length*320+300));
+    this._timers=t;
+  }
+  cta(){ const s=this.state.step; if(s==='splash') this.goStep('intake'); else if(s==='intake') this.goStep('describe'); else if(s==='describe'){ if(!this.state.intent.trim()) this.setState({intent:EXAMPLES[0]}); this.startRouting(); } else if(s==='plan') this.goStep('dashboard'); }
+  openModule(id){ this.setState({ sheet:MODULES.find(m=>m.id===id) }); }
+  closeSheet(){ this.setState({ sheet:null }); }
+  restart(){ this.clearT(); this.setState({ step:'splash', intent:'', stageIndex:-1, sheet:null }); }
+
+  renderVals(){
+    const st=this.state; const step=st.step;
+    const flowSteps = FLOW.map((s,i)=>{ const cur=FLOW.indexOf(step); return { bg:i<=cur?'var(--acc)':'rgba(255,255,255,.12)', glow:i===cur?'0 0 8px var(--accGlow)':'none' }; });
+
+    const domains = DOMAINS.map((d,i)=>{ const on=st.domains.includes(i); return { label:d, pick:()=>this.toggleDomain(i), bg:on?'rgba(69,198,255,.15)':'rgba(12,14,18,.6)', border:on?'var(--acc)':'rgba(255,255,255,.12)', color:on?'#eaf2fb':'rgba(220,230,244,.7)' }; });
+    const horizons = HORIZONS.map((h,i)=>{ const on=st.horizon===i; return { label:h, pick:()=>this.setState({horizon:i}), bg:on?'rgba(69,198,255,.15)':'rgba(12,14,18,.6)', border:on?'var(--acc)':'rgba(255,255,255,.12)', color:on?'#eaf2fb':'rgba(220,230,244,.7)' }; });
+    const autonomy = AUTONOMY.map((a,i)=>{ const on=st.autonomy===i; return { label:a, pick:()=>this.setState({autonomy:i}), bg:on?'rgba(69,198,255,.15)':'rgba(12,14,18,.6)', border:on?'var(--acc)':'rgba(255,255,255,.12)', color:on?'#eaf2fb':'rgba(220,230,244,.7)' }; });
+    const examples = EXAMPLES.map(t=>({ t, use:()=>this.setState({intent:t}) }));
+
+    // routing visuals
+    const si = st.stageIndex;
+    const nodeLit = Math.min(NODE_DEFS.length, Math.max(0, Math.round((si/STAGES.length)*NODE_DEFS.length)));
+    const nodes = NODE_DEFS.map((n,i)=>{ const lit=i<nodeLit; return { icon:H(n.icon), label:n.label, left:n.left, top:n.top,
+      op: lit?1:0.35, bg: lit?'rgba(69,198,255,.18)':'rgba(12,14,18,.7)', border: lit?'var(--acc)':'rgba(255,255,255,.12)', color: lit?'var(--acc)':'rgba(200,224,240,.4)', glow: lit?'0 0 12px -2px var(--accGlow)':'none', label2: lit?'var(--acc)':'rgba(200,224,240,.4)' }; });
+    const edges = NODE_XY.map((xy,i)=>{ const lit=i<nodeLit; return { x1:150,y1:100,x2:xy[0],y2:xy[1], stroke: lit?ACC:'rgba(120,170,220,.2)', style: lit?'animation:tDash 1s linear infinite':'' }; });
+    const stages = STAGES.map((s,i)=>({ bg: i<=si?'var(--acc)':'rgba(255,255,255,.1)', glow: i===si?'0 0 8px var(--accGlow)':'none' }));
+    const stageName = si>=0 && si<STAGES.length ? STAGES[si].toUpperCase() : 'COMPLETE';
+    const rlog = [ {t:'Intent parsed & structured', at:1}, {t:'Context mapped across 8 ecosystems', at:3}, {t:'Agents selected · plan sequenced', at:6} ];
+    const routingLog = rlog.map(l=>{ const on=si>=l.at; return { t:l.t, op:on?1:0.3, mark:on?'✓':'○', dot:on?'#3ad07f':'rgba(200,224,240,.4)' }; });
+
+    const milestones = [
+      { n:'1', t:'Validate the offer & audience', eco:'TAE · JAI', when:'Week 1' },
+      { n:'2', t:'Produce brand & first assets', eco:'Syncori', when:'Week 2–3' },
+      { n:'3', t:'Stand up operations & CRM', eco:'Vulgate', when:'Week 4–6' },
+      { n:'4', t:'Launch & iterate on signal', eco:'Global Stage', when:'Week 7–12' },
+    ];
+
+    const sheet = st.sheet ? { label:st.sheet.label, tag:st.sheet.tag, desc:st.sheet.desc, icon:H(st.sheet.icon), rows: st.sheet.rows.map(r=>({k:r[0],v:r[1],color:r[2],bg:hexA(r[2],.12)})) } : null;
+
+    return {
+      stepLabel: STEP_LABEL[step], flowSteps,
+      isSplash:step==='splash', isIntake:step==='intake', isDescribe:step==='describe', isRouting:step==='routing', isPlan:step==='plan', isDashboard:step==='dashboard',
+      icHero:H(IC.hero),
+      domains, horizons, autonomy, examples,
+      intent: st.intent, onIntent:(e)=>this.setState({intent:e.target.value}),
+      nodes, edges, stages, stageName, routingLog,
+      planHorizon: HORIZONS[st.horizon].toUpperCase(), milestones, milestoneCount: '12',
+      autonomyLabel: AUTONOMY[st.autonomy].toUpperCase(),
+      planTitle: (st.intent.trim()||EXAMPLES[0]),
+      stats: [ {v:'12',k:'MILESTONES'}, {v:'3',k:'RUNNING'}, {v:'5',k:'AGENTS'} ],
+      modules: MODULES.map(m=>({ label:m.label, icon:H(m.icon), open:()=>this.openModule(m.id) })),
+      stream: [
+        { t:'Plan generated · 12 milestones', time:'now', dot:'#3ad07f' },
+        { t:'Routed to Syncori · brand assets', time:'2m', dot:'#45c6ff' },
+        { t:'Agent CS-1 completed context map', time:'6m', dot:'#45c6ff' },
+        { t:'Learning loop updated model', time:'1h', dot:'#cf6bff' },
+      ],
+      sheetOpen:!!sheet, sheet, closeSheet:()=>this.closeSheet(),
+      hasCta: step==='splash'||step==='intake'||step==='describe'||step==='plan',
+      ctaLabel: step==='splash'?'BEGIN INTAKE':(step==='intake'?'CONTINUE':(step==='describe'?'ROUTE MY INTENT →':'OPEN RUNTIME DASHBOARD')),
+      ctaBg:'var(--acc)', ctaFg:'#05202f', ctaOp:1,
+      cta:()=>this.cta(),
+      icHome:H(IC.home), icGrid:H(IC.grid), icRefresh:H(IC.refresh), icGear:H(IC.gear),
+      dashColor: step==='dashboard'?'var(--acc)':'rgba(255,255,255,.55)',
+      goDash:()=>this.goStep('dashboard'),
+      restart:()=>this.restart(),
+      centerTap:()=>this.goStep('dashboard'),
+    };
+  }
+}
+</script>
+</body>
+</html>

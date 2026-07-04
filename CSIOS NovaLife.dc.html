@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@100;200;300;400;500;600;700&family=Marcellus&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  html,body{margin:0;background:#000;}
+  *{box-sizing:border-box}
+  input,textarea{font-family:inherit}
+  @keyframes nOrb{0%,100%{transform:scale(1);opacity:.92}50%{transform:scale(1.05);opacity:1}}
+  @keyframes nSpin{to{transform:rotate(360deg)}}
+  @keyframes nSpinR{to{transform:rotate(-360deg)}}
+  @keyframes nTwinkle{0%,100%{opacity:.3}50%{opacity:.9}}
+  @keyframes nRise{0%{opacity:0;transform:translateY(12px)}100%{opacity:1;transform:translateY(0)}}
+  @keyframes nPulseRing{0%{transform:translate(-50%,-50%) scale(.7);opacity:.65}80%,100%{transform:translate(-50%,-50%) scale(1.4);opacity:0}}
+  @keyframes nSheet{0%{transform:translateY(100%)}100%{transform:translateY(0)}}
+  @keyframes nGrow{0%{transform:scaleY(0)}100%{transform:scaleY(1)}}
+</style>
+</helmet>
+
+<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;background:#000;font-family:'Archivo',sans-serif;overflow:hidden">
+  <div data-device="1" style="position:relative;width:404px;height:876px;border-radius:60px;padding:12px;background:linear-gradient(155deg,#3a3d45,#0c0d10 34%,#15171d 62%,#2b2e36);box-shadow:0 70px 150px -34px rgba(0,0,0,.95),0 0 0 1px rgba(255,255,255,.09),inset 0 1px 0 rgba(255,255,255,.28),inset 0 -2px 6px rgba(0,0,0,.7);transform-origin:center center">
+    <div style="position:relative;width:100%;height:100%;border-radius:48px;overflow:hidden;background:#000;--acc:#3ad07f;--accGlow:rgba(58,208,127,.4)">
+
+      <div style="position:absolute;inset:0;background:radial-gradient(120% 60% at 50% 32%,#052617 0%,#04120c 46%,#000 80%)"></div>
+      <div style="position:absolute;inset:0;background-image:linear-gradient(rgba(90,220,150,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(90,220,150,.05) 1px,transparent 1px);background-size:30px 30px;opacity:.45;mask-image:radial-gradient(120% 80% at 50% 36%,#000 30%,transparent 84%)"></div>
+      <div style="position:absolute;inset:0;background:radial-gradient(1.4px 1.4px at 14% 16%,#fff,transparent),radial-gradient(1px 1px at 28% 42%,rgba(255,255,255,.85),transparent),radial-gradient(1.5px 1.5px at 72% 14%,#fff,transparent),radial-gradient(1px 1px at 84% 32%,rgba(255,255,255,.8),transparent),radial-gradient(1.2px 1.2px at 44% 9%,rgba(255,255,255,.7),transparent),radial-gradient(1px 1px at 90% 60%,rgba(255,255,255,.7),transparent),radial-gradient(1.3px 1.3px at 16% 66%,rgba(255,255,255,.8),transparent),radial-gradient(1px 1px at 56% 78%,rgba(255,255,255,.6),transparent);background-repeat:no-repeat;animation:nTwinkle 5s ease-in-out infinite;animation-play-state:var(--motion,running)"></div>
+
+      <div style="position:absolute;left:0;right:0;top:0;height:50px;display:flex;align-items:center;justify-content:space-between;padding:0 26px;z-index:40;pointer-events:none">
+        <span style="font-family:'Space Mono',monospace;font-size:14px;font-weight:700;color:#fff">9:41</span>
+        <span style="display:flex;align-items:center;gap:7px"><span style="display:flex;align-items:flex-end;gap:2px;height:12px"><i style="width:3px;height:5px;background:#fff;border-radius:1px"></i><i style="width:3px;height:8px;background:#fff;border-radius:1px"></i><i style="width:3px;height:11px;background:#fff;border-radius:1px"></i></span><span style="width:16px;height:12px;border-radius:2px;border:1.5px solid rgba(255,255,255,.7);position:relative"><i style="position:absolute;inset:1.5px;right:4px;background:#fff;border-radius:1px"></i></span></span>
+      </div>
+
+      <div style="position:absolute;left:0;right:0;top:50px;z-index:20;display:flex;align-items:center;padding:6px 20px 0">
+        <a href="CSIOS Gateway.dc.html" style="text-decoration:none;width:34px;height:34px;border-radius:50%;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.14);color:#eef0f4;font-size:16px;display:flex;align-items:center;justify-content:center">‹</a>
+        <div style="flex:1;text-align:center;margin-right:34px">
+          <div style="font-family:'Space Mono',monospace;font-size:18px;font-weight:700;letter-spacing:.14em;color:var(--acc)">NOVALIFE</div>
+          <div style="font-family:'Space Mono',monospace;font-size:7.5px;letter-spacing:.24em;color:rgba(216,240,224,.5);margin-top:3px">CSIOS · {{ stepLabel }}</div>
+        </div>
+      </div>
+
+      <div style="position:absolute;left:20px;right:20px;top:100px;z-index:20;display:flex;gap:5px">
+        <sc-for list="{{ flowSteps }}" as="fs" hint-placeholder-count="6">
+          <span style="flex:1;height:3px;border-radius:2px;background:{{ fs.bg }};box-shadow:{{ fs.glow }};transition:all .3s"></span>
+        </sc-for>
+      </div>
+
+      <div style="position:absolute;left:0;right:0;top:118px;bottom:100px;z-index:10;overflow-y:auto;overflow-x:hidden;padding:14px 20px 20px">
+
+        <!-- SPLASH -->
+        <sc-if value="{{ isSplash }}" hint-placeholder-val="{{ true }}">
+          <div style="min-height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;animation:nRise .5s ease both">
+            <div style="position:relative;width:196px;height:196px;display:flex;align-items:center;justify-content:center;animation:nOrb 5s ease-in-out infinite;animation-play-state:var(--motion,running)">
+              <div style="position:absolute;inset:-20%;border-radius:50%;background:radial-gradient(circle,var(--accGlow),transparent 62%);filter:blur(16px)"></div>
+              <div style="position:absolute;width:192px;height:192px;border-radius:50%;border:1px solid var(--acc);opacity:.4;animation:nSpin 26s linear infinite;animation-play-state:var(--motion,running)"></div>
+              <div style="position:absolute;width:184px;height:184px;border-radius:50%;border:1px dashed var(--acc);opacity:.35;animation:nSpinR 20s linear infinite;animation-play-state:var(--motion,running)"></div>
+              <div style="position:absolute;left:50%;top:50%;width:150px;height:150px;border-radius:50%;border:1px solid var(--acc);opacity:.5;animation:nPulseRing 3s ease-out infinite;animation-play-state:var(--motion,running)"></div>
+              <div style="position:relative;width:118px;height:118px;border-radius:50%;background:radial-gradient(circle at 38% 28%,#0a2e1c,#06140d 62%,#01020400);box-shadow:inset 0 8px 26px rgba(0,0,0,.8),inset 0 -6px 20px var(--accGlow),0 0 30px -4px var(--accGlow);display:flex;align-items:center;justify-content:center;color:var(--acc)" dangerouslySetInnerHTML="{{ icHero }}"></div>
+            </div>
+            <div style="font-family:'Marcellus',serif;font-size:33px;letter-spacing:.05em;margin-top:24px;background:linear-gradient(180deg,#fff,#a6c5b3);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent">Life Operating System</div>
+            <div style="font-family:'Space Mono',monospace;font-size:8.5px;letter-spacing:.2em;color:var(--acc);margin-top:10px">ONE PLAN FOR EVERY PART OF YOUR LIFE</div>
+            <div style="font-size:14px;line-height:1.55;color:rgba(216,236,224,.62);margin-top:16px;max-width:290px">NovaLife turns your goals, health and habits into one adaptive operating plan that keeps every part of your life in balance.</div>
+          </div>
+        </sc-if>
+
+        <!-- INTAKE -->
+        <sc-if value="{{ isIntake }}" hint-placeholder-val="{{ false }}">
+          <div style="animation:nRise .4s ease both">
+            <div style="font-family:'Space Mono',monospace;font-size:8px;letter-spacing:.24em;color:var(--acc)">01 · LIFE INTAKE</div>
+            <div style="font-family:'Marcellus',serif;font-size:26px;color:#f0faf4;margin-top:8px">Where should we focus?</div>
+            <div style="font-size:13px;color:rgba(216,236,224,.6);margin-top:8px;line-height:1.5">Choose the areas of life to optimize first. NovaLife balances the rest around them.</div>
+            <div style="margin-top:16px;display:grid;grid-template-columns:repeat(2,1fr);gap:10px">
+              <sc-for list="{{ areas }}" as="a" hint-placeholder-count="6">
+                <button onClick="{{ a.pick }}" style="text-align:left;padding:14px;border-radius:14px;cursor:pointer;background:{{ a.bg }};border:1px solid {{ a.border }};transition:all .2s;position:relative">
+                  <span style="color:{{ a.color }};display:flex" dangerouslySetInnerHTML="{{ a.icon }}"></span>
+                  <div style="font-family:'Space Mono',monospace;font-size:11px;font-weight:700;color:#eefaf4;margin-top:10px">{{ a.label }}</div>
+                  <sc-if value="{{ a.on }}" hint-placeholder-val="{{ false }}"><span style="position:absolute;right:11px;top:11px;width:18px;height:18px;border-radius:50%;background:var(--acc);color:#052e1a;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center">✓</span></sc-if>
+                </button>
+              </sc-for>
+            </div>
+          </div>
+        </sc-if>
+
+        <!-- PRIORITIES -->
+        <sc-if value="{{ isPriorities }}" hint-placeholder-val="{{ false }}">
+          <div style="animation:nRise .4s ease both">
+            <div style="font-family:'Space Mono',monospace;font-size:8px;letter-spacing:.24em;color:var(--acc)">02 · SET PRIORITIES</div>
+            <div style="font-family:'Marcellus',serif;font-size:26px;color:#f0faf4;margin-top:8px">Balance your energy</div>
+            <div style="font-size:13px;color:rgba(216,236,224,.6);margin-top:8px;line-height:1.5">Weight what matters most right now. The plan adapts to your balance.</div>
+            <div style="margin-top:18px;display:flex;flex-direction:column;gap:16px">
+              <sc-for list="{{ sliders }}" as="s" hint-placeholder-count="4">
+                <div>
+                  <div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:13px;color:#eefaf4">{{ s.label }}</span><span style="font-family:'Space Mono',monospace;font-size:10px;color:var(--acc)">{{ s.val }}%</span></div>
+                  <div onClick="{{ s.bump }}" style="margin-top:8px;height:8px;border-radius:5px;background:rgba(255,255,255,.08);overflow:hidden;cursor:pointer"><div style="height:100%;width:{{ s.val }}%;border-radius:5px;background:linear-gradient(90deg,#1f8a4e,var(--acc));box-shadow:0 0 8px var(--acc);transition:width .2s"></div></div>
+                </div>
+              </sc-for>
+            </div>
+            <div style="margin-top:16px;font-family:'Space Mono',monospace;font-size:8px;letter-spacing:.14em;color:rgba(216,236,224,.5);text-align:center">TAP A BAR TO INCREASE ITS PRIORITY</div>
+          </div>
+        </sc-if>
+
+        <!-- GENERATE -->
+        <sc-if value="{{ isGenerate }}" hint-placeholder-val="{{ false }}">
+          <div style="animation:nRise .4s ease both">
+            <div style="font-family:'Space Mono',monospace;font-size:8px;letter-spacing:.24em;color:var(--acc)">03 · GENERATE LIFE PLAN</div>
+            <div style="font-family:'Marcellus',serif;font-size:24px;color:#f0faf4;margin-top:8px">Composing your plan…</div>
+            <div style="display:flex;justify-content:center;margin-top:20px">
+              <div style="position:relative;width:150px;height:150px;display:flex;align-items:center;justify-content:center">
+                <svg viewBox="0 0 120 120" style="width:150px;height:150px;transform:rotate(-90deg)">
+                  <circle cx="60" cy="60" r="52" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="7"></circle>
+                  <circle cx="60" cy="60" r="52" fill="none" stroke="var(--acc)" stroke-width="7" stroke-linecap="round" stroke-dasharray="327" stroke-dashoffset="{{ ringOffset }}" style="filter:drop-shadow(0 0 5px var(--acc));transition:stroke-dashoffset .25s"></circle>
+                </svg>
+                <div style="position:absolute;text-align:center"><div style="font-family:'Marcellus',serif;font-size:30px;color:#eefaf4">{{ genPct }}%</div><div style="font-family:'Space Mono',monospace;font-size:7px;letter-spacing:.14em;color:var(--acc)">BALANCING</div></div>
+              </div>
+            </div>
+            <div style="margin-top:18px;display:flex;flex-direction:column;gap:7px">
+              <sc-for list="{{ genLog }}" as="l" hint-placeholder-count="4">
+                <div style="display:flex;align-items:center;gap:10px;opacity:{{ l.op }};transition:opacity .3s"><span style="color:{{ l.dot }};font-size:9px">{{ l.mark }}</span><span style="font-family:'Space Mono',monospace;font-size:9px;letter-spacing:.06em;color:rgba(220,238,228,.8)">{{ l.t }}</span></div>
+              </sc-for>
+            </div>
+          </div>
+        </sc-if>
+
+        <!-- PLAN (output) -->
+        <sc-if value="{{ isPlan }}" hint-placeholder-val="{{ false }}">
+          <div style="animation:nRise .45s ease both">
+            <div style="display:flex;flex-direction:column;align-items:center;text-align:center">
+              <div style="position:relative;width:84px;height:84px;display:flex;align-items:center;justify-content:center">
+                <div style="position:absolute;inset:0;border-radius:50%;background:radial-gradient(circle,var(--accGlow),transparent 62%);filter:blur(10px)"></div>
+                <div style="width:58px;height:58px;border-radius:50%;background:radial-gradient(circle at 40% 32%,#fff,#d6ffe6 20%,var(--acc) 120%);display:flex;align-items:center;justify-content:center;box-shadow:inset 0 -4px 10px rgba(0,0,0,.4),inset 0 3px 6px rgba(255,255,255,.7)"><span style="color:#052e1a;font-size:27px;font-weight:800">✓</span></div>
+              </div>
+              <div style="font-family:'Space Mono',monospace;font-size:8.5px;letter-spacing:.22em;color:var(--acc);margin-top:14px">✓ LIFE OPERATING PLAN GENERATED</div>
+              <div style="font-family:'Marcellus',serif;font-size:22px;color:#f0faf4;margin-top:6px">Your week is designed.</div>
+            </div>
+            <div style="margin-top:18px;font-family:'Space Mono',monospace;font-size:8px;letter-spacing:.16em;color:rgba(216,236,224,.5)">TODAY'S RHYTHM</div>
+            <div style="margin-top:10px;display:flex;flex-direction:column;gap:8px">
+              <sc-for list="{{ schedule }}" as="s" hint-placeholder-count="5">
+                <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:13px;background:rgba(8,20,14,.65);border:1px solid rgba(255,255,255,.08)">
+                  <span style="font-family:'Space Mono',monospace;font-size:9px;letter-spacing:.06em;color:var(--acc);width:44px">{{ s.time }}</span>
+                  <span style="width:8px;height:8px;border-radius:50%;background:{{ s.dot }}"></span>
+                  <span style="flex:1;font-size:13px;color:#e0f0e6">{{ s.t }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </sc-if>
+
+        <!-- DASHBOARD -->
+        <sc-if value="{{ isDashboard }}" hint-placeholder-val="{{ false }}">
+          <div style="animation:nRise .4s ease both">
+            <div style="display:flex;align-items:center;gap:12px;padding:13px 15px;border-radius:16px;background:linear-gradient(160deg,rgba(10,50,30,.7),rgba(8,16,12,.85));border:1px solid rgba(58,208,127,.3);box-shadow:inset 0 1px 0 rgba(255,255,255,.14)">
+              <span style="width:42px;height:42px;border-radius:11px;background:radial-gradient(circle at 38% 30%,#d6ffe6,var(--acc) 60%,#052e1a);box-shadow:inset 0 -3px 8px rgba(0,0,0,.5),inset 0 2px 4px rgba(255,255,255,.6)"></span>
+              <span style="flex:1"><span style="display:block;font-family:'Space Mono',monospace;font-size:13px;font-weight:700;letter-spacing:.04em;color:#eefaf4">NOVALIFE PLAN</span><span style="display:block;font-family:'Space Mono',monospace;font-size:8px;letter-spacing:.16em;color:rgba(216,236,224,.5);margin-top:3px">WEEK 1 · ADAPTIVE</span></span>
+              <span style="display:flex;align-items:center;gap:6px"><span style="width:7px;height:7px;border-radius:50%;background:#3ad07f;box-shadow:0 0 7px 1px rgba(58,208,127,.7)"></span><span style="font-family:'Space Mono',monospace;font-size:10px;font-weight:700;color:#eaf5ee">ON TRACK</span></span>
+            </div>
+
+            <!-- life balance ring row -->
+            <div style="margin-top:12px;display:grid;grid-template-columns:repeat(3,1fr);gap:9px">
+              <sc-for list="{{ balance }}" as="b" hint-placeholder-count="3">
+                <div style="padding:12px 8px;border-radius:14px;background:rgba(8,20,14,.62);border:1px solid rgba(255,255,255,.08);display:flex;flex-direction:column;align-items:center;gap:6px">
+                  <div style="position:relative;width:46px;height:46px;display:flex;align-items:center;justify-content:center">
+                    <svg viewBox="0 0 44 44" style="width:46px;height:46px;transform:rotate(-90deg)"><circle cx="22" cy="22" r="18" fill="none" stroke="rgba(255,255,255,.09)" stroke-width="4"></circle><circle cx="22" cy="22" r="18" fill="none" stroke="{{ b.color }}" stroke-width="4" stroke-linecap="round" stroke-dasharray="113" stroke-dashoffset="{{ b.off }}"></circle></svg>
+                    <span style="position:absolute;font-family:'Space Mono',monospace;font-size:9px;font-weight:700;color:#eefaf4">{{ b.v }}</span>
+                  </div>
+                  <span style="font-family:'Space Mono',monospace;font-size:6.5px;letter-spacing:.1em;color:rgba(216,236,224,.55)">{{ b.k }}</span>
+                </div>
+              </sc-for>
+            </div>
+
+            <div style="margin-top:18px;font-family:'Space Mono',monospace;font-size:8px;letter-spacing:.2em;color:rgba(216,236,224,.45)">LIFE MODULES</div>
+            <div style="margin-top:11px;display:grid;grid-template-columns:repeat(4,1fr);gap:9px">
+              <sc-for list="{{ modules }}" as="m" hint-placeholder-count="8">
+                <button onClick="{{ m.open }}" style="display:flex;flex-direction:column;align-items:center;gap:8px;padding:14px 4px;border-radius:15px;background:rgba(8,20,14,.6);border:1px solid rgba(255,255,255,.09);box-shadow:inset 0 1px 0 rgba(255,255,255,.12);cursor:pointer;transition:border-color .2s" style-hover="border-color:var(--acc)">
+                  <span style="color:var(--acc);display:flex" dangerouslySetInnerHTML="{{ m.icon }}"></span>
+                  <span style="font-family:'Space Mono',monospace;font-size:7px;letter-spacing:.02em;color:rgba(224,240,230,.72);text-align:center;line-height:1.25">{{ m.label }}</span>
+                </button>
+              </sc-for>
+            </div>
+
+            <div style="margin-top:18px;font-family:'Space Mono',monospace;font-size:8px;letter-spacing:.2em;color:rgba(216,236,224,.45)">TODAY</div>
+            <div style="margin-top:11px;display:flex;flex-direction:column;gap:7px">
+              <sc-for list="{{ today }}" as="l" hint-placeholder-count="4">
+                <div style="display:flex;align-items:center;gap:11px;padding:11px 13px;border-radius:12px;background:rgba(8,20,14,.55);border:1px solid rgba(255,255,255,.07)">
+                  <span style="width:16px;height:16px;border-radius:5px;border:1.5px solid {{ l.dot }};display:flex;align-items:center;justify-content:center;color:{{ l.dot }};font-size:10px">{{ l.mark }}</span>
+                  <span style="flex:1;font-size:12px;color:{{ l.tc }}">{{ l.t }}</span>
+                  <span style="font-family:'Space Mono',monospace;font-size:8px;letter-spacing:.1em;color:rgba(216,236,224,.42)">{{ l.time }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </sc-if>
+      </div>
+
+      <sc-if value="{{ hasCta }}" hint-placeholder-val="{{ true }}">
+        <button onClick="{{ cta }}" style="position:absolute;left:20px;right:20px;bottom:104px;z-index:22;height:52px;border-radius:15px;border:none;cursor:pointer;background:var(--acc);color:#052e1a;font-family:'Space Mono',monospace;font-size:12px;font-weight:700;letter-spacing:.14em;box-shadow:0 12px 28px -10px var(--accGlow);transition:transform .2s" style-active="transform:scale(.97)">{{ ctaLabel }}</button>
+      </sc-if>
+
+      <sc-if value="{{ sheetOpen }}" hint-placeholder-val="{{ false }}">
+        <div onClick="{{ closeSheet }}" style="position:absolute;inset:0;z-index:50;background:rgba(0,0,0,.6);backdrop-filter:blur(3px)"></div>
+        <div style="position:absolute;left:0;right:0;bottom:0;z-index:51;border-radius:26px 26px 0 0;background:linear-gradient(180deg,rgba(12,22,16,.98),rgba(6,10,8,.99));border:1px solid rgba(58,208,127,.28);border-bottom:none;box-shadow:0 -20px 50px -12px #000;padding:16px 22px 30px;animation:nSheet .34s cubic-bezier(.22,1,.36,1) both">
+          <div style="width:42px;height:4px;border-radius:3px;background:rgba(255,255,255,.2);margin:0 auto 16px"></div>
+          <div style="display:flex;align-items:center;gap:13px">
+            <span style="width:44px;height:44px;border-radius:12px;background:rgba(58,208,127,.12);border:1px solid rgba(58,208,127,.4);display:flex;align-items:center;justify-content:center;color:var(--acc)" dangerouslySetInnerHTML="{{ sheet.icon }}"></span>
+            <div style="flex:1"><div style="font-family:'Space Mono',monospace;font-size:15px;font-weight:700;letter-spacing:.05em;color:#eefaf4">{{ sheet.label }}</div><div style="font-family:'Space Mono',monospace;font-size:8px;letter-spacing:.14em;color:var(--acc);margin-top:3px">CSIOS · {{ sheet.tag }}</div></div>
+          </div>
+          <div style="font-size:13px;color:rgba(216,236,224,.62);margin-top:14px;line-height:1.55">{{ sheet.desc }}</div>
+          <div style="margin-top:16px;display:flex;flex-direction:column;gap:9px">
+            <sc-for list="{{ sheet.rows }}" as="r" hint-placeholder-count="3">
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:13px 15px;border-radius:13px;background:rgba(8,20,14,.6);border:1px solid rgba(255,255,255,.08)">
+                <span style="font-size:13px;color:#e0f0e6">{{ r.k }}</span>
+                <span style="font-family:'Space Mono',monospace;font-size:10px;letter-spacing:.08em;padding:5px 10px;border-radius:8px;color:{{ r.color }};border:1px solid {{ r.color }};background:{{ r.bg }}">{{ r.v }}</span>
+              </div>
+            </sc-for>
+          </div>
+          <button onClick="{{ closeSheet }}" style="margin-top:16px;width:100%;height:48px;border-radius:14px;border:1px solid var(--acc);background:transparent;color:var(--acc);cursor:pointer;font-family:'Space Mono',monospace;font-size:11px;font-weight:700;letter-spacing:.12em">CLOSE WORKSPACE</button>
+        </div>
+      </sc-if>
+
+      <div style="position:absolute;left:12px;right:12px;bottom:12px;height:76px;z-index:30;border-radius:26px;background:linear-gradient(180deg,rgba(20,22,28,.82),rgba(6,7,10,.9));border:1px solid rgba(255,255,255,.14);box-shadow:inset 0 1.5px 0 rgba(255,255,255,.32),0 16px 34px -12px rgba(0,0,0,.8);backdrop-filter:blur(20px);display:flex;align-items:center;justify-content:space-between;padding:0 30px">
+        <a href="CSIOS Gateway.dc.html" style="text-decoration:none;display:flex;flex-direction:column;align-items:center;gap:5px;width:44px;color:rgba(255,255,255,.55)"><span dangerouslySetInnerHTML="{{ icHome }}"></span><span style="font-family:'Space Mono',monospace;font-size:6.5px;letter-spacing:.1em">HOME</span></a>
+        <button onClick="{{ goDash }}" style="background:none;border:none;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:5px;width:44px;color:{{ dashColor }}"><span dangerouslySetInnerHTML="{{ icGrid }}"></span><span style="font-family:'Space Mono',monospace;font-size:6.5px;letter-spacing:.1em">PLAN</span></button>
+        <div style="width:52px"></div>
+        <button onClick="{{ restart }}" style="background:none;border:none;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:5px;width:44px;color:rgba(255,255,255,.55)"><span dangerouslySetInnerHTML="{{ icRefresh }}"></span><span style="font-family:'Space Mono',monospace;font-size:6.5px;letter-spacing:.1em">NEW</span></button>
+        <button onClick="{{ goDash }}" style="background:none;border:none;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:5px;width:44px;color:rgba(255,255,255,.55)"><span dangerouslySetInnerHTML="{{ icGear }}"></span><span style="font-family:'Space Mono',monospace;font-size:6.5px;letter-spacing:.1em">SETTINGS</span></button>
+      </div>
+      <div onClick="{{ centerTap }}" style="position:absolute;left:50%;bottom:52px;transform:translateX(-50%);width:62px;height:62px;cursor:pointer;z-index:31;animation:nOrb 4s ease-in-out infinite;animation-play-state:var(--motion,running)">
+        <div style="position:absolute;inset:-24%;border-radius:50%;background:radial-gradient(circle,var(--accGlow),transparent 62%);filter:blur(7px)"></div>
+        <div style="position:absolute;inset:0;border-radius:50%;border:1px solid rgba(150,240,180,.5);animation:nSpin 16s linear infinite;animation-play-state:var(--motion,running)"></div>
+        <div style="position:absolute;inset:5px;border-radius:50%;background:radial-gradient(circle at 38% 30%,#fff,#cfd3da 12%,#5f636b 36%,#141519 66%,#020204);box-shadow:inset 0 -6px 14px rgba(0,0,0,.85),inset 0 5px 10px rgba(255,255,255,.55),0 8px 18px -4px rgba(0,0,0,.7)"></div>
+      </div>
+
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:428,&quot;height&quot;:924}}">
+const IC = {
+  hero:'<svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M12 20s-7-4.4-9-8.6C1.6 8.3 3.4 5.5 6.3 5.5c1.8 0 3 1 3.7 2.2C10.7 6.5 12 5.5 13.7 5.5c2.9 0 4.7 2.8 3.3 5.9C15 15.6 12 20 12 20z"/><path d="M3.5 12.5H7l1.6-3.2 2.2 6 1.7-4 1.3 1.2H20"/></svg>',
+  goals:'<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1"/></svg>',
+  habits:'<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M4 12a8 8 0 1 1 2.4 5.7"/><path d="M4 20v-4h4"/><path d="M9 12l2 2 4-4"/></svg>',
+  calendar:'<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 9.5h16M8 3.5v3M16 3.5v3"/><rect x="7" y="12" width="3" height="3" rx=".6"/></svg>',
+  health:'<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M3 12h4l2-5 3 10 2-6 2 3h4"/></svg>',
+  goalsSm:'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1"/></svg>',
+  habitsSm:'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M4 12a8 8 0 1 1 2.4 5.7"/><path d="M4 20v-4h4"/><path d="M9 12l2 2 4-4"/></svg>',
+  calSm:'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 9.5h16M8 3.5v3M16 3.5v3"/></svg>',
+  healthSm:'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M3 12h4l2-5 3 10 2-6 2 3h4"/></svg>',
+  recovery:'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M12 4a6 6 0 0 0-6 6c0 4 6 10 6 10s6-6 6-10a6 6 0 0 0-6-6z"/><path d="M12 8v4l2 1"/></svg>',
+  nutrition:'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M12 4c3 0 5 2.5 5 6 0 5-3 10-5 10s-5-5-5-10c0-3.5 2-6 5-6z"/><path d="M12 4c0-1 1-2 2.5-2"/></svg>',
+  relationships:'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="9" r="2.6"/><circle cx="16" cy="9" r="2.6"/><path d="M3.5 18c0-2.5 2-4.2 4.5-4.2S12.5 15.5 12.5 18M11.5 18c0-2.5 2-4.2 4.5-4.2s4.5 1.7 4.5 4.2"/></svg>',
+  tasks:'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 7h3l1 1 2-2M13 7h7M4 13h3l1 1 2-2M13 13h7M4 19h3l1 1 2-2M13 19h7"/></svg>',
+  home:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 11l8-6 8 6v8a1 1 0 0 1-1 1h-4v-6h-6v6H5a1 1 0 0 1-1-1z"/></svg>',
+  grid:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="4" y="4" width="6.5" height="6.5" rx="1.4"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.4"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.4"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.4"/></svg>',
+  refresh:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M4 12a8 8 0 0 1 13.7-5.6L20 8M20 4v4h-4"/><path d="M20 12a8 8 0 0 1-13.7 5.6L4 16M4 20v-4h4"/></svg>',
+  gear:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3.2"/><path d="M12 3.5v2.2M12 18.3v2.2M4.7 7.3l1.9 1.1M17.4 15.6l1.9 1.1M4.7 16.7l1.9-1.1M17.4 8.4l1.9-1.1"/></svg>',
+};
+const H = (s)=>({ __html:s });
+const hexA = (hex,a)=>{ const n=parseInt(hex.slice(1),16); return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`; };
+const FLOW = ['splash','intake','priorities','generate','plan','dashboard'];
+const STEP_LABEL = { splash:'LIFE OPERATING SYSTEM', intake:'LIFE INTAKE', priorities:'SET PRIORITIES', generate:'GENERATE PLAN', plan:'LIFE PLAN', dashboard:'LIFE DASHBOARD' };
+const AREAS = [
+  { id:'health', label:'Health',       icon:IC.health },
+  { id:'goals',  label:'Goals',        icon:IC.goals },
+  { id:'habits', label:'Habits',       icon:IC.habits },
+  { id:'work',   label:'Work',         icon:IC.tasks },
+  { id:'social', label:'Relationships',icon:IC.relationships },
+  { id:'mind',   label:'Mind',         icon:IC.recovery },
+];
+const MODULES = [
+  { id:'go', label:'Goals',        icon:IC.goalsSm,        tag:'DIRECTION', desc:'Set, track and sequence the goals that shape your life plan.', rows:[['Active','5','#3ad07f'],['On track','4','#3ad07f'],['This week','2','#5aa9ff']] },
+  { id:'ha', label:'Habits',       icon:IC.habitsSm,       tag:'ROUTINE',   desc:'Build and maintain the daily habits that compound over time.', rows:[['Habits','8','#3ad07f'],['Streak','7 days','#3ad07f'],['Today','5/8','#5aa9ff']] },
+  { id:'ca', label:'Calendar',     icon:IC.calSm,          tag:'TIME',      desc:'Your adaptive schedule, balanced across every life area.',     rows:[['Events','6','#3ad07f'],['Focus blocks','3','#3ad07f'],['Free','2h','#5aa9ff']] },
+  { id:'he', label:'Health',       icon:IC.healthSm,       tag:'VITALS',    desc:'Track vitals, activity and how your body is trending.',         rows:[['Steps','8.2k','#3ad07f'],['Sleep','7h 20m','#3ad07f'],['HR','62','#5aa9ff']] },
+  { id:'re', label:'Recovery',     icon:IC.recovery,       tag:'REST',      desc:'Rest, stress and recovery — the foundation of everything.',     rows:[['Recovery','82%','#3ad07f'],['Stress','Low','#3ad07f'],['Rest','Good','#3ad07f']] },
+  { id:'nu', label:'Nutrition',    icon:IC.nutrition,      tag:'FUEL',      desc:'Meals, hydration and fueling aligned to your goals.',           rows:[['Calories','1.9k','#3ad07f'],['Water','6/8','#5aa9ff'],['Balance','Good','#3ad07f']] },
+  { id:'rl', label:'Relationships',icon:IC.relationships,  tag:'PEOPLE',    desc:'Nurture the connections that matter with gentle reminders.',    rows:[['People','12','#3ad07f'],['Reach outs','2','#5aa9ff'],['Overdue','1','#e0a24a']] },
+  { id:'ta', label:'Tasks',        icon:IC.tasks,          tag:'ACTION',    desc:'Everything you need to do, prioritized into your day.',         rows:[['Open','9','#3ad07f'],['Done today','6','#3ad07f'],['Overdue','0','#3ad07f']] },
+];
+
+class Component extends DCLogic {
+  state = { step:'splash', areas:['health','goals','habits'], weights:{Health:70,Goals:55,Habits:60,Mind:40}, genPct:0, sheet:null };
+  componentDidMount(){ this.fit(); this._onR=()=>this.fit(); window.addEventListener('resize',this._onR); }
+  componentWillUnmount(){ if(this._onR) window.removeEventListener('resize',this._onR); if(this._timers) this._timers.forEach(clearTimeout); }
+  fit(){ const el=document.querySelector('[data-device="1"]'); if(!el) return; const s=Math.min(1,(window.innerHeight-32)/902); el.style.zoom = s>0?s:1; }
+  clearT(){ if(this._timers) this._timers.forEach(clearTimeout); this._timers=[]; }
+  goStep(s){ this.clearT(); this.setState({ step:s }); }
+  toggleArea(id){ const a=this.state.areas.slice(); const k=a.indexOf(id); if(k>=0){ if(a.length>1) a.splice(k,1); } else a.push(id); this.setState({ areas:a }); }
+  bump(k){ const w=Object.assign({},this.state.weights); w[k]=w[k]>=100?25:Math.min(100,w[k]+15); this.setState({ weights:w }); }
+  startGen(){
+    this.clearT(); this.setState({ step:'generate', genPct:0 });
+    const t=[]; for(let i=1;i<=20;i++){ t.push(setTimeout(()=>this.setState({ genPct:i*5 }), i*140)); }
+    t.push(setTimeout(()=>this.setState({ step:'plan' }), 20*140+280));
+    this._timers=t;
+  }
+  cta(){ const s=this.state.step; if(s==='splash') this.goStep('intake'); else if(s==='intake') this.goStep('priorities'); else if(s==='priorities') this.startGen(); else if(s==='plan') this.goStep('dashboard'); }
+  openModule(id){ this.setState({ sheet:MODULES.find(m=>m.id===id) }); }
+  closeSheet(){ this.setState({ sheet:null }); }
+  restart(){ this.clearT(); this.setState({ step:'intake', genPct:0, sheet:null }); }
+
+  renderVals(){
+    const st=this.state; const step=st.step;
+    const flowSteps = FLOW.map((s,i)=>{ const cur=FLOW.indexOf(step); return { bg:i<=cur?'var(--acc)':'rgba(255,255,255,.12)', glow:i===cur?'0 0 8px var(--accGlow)':'none' }; });
+
+    const areas = AREAS.map(a=>{ const on=st.areas.includes(a.id); return { label:a.label, icon:H(a.icon), on, pick:()=>this.toggleArea(a.id),
+      bg:on?'rgba(58,208,127,.13)':'rgba(8,20,14,.6)', border:on?'var(--acc)':'rgba(255,255,255,.1)', color:'var(--acc)' }; });
+
+    const sliders = Object.keys(st.weights).map(k=>({ label:k, val:st.weights[k], bump:()=>this.bump(k) }));
+
+    const ringOffset = 327 - (327*st.genPct/100);
+    const genLog = [ {t:'Analyzing your priorities',at:2}, {t:'Balancing energy across areas',at:7}, {t:'Sequencing habits & goals',at:12}, {t:'Composing weekly rhythm',at:18} ].map(l=>{ const on=st.genPct/5>=l.at; return { t:l.t, op:on?1:0.3, mark:on?'✓':'○', dot:on?'#3ad07f':'rgba(216,236,224,.4)' }; });
+
+    const schedule = [
+      { time:'7:00', t:'Morning movement · 20 min', dot:'#3ad07f' },
+      { time:'9:00', t:'Deep work · top goal', dot:'#5aa9ff' },
+      { time:'13:00', t:'Balanced lunch + walk', dot:'#e0a24a' },
+      { time:'17:30', t:'Reach out · a relationship', dot:'#d46bff' },
+      { time:'21:30', t:'Wind down · recovery', dot:'#35d0c0' },
+    ];
+
+    const balance = [ {k:'HEALTH',v:'82',off:113-(113*0.82),color:'#3ad07f'}, {k:'FOCUS',v:'70',off:113-(113*0.70),color:'#5aa9ff'}, {k:'BALANCE',v:'76',off:113-(113*0.76),color:'#35d0c0'} ];
+
+    const today = [
+      { t:'Morning movement', time:'done', mark:'✓', dot:'#3ad07f', tc:'rgba(216,236,224,.5)' },
+      { t:'Deep work block', time:'now', mark:'', dot:'#5aa9ff', tc:'#e0f0e6' },
+      { t:'Hydration · 6 of 8', time:'2h', mark:'', dot:'#35d0c0', tc:'#e0f0e6' },
+      { t:'Evening wind-down', time:'21:30', mark:'', dot:'rgba(255,255,255,.3)', tc:'#e0f0e6' },
+    ];
+
+    const sheet = st.sheet ? { label:st.sheet.label, tag:st.sheet.tag, desc:st.sheet.desc, icon:H(st.sheet.icon), rows: st.sheet.rows.map(r=>({k:r[0],v:r[1],color:r[2],bg:hexA(r[2],.12)})) } : null;
+
+    return {
+      stepLabel: STEP_LABEL[step], flowSteps,
+      isSplash:step==='splash', isIntake:step==='intake', isPriorities:step==='priorities', isGenerate:step==='generate', isPlan:step==='plan', isDashboard:step==='dashboard',
+      icHero:H(IC.hero),
+      areas, sliders,
+      genPct:st.genPct, ringOffset, genLog,
+      schedule,
+      balance,
+      modules: MODULES.map(m=>({ label:m.label, icon:H(m.icon), open:()=>this.openModule(m.id) })),
+      today,
+      sheetOpen:!!sheet, sheet, closeSheet:()=>this.closeSheet(),
+      hasCta: step==='splash'||step==='intake'||step==='priorities'||step==='plan',
+      ctaLabel: step==='splash'?'BEGIN LIFE INTAKE':(step==='intake'?'SET PRIORITIES':(step==='priorities'?'GENERATE LIFE PLAN →':'OPEN LIFE DASHBOARD')),
+      cta:()=>this.cta(),
+      icHome:H(IC.home), icGrid:H(IC.grid), icRefresh:H(IC.refresh), icGear:H(IC.gear),
+      dashColor: step==='dashboard'?'var(--acc)':'rgba(255,255,255,.55)',
+      goDash:()=>this.goStep('dashboard'),
+      restart:()=>this.restart(),
+      centerTap:()=>this.goStep('dashboard'),
+    };
+  }
+}
+</script>
+</body>
+</html>
