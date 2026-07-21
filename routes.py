@@ -323,24 +323,6 @@ def create_app(static_dir: str) -> FastAPI:
         result    = await execute_tool(tool_name, params, gid, role)
         return {"tool": tool_name, "result": result, "system_time": time.strftime("%H:%M:%S")}
 
-    # ── TAE STATE ──────────────────────────────────────────────
-    @api.get("/tae")
-    def tae_state():
-        """Get current TAE orchestration state"""
-        return {
-            "state": eng.state.tae_state,
-            "config": {
-                "orbPulseIntensity": 0.7,  # from TAE render config
-                "orbScaleRange": [0.9, 1.1],
-                "orbReflectionIntensity": 0.85,
-                "rippleAmplitude": 0.12,
-                "ambientAudioGain": 0.45,
-                "chromeBandAlpha": 0.55,
-                "particleOpacity": 0.45,
-            },
-            "activationTime": time.time() - _start_time,
-            "timestamp": time.strftime("%H:%M:%S"),
-        }
 
     @api.post("/tae/command")
     async def tae_command(request: Request):
@@ -349,66 +331,6 @@ def create_app(static_dir: str) -> FastAPI:
         command = body.get("command", "")
         await run_tae_command(command)
         return {"command": command, "status": "queued", "tae_state": eng.state.tae_state}
-
-    # ── RENDER STATE ───────────────────────────────────────────
-    @api.get("/render-state")
-    def render_state():
-        """Get current identity-responsive render config"""
-        gid = "399152573423"  # OWNER_GID
-        return {
-            "gid": gid,
-            "primaryHue": 213,
-            "accentHue": 190,
-            "orbScaleFactor": 1.0,
-            "orbDistortionFactor": 0.5,
-            "pulseSignature": 0.8,
-            "moduleActivationSequence": ["TAE COMMAND", "SYNCORI", "IDENTITY", "RENDER STATE"],
-            "audioFrequencyShift": 0,
-            "timestamp": time.strftime("%H:%M:%S"),
-        }
-
-    # ── IOT MESH ───────────────────────────────────────────────
-    @api.get("/iot")
-    def iot_state():
-        """Get IOT mesh connectivity state"""
-        return {
-            "meshConnected": True,
-            "activeDevices": 7,
-            "signalStrength": 0.95,
-            "lastSync": time.strftime("%H:%M:%S"),
-            "devices": [
-                {"id": "device_1", "name": "Primary", "signal": 0.98},
-                {"id": "device_2", "name": "Secondary", "signal": 0.92},
-            ],
-        }
-
-    # ── SYNCORI ENGINE ─────────────────────────────────────────
-    @api.get("/syncori")
-    def syncori_state():
-        """Get Syncori media runtime state"""
-        return {
-            "running": True,
-            "orbIntensity": 0.75,
-            "mediaPlayback": True,
-            "renderMode": "ferrofluid",
-            "uptime": _uptime(),
-            "timestamp": time.strftime("%H:%M:%S"),
-        }
-
-    # ── IDENTITY ENGINE ────────────────────────────────────────
-    @api.get("/identity")
-    def identity_state():
-        """Get identity recognition and clearance state"""
-        gid = "399152573423"  # OWNER_GID
-        return {
-            "gid": gid,
-            "role": "owner",
-            "clearance": "Prime Orchestrator",
-            "trustLevel": 1.0,
-            "sessionCount": 1,
-            "firstSeen": "2024-01-01T00:00:00Z",
-            "lastActive": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        }
 
     # ── Runtime snapshot ───────────────────────────────────────
     @api.get("/runtime/snapshot")
