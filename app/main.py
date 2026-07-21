@@ -1,8 +1,8 @@
 """FastAPI application factory.
 
 Mounts existing routers unchanged under /api and /api/v1.
-During migration, /api/* proxies to the same handlers so the
-deployed frontend keeps working.
+The v1 router is registered FIRST so its specific paths win
+over the legacy catch-all SPA fallback in routes.py.
 """
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,18 +28,18 @@ def create_application() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # ── Mount existing routes unchanged ──
-    # The compatibility router at /api serves the current frontend.
+    # ── v1 namespace (mounted FIRST — specific paths before catch-all) ──
+    from app.api.v1 import router as v1_router
+    app.include_router(v1_router, prefix="/api/v1")
+
+    # ── Mount existing legacy routes ──
+    # The legacy router at /api serves the current frontend.
+    # Its catch-all /{path:path} SPA fallback must come AFTER /api/v1/*.
     from routes import create_app as _create_legacy_app
 
     legacy = _create_legacy_app("./dist-live")
-    # Mount legacy sub-routers under /api (keeping existing shapes)
     for route in legacy.routes:
         app.router.routes.append(route)
-
-    # ── v1 namespace (new endpoints land here) ──
-    from app.api.v1 import router as v1_router
-    app.include_router(v1_router, prefix="/api/v1")
 
     return app
 
