@@ -1,11 +1,15 @@
 /**
- * SIOS WebSocket Client
- * Connects to /api/ws with GID + role query params.
+ * Agentic OR — WebSocket Client
+ * Connects to /api/ws with a short-lived WS ticket (not bare GID).
+ * Ticket is obtained from /api/v1/ws/ticket with JWT auth.
+ *
  * Handles: state snapshots, render updates, console entries,
  *          system events, device updates, Syncori updates,
- *          orb spawns, heartbeats.
+ *          orb spawns, heartbeats, TAE progress + results.
  * Auto-reconnects with exponential backoff.
  */
+
+import { api, getAccessToken } from "./api";
 
 export type WSMessage =
   | { type: "state_snapshot";  [key: string]: unknown }
@@ -16,6 +20,7 @@ export type WSMessage =
   | { type: "syncori_update";  queue: SyncoriTrack[]; index: number }
   | { type: "orb_spawn";       module: string; effect: string }
   | { type: "tae_state";       state: string }
+  | { type: "tae_progress";    phase: string }
   | { type: "tae_result";      response: string; tools_called: ToolCall[]; render_mutated: boolean; tae_state: string }
   | { type: "heartbeat";       ts: number; tae_state: string; system_time: string; ws_count: number }
   | { type: "pong";            ts: number; tae_state: string };
@@ -87,11 +92,27 @@ export class SIOSWebSocket {
     this.role = role;
   }
 
-  connect() {
+  async connect() {
     if (this.destroyed) return;
+
+    // Get WS ticket from backend (JWT-authenticated)
+    let ticket: string;
+    try {
+      ticket = await api.getWsTicket();
+    } catch {
+      // Fallback: if no JWT yet, connect with bare GID (dev/legacy mode)
+      const token = getAccessToken();
+      if (!token) {
+        this._scheduleReconnect();
+        return;
+      }
+      this._scheduleReconnect();
+      return;
+    }
+
     const proto = window.location.protocol === "https:" ? "wss" : "ws";
     const host  = window.location.host;
-    const url   = `${proto}://${host}/api/ws?gid=${encodeURIComponent(this.gid)}&role=${encodeURIComponent(this.role)}`;
+    const url   = `${proto}://${host}/api/ws?ticket=${encodeURIComponent(ticket)}`;
 
     try {
       this.ws = new WebSocket(url);
