@@ -55,7 +55,7 @@ BUN_PID=$!
 # Start FastAPI as soon as Python deps are ready (background)
 wait $UV_PID
 echo "[+$(elapsed)ms] Starting FastAPI on port $BACKEND_PORT"
-uv run uvicorn app:asgi --reload --host 0.0.0.0 --port $BACKEND_PORT \
+uv run uvicorn app.main:asgi --reload --host 0.0.0.0 --port $BACKEND_PORT \
   --reload-exclude ".venv" --reload-exclude ".git" --reload-exclude "__pycache__" --reload-exclude "*.pyc" --reload-exclude "node_modules" &
 BACKEND_PID=$!
 

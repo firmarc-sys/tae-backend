@@ -1,0 +1,46 @@
+name: CI
+on:
+  push:
+    branches: [main, "migration/**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv sync --no-dev
+      - run: uv run ruff check . --select E,F,W,I --ignore E501
+
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: tae_test
+          POSTGRES_USER: tae
+          POSTGRES_PASSWORD: tae
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv sync
+      - run: uv run pytest tests/ -v
+        env:
+          DATABASE_URL: postgresql://tae:tae@localhost:5432/tae_test
+          JWT_SECRET: test-secret-not-for-prod
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Docker image
+        run: docker build -t tae-backend .

@@ -9,6 +9,7 @@ import type { ReactNode } from "react";
 import { getWSClient, destroyWSClient } from "../lib/ws";
 import type { RenderStateWS, ConsoleEntry, SystemEvent, DeviceRecord, SyncoriTrack, WSMessage } from "../lib/ws";
 import type { SIOSIdentity } from "../lib/identity";
+import { api } from "../lib/api";
 
 // ── State shape ─────────────────────────────────────────────────
 
@@ -224,16 +225,13 @@ export function RuntimeProvider({ identity, children }: RuntimeProviderProps) {
     dispatch({ type: "SET_RESPONDING", responding: true });
     dispatch({ type: "ADD_CONSOLE", entry: { role: "user", msg: cmd, ts: Date.now() / 1000 } });
     try {
-      const res = await fetch("/api/tae", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ command: cmd, gid: identity.gid, role: identity.role }),
-      });
-      const data = await res.json();
+      const data = await api.taeCommand(cmd);
       dispatch({ type: "ADD_CONSOLE", entry: {
-        role: "tae", msg: data.tae_response || "Command processed.", ts: Date.now() / 1000,
+        role: "tae", msg: data.response || "Command processed.", ts: Date.now() / 1000,
       }});
-      if (data.tae_state) dispatch({ type: "SET_TAE_STATE", state: data.tae_state });
+      if (data.tokens_remaining !== undefined) {
+        // Token usage tracking (optional display)
+      }
     } catch {
       dispatch({ type: "ADD_CONSOLE", entry: {
         role: "tae", msg: "Connection issue. Fallback active.", ts: Date.now() / 1000,

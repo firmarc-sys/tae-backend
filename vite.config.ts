@@ -19,7 +19,12 @@ export default defineConfig({
     strictPort: true,
     allowedHosts: true,
     proxy: {
+      "/api/v1": `http://localhost:${process.env.VITE_BACKEND_PORT || 3101}`,
       "/api": `http://localhost:${process.env.VITE_BACKEND_PORT || 3101}`,
+      "/ws": {
+        target: `ws://localhost:${process.env.VITE_BACKEND_PORT || 3101}`,
+        ws: true,
+      },
     },
     watch: {
       ignored: [
