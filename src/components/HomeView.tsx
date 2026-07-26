@@ -175,4 +175,9 @@ export function HomeView({ identity, demoMode = false, onDemoRequest }: HomeView
           <p className="text-2xl sios-mono text-white/90 font-light tracking-widest mb-6">
             This is me.
           </p>
+        </motion.div>
+      )}
+    </div>
+  );
+}
 

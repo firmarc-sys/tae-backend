@@ -7,6 +7,7 @@ import { RuntimeShell } from './components/RuntimeShell'
 import { OpeningCinematic } from './components/OpeningCinematic'
 import { RuntimeVerification } from './components/RuntimeVerification'
 import { PortraitFrame } from './components/PortraitFrame'
+import { JaiHomeScreen } from './components/JaiHomeScreen'
 import type { SIOSIdentity } from './lib/identity'
 import { OWNER_IDENTITY, applyIdentityColors, isOwner } from './lib/identity'
 import { clearIdentity, loadIdentity, saveIdentity, saveSession } from './lib/storage'
@@ -17,7 +18,7 @@ import { tae } from './runtime/TAE'
 import { getAccessState, type RuntimePageId, updateSubscriberRecord } from './lib/runtimeAccess'
 import { RUNTIME_PAGES } from './lib/runtimePages'
 
-type AppPhase = 'boot' | 'onboarding' | 'runtime'
+type AppPhase = 'boot' | 'onboarding' | 'home' | 'runtime'
 
 export default function App() {
   const [phase, setPhase] = useState<AppPhase>('boot')
@@ -33,9 +34,8 @@ export default function App() {
       setIdentity(saved)
       applyIdentityColors(saved.renderProfile)
       createIdentityRender(saved)
-      setPhase('runtime')
+      setPhase('home')
       tae.activateState('idle')
-      setShowOpening(true)
     }
   }, [])
 
@@ -51,9 +51,7 @@ export default function App() {
         saveSession(ownerIdentity.gid, ownerIdentity.role)
         applyIdentityColors(ownerIdentity.renderProfile)
         createIdentityRender(ownerIdentity)
-        setPhase('runtime')
-        setShowOpening(true)
-        tae.activateState('awakening')
+        setPhase('home')
       }
     }
     init()
@@ -66,8 +64,7 @@ export default function App() {
         saveSession(ownerIdentity.gid, ownerIdentity.role)
         applyIdentityColors(ownerIdentity.renderProfile)
         createIdentityRender(ownerIdentity)
-        setPhase('runtime')
-        setShowOpening(true)
+        setPhase('home')
       }
       if (event === 'SIGNED_OUT') {
         clearIdentity()
@@ -88,13 +85,18 @@ export default function App() {
     applyIdentityColors(nextIdentity.renderProfile)
     createIdentityRender(nextIdentity)
     updateSubscriberRecord({}, nextIdentity)
-    setPhase('runtime')
-    setShowOpening(true)
+    setPhase('home')
   }
 
   const handleNavigate = (page: RuntimePageId) => {
     setActivePage(page)
     tae.queueCommand(`open ${page}`)
+  }
+
+  const handleEnterSpace = () => {
+    setPhase('runtime')
+    setShowOpening(true)
+    tae.activateState(access.isOwner ? 'owner_mode' : 'idle')
   }
 
   const handleOpeningComplete = () => {
@@ -122,6 +124,7 @@ export default function App() {
           <AnimatePresence mode="wait">
             {phase === 'boot' && <BootScreen key="boot" onComplete={() => setPhase('onboarding')} />}
             {phase === 'onboarding' && <Onboarding key="onboarding" onComplete={handleOnboardingComplete} />}
+            {phase === 'home' && identity && <JaiHomeScreen key="home" onEnterSpace={handleEnterSpace} />}
             {phase === 'runtime' && identity && (
               <RuntimeShell
                 key="runtime"
