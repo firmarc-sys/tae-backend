@@ -1,0 +1,26 @@
+{
+  "name": "Agentic OS Skill Library",
+  "version": "1.0.0",
+  "authority": "Master Architect",
+  "description": "Canonical platform skills, specifications, implementation contracts, and governance rules for Agentic OS.",
+  "entrypoints": {
+    "platform_governor": "00-governance/AOS-000-platform-governor.md",
+    "repository_governor": "00-governance/REP-001-repository-governor.md",
+    "api_governor": "00-governance/API-001-api-governor.md",
+    "registry": "07-registries/skill-registry.json"
+  },
+  "compatibility": [
+    "Adapt",
+    "Claude",
+    "Repository Agents",
+    "API Agents",
+    "General Coding Agents"
+  ],
+  "rules": {
+    "master_architect_is_source_of_truth": true,
+    "no_redesign": true,
+    "no_unapproved_substitution": true,
+    "production_ready_outputs": true,
+    "skills_double_as_specs": true
+  }
+}
