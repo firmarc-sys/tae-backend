@@ -1,56 +1,61 @@
-# Agentic OR — TAE Backend
+# Agentic Mercury TimeRunner
 
-Production runtime for the Agentic OR intelligence layer.
+Production runtime for the Mercury Infinite Canvas Desktop, powered by TAE orchestration and GID identity.
 
-## Architecture
+## Canonical behavior
 
-Single FastAPI backend (`app/`) serving:
-- `/api/*` — legacy compatibility routes (existing frontend)
-- `/api/v1/*` — new production API (auth, billing, TAE, admin)
-- `/ws` — WebSocket real-time state stream
+- One persistent scene, one shared runtime, and one identity.
+- Landscape 48:9 shows left, center, and right portrait workspaces simultaneously.
+- Portrait 9:16 shows one complete workspace at a time with horizontal swipe navigation.
+- Orientation and route changes preserve active state.
+- The Liquid Dock stays physically anchored to the bottom safe area.
+- Workspaces materialize from the Liquid Dock and return to it.
+- Mercury surfaces are machined liquid chrome without frosted glass, blur panels, or dashboard cards.
+- The Living Intelligent Crystal communicates TAE state.
 
-Frontend: React 19 + Vite + TypeScript + Tailwind + shadcn/ui + Three.js/R3F
+## Run
 
-## Quick Start
-
-### Docker (recommended)
 ```bash
-cp .env.example .env  # Fill in your secrets
-docker compose up --build
+cp .env.example .env
+npm install
+npm run dev
 ```
 
-### Local dev
+The frontend can run against the built-in degraded/offline state. For the full runtime:
+
 ```bash
 uv sync
-bun install
-./start.sh  # Starts FastAPI + Vite dev server
+./start.sh
 ```
 
-## Database Setup
+## Production services
 
-```bash
-# Create tables from Alembic migration
-alembic upgrade head
+- `POST /api/tae`
+- `GET /api/render-state`
+- `GET /api/iot`
+- `GET /api/syncori`
+- `GET /api/identity`
+- `GET /api/stream`
+- `GET /api/health`
+- `WS /ws`
 
-# (Optional) Migrate data from old Prisma tables
-python scripts/migrate_from_prisma.py
+## Demo Mode
+
+Enter the exact command:
+
+```text
+TAE, enter Demo Mode
 ```
 
-## Environment Variables
+Canonical response:
 
-See `.env.example` for all required variables. Critical:
-- `DATABASE_URL` — PostgreSQL connection string
-- `JWT_SECRET` — Strong random secret for JWT signing
-- `OPENAI_API_KEY` — For the TAE orchestrator
-- `SIOS_ENABLE_DB=1` — Enable database persistence
+```text
+This is not an app. This is me.
+```
 
-## Deployment
+Owner runtime:
 
-The `render.yaml` deploys via Docker with a managed PostgreSQL database.
-Health check: `GET /api/v1/health`
+- GID: `399152573423`
+- Mode: `Prime Orchestrator`
 
-## Migration Status
-
-This branch (`migration/production-cutover`) implements the TAE Production
-Migration Plan. The Express backend has been removed; all endpoints now
-live in FastAPI under `app/`.
+See `docs/00_SOURCE_OF_TRUTH.md`, `reports/GAP_ANALYSIS.md`, and `reports/MISSING_AND_NEEDED.md` before production deployment.
