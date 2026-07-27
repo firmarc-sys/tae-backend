@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unitedagenticecosystem.space/contracts/render-spec.schema.json",
+  "title": "Mercury Render State",
+  "type": "object",
+  "required": ["viscosity", "reflection", "formation", "pulse_speed", "active_module"],
+  "properties": {
+    "viscosity": { "type": "number", "minimum": 0, "maximum": 2 },
+    "reflection": { "type": "number", "minimum": 0, "maximum": 2 },
+    "glow_intensity": { "type": "number", "minimum": 0, "maximum": 2 },
+    "formation": { "type": "number", "minimum": 0, "maximum": 1 },
+    "pulse_speed": { "type": "number", "minimum": 0, "maximum": 4 },
+    "syncori_activity": { "type": "number", "minimum": 0, "maximum": 1 },
+    "active_module": { "type": "string" },
+    "tae_state": { "enum": ["IDLE", "ACTIVE", "GENERATE", "DEMO"] }
+  },
+  "additionalProperties": true
+}
