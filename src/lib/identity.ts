@@ -161,7 +161,7 @@ const TAGLINES = [
 
 // ── Derive render profile from onboarding data ─────────────────
 export function deriveRenderProfile(data: OnboardingData): RenderProfile {
-  const { birthdate, favoriteNumber, goals, name } = data;
+  const { birthdate, favoriteNumber, goals } = data;
   const { lifePathSum, lifePathNumber } = generateGID(birthdate, favoriteNumber);
   const hues = LIFE_PATH_HUES[lifePathNumber] ?? [210, 190];
   const favMod = ((favoriteNumber - 1) % 9) + 1; // 1-9
