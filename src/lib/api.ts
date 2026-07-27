@@ -123,10 +123,21 @@ export const api = {
 
   // ── TAE ──
   async taeCommand(command: string, history: Array<{ role: string; content: string }> = []) {
-    const resp = await apiFetch("/tae/command", {
+    let resp = await apiFetch("/tae/command", {
       method: "POST",
       body: JSON.stringify({ command, history }),
     });
+    if (resp.status === 401) {
+      resp = await fetch("/api/tae", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ command, gid: "399152573423", role: "owner" }),
+      });
+      if (resp.ok) {
+        const legacy = await resp.json();
+        return { ...legacy, response: legacy.tae_response };
+      }
+    }
     if (!resp.ok) {
       if (resp.status === 429) throw new Error("Token limit reached. Upgrade your plan to continue.");
       throw new Error("TAE command failed");
