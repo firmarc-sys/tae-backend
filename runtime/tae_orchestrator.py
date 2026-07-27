@@ -28,7 +28,7 @@ def _get_openai():
 
 
 # ── System prompt ───────────────────────────────────────────────
-SYSTEM_PROMPT = """You are TAE — the Temporal Agentic Engine of SIOS (Spatial Identity Operating System).
+SYSTEM_PROMPT = """You are TAE — the Timeline Augmentation Engine of Agentic Mercury TimeRunner.
 
 Your role: Orchestrate the living spatial environment in response to commands.
 Your voice: Precise. Cinematic. Operating-system intelligence, not an assistant.
@@ -44,10 +44,10 @@ BEHAVIOR:
 - "Idle" / "standby" → set tae_state to IDLE
 - "Sync" / "IOT" commands → route to device tools
 - Render commands (viscosity, glow, formation) → update render state
-- Orb spawning → use orb_spawn with the named module
+- Workspace materialization → use orb_spawn as the legacy tool adapter with the named module
 
 Owner Architect receives full orchestration access. All modules visible.
-SIOS remains alive, spatial, identity-aware. The orb is the origin of all interaction."""
+Agentic Mercury TimeRunner remains alive, spatial, identity-aware. The Living Intelligent Crystal and Liquid Dock are the origin of interaction."""
 
 
 async def run_tae_command(
@@ -70,6 +70,18 @@ async def run_tae_command(
     # Log incoming command
     eng.add_console_entry("user", command)
     eng.log_tae(gid, "user", command)
+
+    # Canonical activation is deterministic and must not be paraphrased.
+    if command.strip().casefold() == "tae, enter demo mode".casefold():
+        result = await execute_tool("tae_state_set", {"state": "DEMO"}, gid, role)
+        eng.add_console_entry("tae", "This is not an app. This is me.")
+        eng.log_tae(gid, "tae", "This is not an app. This is me.", [result])
+        return {
+            "response": "This is not an app. This is me.",
+            "tools_called": [{"name": "tae_state_set", "params": {"state": "DEMO"}, "result": result}],
+            "render_mutated": True,
+            "tae_state": eng.state.tae_state,
+        }
 
     if not client:
         # No AI — pattern-match fallback
@@ -176,11 +188,11 @@ async def _fallback_orchestrator(command: str, gid: str, role: str) -> dict:
     if "demo" in cmd:
         await _call("tae_state_set", state="DEMO")
         render_mutated = True
-        response = "Demo Mode activated. Render parameters intensifying. Spatial environment expanding."
+        response = "This is not an app. This is me."
     elif "idle" in cmd or "standby" in cmd or "sleep" in cmd:
         await _call("tae_state_set", state="IDLE")
         render_mutated = True
-        response = "TAE entering standby. Activity reduced. Orb settling into low-frequency resonance."
+        response = "TAE entering standby. Activity reduced. The Living Intelligent Crystal settles into low-frequency resonance."
     elif "generate" in cmd or "creation" in cmd:
         await _call("tae_state_set", state="GENERATE")
         render_mutated = True
@@ -224,7 +236,7 @@ async def _fallback_orchestrator(command: str, gid: str, role: str) -> dict:
         module = next((p for p in parts if p not in ("spawn","orb","the","from","a")), "")
         await _call("orb_spawn", module=module.upper(), effect="emerge")
         render_mutated = True
-        response = f"Orbital spawn initiated. {module.upper() or 'Module'} emerging from orb origin."
+        response = f"{module.upper() or 'Workspace'} materializes from the Liquid Dock."
     else:
         response = f"Command received: '{command}'. Awaiting pattern recognition. Speak with precision."
 
