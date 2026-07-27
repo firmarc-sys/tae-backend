@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">Agentic Mercury TimeRunner</title>
+  <defs>
+    <radialGradient id="void" cx="50%" cy="38%" r="70%">
+      <stop offset="0" stop-color="#182126"/>
+      <stop offset=".62" stop-color="#010203"/>
+      <stop offset="1"/>
+    </radialGradient>
+    <radialGradient id="mercury" cx="32%" cy="20%" r="82%">
+      <stop offset="0" stop-color="#fff"/>
+      <stop offset=".1" stop-color="#707b80"/>
+      <stop offset=".33" stop-color="#080b0d"/>
+      <stop offset=".58" stop-color="#f4fbff"/>
+      <stop offset=".72" stop-color="#272f33"/>
+      <stop offset=".88" stop-color="#b9c5ca"/>
+      <stop offset="1" stop-color="#050708"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" rx="118" fill="url(#void)"/>
+  <path d="M256 86c66 0 143 57 143 143 0 93-84 197-143 197S113 322 113 229C113 143 190 86 256 86Z" fill="url(#mercury)" stroke="#edfaff" stroke-opacity=".74" stroke-width="4"/>
+  <path d="M160 240c58-20 117-20 192 2M191 143c38 52 72 126 116 229M325 139c-51 50-95 137-123 229" fill="none" stroke="#eefcff" stroke-opacity=".62" stroke-width="10" stroke-linecap="round"/>
+  <circle cx="256" cy="255" r="28" fill="#030506" stroke="#c8f7ff" stroke-width="4"/>
+</svg>
