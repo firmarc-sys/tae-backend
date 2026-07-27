@@ -208,7 +208,7 @@ export function RuntimeProvider({ identity, children }: RuntimeProviderProps) {
       offStatus();
       destroyWSClient();
     };
-  }, [identity?.gid]);
+  }, [identity]);
 
   const sendCommand = useCallback((cmd: string) => {
     if (!cmd.trim()) return;

@@ -5,7 +5,7 @@ from functools import lru_cache
 
 class Settings(BaseSettings):
     # ── Core ──
-    app_name: str = "Agentic OR Runtime"
+    app_name: str = "Agentic Mercury TimeRunner"
     debug: bool = False
     cors_origins: list[str] = ["*"]
 

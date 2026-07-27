@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unitedagenticecosystem.space/contracts/workspace-manifest.schema.json",
+  "title": "Agentic Mercury TimeRunner Workspace Manifest",
+  "type": "object",
+  "required": ["id", "label", "route", "slot", "capabilities"],
+  "properties": {
+    "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+    "label": { "type": "string", "minLength": 1 },
+    "route": { "type": "string", "pattern": "^#/[a-z][a-z0-9-]*$" },
+    "slot": { "enum": ["left", "center", "right"] },
+    "capabilities": {
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true
+    },
+    "requiresPermission": {
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true
+    }
+  },
+  "additionalProperties": false
+}
