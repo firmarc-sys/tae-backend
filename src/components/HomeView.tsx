@@ -175,4 +175,19 @@ export function HomeView({ identity, demoMode = false, onDemoRequest }: HomeView
           <p className="text-2xl sios-mono text-white/90 font-light tracking-widest mb-6">
             This is me.
           </p>
+          <p className="text-[10px] sios-mono text-cyan-100/60">
+            GID {identity.gid}
+          </p>
+        </motion.div>
+      )}
 
+      {activated && <LiquidReveal><span className="sr-only">Legacy runtime activated</span></LiquidReveal>}
+      <input ref={inputRef} value="" readOnly className="sr-only" aria-hidden="true" />
+      <span className="sr-only">{listeningActive ? 'Listening' : 'Voice idle'}</span>
+      <button className="sr-only" onClick={() => setListeningActive((value) => !value)}>
+        Toggle legacy voice state
+      </button>
+      {onDemoRequest && <button className="sr-only" onClick={onDemoRequest}>Request demo</button>}
+    </div>
+  );
+}
