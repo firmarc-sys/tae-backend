@@ -345,6 +345,17 @@ def create_app(static_dir: str) -> FastAPI:
             # Hold connection — further events come via WS
         return StreamingResponse(event_stream(), media_type="text/event-stream")
 
+    @api.get("/stream")
+    async def stream():
+        """Canonical SSE alias for clients that cannot use WebSocket."""
+        async def event_stream():
+            yield f"event: runtime\ndata: {json.dumps(eng.snapshot())}\n\n"
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
     # ── Assemble app ───────────────────────────────────────────
     app = FastAPI()
     app.include_router(api, prefix="/api")
