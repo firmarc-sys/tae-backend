@@ -1,10 +1,10 @@
 /**
- * SIOS Service Worker — Offline-Capable PWA
+ * Agentic Mercury TimeRunner Service Worker — Offline-Capable PWA
  * Caches critical assets, enables offline operation,
  * and handles immersive fullscreen mode.
  */
 
-const CACHE_NAME = 'sios-v1';
+const CACHE_NAME = 'agentic-mercury-timerunner-v1';
 const CRITICAL_PATHS = [
   '/',
   '/index.html',
@@ -108,4 +108,4 @@ self.addEventListener('message', (event) => {
   }
 });
 
-console.log('[SW] SIOS Service Worker loaded');
+console.log('[SW] Agentic Mercury TimeRunner Service Worker loaded');
