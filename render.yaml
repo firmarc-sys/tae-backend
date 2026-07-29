@@ -1,39 +1,22 @@
 services:
   - type: web
     name: tae-backend
-    runtime: docker
+    runtime: node
     plan: starter
-    dockerfilePath: ./Dockerfile
-    healthCheckPath: /api/v1/health
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
     autoDeploy: true
     envVars:
-      - key: DATABASE_URL
-        fromDatabase:
-          name: tae-db
-          property: connectionString
-      - key: JWT_SECRET
-        generateValue: true
-      - key: ADMIN_KEY
-        generateValue: true
-      - key: OPENAI_API_KEY
+      - key: NODE_VERSION
+        value: "20"
+      - key: NODE_ENV
+        value: production
+      - key: GOOGLE_API_KEY
         sync: false
-      - key: ANTHROPIC_API_KEY
-        sync: false
-      - key: STRIPE_SECRET_KEY
-        sync: false
-      - key: STRIPE_WEBHOOK_SECRET
-        sync: false
-      - key: STRIPE_PRICE_STARTER
-        sync: false
-      - key: STRIPE_PRICE_PRO
-        sync: false
-      - key: FRONTEND_URL
-        value: https://sios-runtime.netlify.app
-      - key: SIOS_ENABLE_DB
-        value: "1"
-
-databases:
-  - name: tae-db
-    plan: starter
-    databaseName: tae
-    user: tae
+      - key: GOOGLE_MODEL
+        value: gemini-2.5-flash
+      - key: SIOS_OWNER_GID
+        value: "399152573423"
+      - key: ALLOWED_ORIGINS
+        value: https://siaas.space,https://www.siaas.space
