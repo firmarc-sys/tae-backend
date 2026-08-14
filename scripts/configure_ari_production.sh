@@ -38,7 +38,6 @@ fi
 
 printf 'Cloud Run service identity: %s\n' "$SERVICE_ACCOUNT"
 
-# Vertex AI User includes the publisher-model prediction permission required by Jahorin.
 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --member="serviceAccount:${SERVICE_ACCOUNT}" \
   --role="roles/aiplatform.user" \
@@ -68,6 +67,7 @@ if [ -z "$OWNER_ACCESS_CODE" ]; then
   echo 'Owner access code cannot be empty.' >&2
   exit 1
 fi
+export OWNER_ACCESS_CODE
 
 SESSION_SECRET="$(openssl rand -hex 48)"
 printf '%s' "$SESSION_SECRET" | gcloud secrets versions add "$SESSION_SECRET_NAME" \
@@ -128,7 +128,6 @@ PY
 wait_ready "$ARI_URL" 'direct ARI'
 wait_ready "$SITE" 'Netlify ARI proxy'
 
-# Invalid credentials must be rejected, not simulated.
 bad_code="$(curl -sS --connect-timeout 5 --max-time 15 \
   -o /tmp/ari-bad-auth.json -w '%{http_code}' \
   -H 'content-type: application/json' \
