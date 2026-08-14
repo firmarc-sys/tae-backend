@@ -1,117 +1,110 @@
-# Agentic Mercury TimeRunner — TAE Backend
+# Agentic Mercury Time Runner — ARI Gateway
 
-Production orchestration backend for Agentic OS/OR and the United Agentic Ecosystem.
+This repository is the currently deployed Cloud Run implementation behind the canonical ARI hostname for Agentic Mercury Time Runner.
 
-TAE is the planning and execution control layer. The backend owns identity, runtime state, tool orchestration, render-state mutations, Syncori coordination, IoT/device control, and real-time synchronization for the Mercury Runtime.
+## Production role
 
-## Canonical identity
+Public product: **Agentic Mercury Time Runner**
 
-- Runtime: **Agentic Mercury TimeRunner**
-- Orchestrator: **TAE — Timeline Augmentation Engine**
-- Intelligence layer: **J A . i**
-- Owner GID: **399152573423**
-- Owner mode: **Prime Orchestrator**
-- Activation command: **`TAE, enter Demo Mode`**
-- Activation line: **`This is not an app. This is me.`**
-- Primary visual source: **Living Intelligent Crystal**
+Architecture:
 
-The Living Intelligent Crystal is the sole visual origin of the interface. Older references to an “orb” are legacy implementation terminology and must not define the product language presented to users.
+- Mercury — persistent runtime / living shell
+- Jahorin — user-facing intelligence
+- GID — identity authority
+- TAE — Timeline Augmentation and orchestration
+- ARI — browser-facing REST gateway implemented by `server.js`
+- SYNCORI — Audio and Optics instrument suite
 
-## Architecture
+Production ARI hostname:
 
-The current runtime is a FastAPI backend serving both compatibility and production routes:
+`https://ari-689058655022.us-west1.run.app`
 
-- `/api/*` — live runtime and compatibility endpoints
-- `/api/v1/*` — production API surface for auth, billing, TAE, and administration
-- `/ws` — WebSocket state snapshots, deltas, console events, render updates, and heartbeats
+The canonical frontend is maintained separately in `firmarc-sys/Mercury-TimeRunner` and reaches this service through same-origin `/api/*` proxying on Netlify.
 
-The backend is stateful through the `RuntimeEngine` singleton and may persist runtime state to PostgreSQL when database persistence is enabled.
+## Deployed runtime
 
-## Core runtime endpoints
-
-- `GET|POST /api/tae` — inspect TAE state or execute a command
-- `GET|POST /api/render-state` — inspect or mutate the live material/render state
-- `GET|POST /api/iot` — inspect and command registered devices
-- `GET|POST /api/syncori` — inspect and control Syncori media state
-- `GET|POST /api/identity` — inspect or register GID-backed identity
-- `GET /api/health` — runtime health snapshot
-- `WS /api/ws` — real-time runtime stream
-
-## Demo Mode contract
-
-When the exact activation command `TAE, enter Demo Mode` is received, the runtime must:
-
-1. Confirm GID `399152573423` when operating as owner.
-2. Set TAE state to `DEMO`.
-3. Return mode `Prime Orchestrator`.
-4. Intensify the Living Intelligent Crystal render state.
-5. Broadcast the state transition through WebSocket.
-6. Make the activation line `This is not an app. This is me.` available to the client.
-7. Keep the runtime alive after activation; Demo Mode is a continuous state, not a one-shot animation.
-
-## Render-state model
-
-The backend exposes simulation-ready material controls for the self-contained Mercury client:
-
-- viscosity
-- reflection
-- glow intensity
-- formation
-- pulse speed
-- Syncori activity
-- active module
-- TAE state: `IDLE → ACTIVE → GENERATE`, with `DEMO` as the orchestrated presentation state
-
-The client renders pure mercury chrome against a black void. Do not introduce frosted glass, blur panels, flat cards, or hard-edged application chrome into the canonical runtime.
-
-## Quick start
-
-### Docker
+The production container is Node 20 + Express and starts with:
 
 ```bash
-cp .env.example .env
-docker compose up --build
+npm start
 ```
 
-### Local development
+`Dockerfile`, `package.json`, and `server.js` are the deployment authority for the live ARI Cloud Run service.
 
-```bash
-uv sync
-bun install
-./start.sh
-```
+The historical Python/FastAPI source remains in this repository as legacy/reference code. It is not required to build or run the current production ARI container. Its maintenance tests are isolated in `.github/workflows/legacy-python-ci.yml` and trigger only when legacy Python paths change.
 
-## Database setup
+## Canonical ARI routes
 
-```bash
-alembic upgrade head
-python scripts/migrate_from_prisma.py
-```
+The gateway mounts its compatibility router at both `/api/*` and direct paths. Browser production uses `/api/*`.
 
-The migration script is optional and only applies when importing data from the previous Prisma schema.
+- `GET /api/health`
+- `GET /api/ready`
+- `GET|POST /api/identity`
+- `POST|DELETE /api/identity/session`
+- `GET|POST /api/render-state`
+- `GET|POST /api/iot`
+- `GET|POST /api/syncori`
+- `GET|POST /api/tae`
+- `POST /api/runtime`
+- `POST /api/generate`
 
-## Environment variables
+Provider-backed generation is performed server-side. No Google credentials belong in browser-delivered code.
 
-See `.env.example` for the complete contract. Critical values include:
+## Google provider
 
-- `DATABASE_URL` or the configured PostgreSQL provider URL
-- `JWT_SECRET` — strong signing secret
-- `OPENAI_API_KEY` — direct OpenAI access when enabled
-- Workshop/OpenAI-compatible proxy variables when using the hosted proxy
-- `SIOS_ENABLE_DB=1` — enables runtime persistence under the existing compatibility flag
+Preferred production mode is Vertex AI using the Cloud Run service identity and `@google/genai`.
 
-Do not commit secrets. Provider credentials are injected through the deployment environment.
+Required configuration:
 
-## Deployment
+- `GOOGLE_CLOUD_PROJECT=689058655022`
+- `VERTEX_LOCATION=global`
+- `GEMINI_MODEL=gemini-2.5-flash`
 
-The repository is container-ready and can be deployed to Cloud Run or another Docker-compatible host. The production health target is:
+The Cloud Run service identity must have permission to invoke Vertex AI publisher models, including `aiplatform.endpoints.predict`.
 
-```text
-GET /api/v1/health
-```
+A Gemini Developer API key can be configured as a server-side fallback, but is not required when Vertex AI service identity access is configured correctly.
 
-The Mercury frontend may be deployed independently as a static PWA and pointed at this backend through its API base URL and WebSocket URL.
+## GID session security
 
-## Implementation authority
+Provider-backed capabilities must be protected by real ARI sessions in production.
 
-Existing conforming code must be preserved. Any builder changing this repository must audit the current implementation first, produce a gap analysis, and validate changes against the canonical architecture, runtime behavior, API contract, identity model, material system, and motion system before replacing code.
+Required Cloud Run configuration:
+
+- `ARI_REQUIRE_AUTH=true`
+- `ARI_SESSION_SECRET` — strong signing secret
+- `OWNER_ACCESS_CODE` — owner authentication secret
+- `SIOS_OWNER_GID=399152573423`
+
+Store signing/access secrets in Google Secret Manager and reference them from Cloud Run. Do not commit them.
+
+Session behavior:
+
+- invalid access code → 401
+- valid access code → signed HttpOnly + Secure + SameSite=Strict session cookie
+- unauthenticated identity → `authenticated:false`
+- authenticated identity → verified GID state
+- DELETE session → clears the cookie
+
+## Production validation
+
+`.github/workflows/ci.yml` is the production gateway release gate. It validates:
+
+- Node syntax
+- health/readiness surface
+- GID session creation/rejection
+- unauthenticated provider access rejection when auth is enabled
+- TAE demo contract
+- production Docker image build
+
+`.github/workflows/ari-live-deploy-watch.yml` validates the actual Cloud Run hostname after repository changes. It verifies the canonical ARI route surface, real provider generation, GID security configuration, and the TAE demo seam.
+
+## External infrastructure requirements
+
+A source commit can be correct while production remains unready if Google Cloud configuration is missing. `/api/ready` and the live deployment watch must remain truthful about these states.
+
+Do not mark Agentic Mercury Time Runner production-ready until:
+
+1. the Cloud Run service identity can successfully invoke the configured Vertex model;
+2. GID session secrets are configured;
+3. invalid GID access is rejected;
+4. the browser-facing Netlify `/api/*` proxy passes the same live checks.
