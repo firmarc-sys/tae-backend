@@ -1,0 +1,88 @@
+name: ari-live-deploy-watch
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ari-live-deploy-watch
+  cancel-in-progress: true
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    env:
+      ARI: https://ari-689058655022.us-west1.run.app
+    steps:
+      - name: Wait for canonical ARI revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          matched=0
+          for attempt in $(seq 1 60); do
+            code="$(curl -sS --connect-timeout 5 --max-time 12 -o /tmp/health.json -w '%{http_code}' "$ARI/api/health?watch=$GITHUB_SHA-$attempt" || true)"
+            if [ "$code" = "200" ] && python3 - <<'PY'
+          import json
+          try:
+              body=json.load(open('/tmp/health.json'))
+          except Exception:
+              raise SystemExit(1)
+          ok=body.get('ok') is True and body.get('service')=='ARI' and body.get('runtime')=='Mercury'
+          raise SystemExit(0 if ok else 1)
+          PY
+            then
+              matched=1
+              cat /tmp/health.json
+              break
+            fi
+            sleep 5
+          done
+          if [ "$matched" -ne 1 ]; then
+            echo 'Canonical ARI contract did not reach the Cloud Run hostname.' >&2
+            echo 'Last response:' >&2
+            cat /tmp/health.json >&2 || true
+            exit 1
+          fi
+
+      - name: Verify gateway surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          for route in health ready identity render-state iot syncori tae; do
+            code="$(curl -sS --connect-timeout 5 --max-time 15 -o "/tmp/$route.json" -w '%{http_code}' "$ARI/api/$route")"
+            if [ "$code" != "200" ]; then
+              echo "/api/$route returned HTTP $code" >&2
+              cat "/tmp/$route.json" >&2 || true
+              exit 1
+            fi
+            python3 -m json.tool "/tmp/$route.json" >/dev/null
+            echo "PASS /api/$route"
+          done
+
+          python3 - <<'PY'
+          import json
+          identity=json.load(open('/tmp/identity.json'))
+          ready=json.load(open('/tmp/ready.json'))
+          assert identity.get('authenticated') is False
+          assert ready.get('provider_configured') is True
+          print('PASS ARI readiness + unauthenticated GID state')
+          PY
+
+      - name: Verify demo runtime seam
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsS -H 'content-type: application/json' \
+            -d '{"prompt":"TAE, enter Demo Mode"}' \
+            "$ARI/api/tae" -o /tmp/demo.json
+          python3 - <<'PY'
+          import json
+          body=json.load(open('/tmp/demo.json'))
+          assert body.get('demo') is True
+          assert body.get('message') == 'This is not an app. This is me.'
+          print('PASS TAE demo runtime seam')
+          PY
