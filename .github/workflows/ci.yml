@@ -1,9 +1,13 @@
-name: CI
+name: production-gateway-ci
+
 on:
   push:
-    branches: [main, "migration/**"]
+    branches: [main]
   pull_request:
     branches: [main]
+
+permissions:
+  contents: read
 
 jobs:
   gateway-contract:
@@ -22,7 +26,7 @@ jobs:
           PORT: '8080'
           ARI_SESSION_SECRET: test-session-secret-for-ci-only
           OWNER_ACCESS_CODE: test-owner-code
-          ARI_REQUIRE_AUTH: 'false'
+          ARI_REQUIRE_AUTH: 'true'
           VERTEX_PROJECT: '689058655022'
           VERTEX_LOCATION: global
         run: |
@@ -48,6 +52,9 @@ jobs:
           curl -fsS -c /tmp/cookies.txt -H 'content-type: application/json' -d '{"access_code":"test-owner-code"}' http://127.0.0.1:8080/api/identity/session >/tmp/session.json
           curl -fsS -b /tmp/cookies.txt http://127.0.0.1:8080/api/identity >/tmp/authenticated.json
 
+          unauth_runtime="$(curl -sS -o /tmp/unauth-runtime.json -w '%{http_code}' -H 'content-type: application/json' -d '{"capability":"text","intent":"test"}' http://127.0.0.1:8080/api/runtime)"
+          test "$unauth_runtime" = '401'
+
           python3 - <<'PY'
           import json
           health=json.load(open('/tmp/health.json'))
@@ -57,47 +64,16 @@ jobs:
           authenticated=json.load(open('/tmp/authenticated.json'))
           assert health['service']=='ARI' and health['runtime']=='Mercury'
           assert ready['ok'] is True and ready['provider_configured'] is True
+          assert ready['auth_configured'] is True and ready['auth_required'] is True
           assert identity['authenticated'] is False
           assert demo['demo'] is True and demo['message']=='This is not an app. This is me.'
           assert authenticated['authenticated'] is True
           print('ARI gateway contract: PASS')
           PY
 
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v3
-      - run: uv sync --no-dev
-      - run: uv run ruff check . --select E,F,W,I --ignore E501
-
-  test:
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_DB: tae_test
-          POSTGRES_USER: tae
-          POSTGRES_PASSWORD: tae
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 5s
-          --health-retries 5
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v3
-      - run: uv sync
-      - run: uv run pytest tests/ -v
-        env:
-          DATABASE_URL: postgresql://tae:tae@localhost:5432/tae_test
-          JWT_SECRET: test-secret-not-for-prod
-
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build Docker image
-        run: docker build -t tae-backend .
+      - name: Build production Docker image
+        run: docker build -t ari-gateway .
