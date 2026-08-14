@@ -18,10 +18,11 @@ const geminiApiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY ||
 const geminiModel = process.env.GEMINI_MODEL || process.env.GEMINI_DEFAULT_MODEL || "gemini-2.5-flash";
 const vertexProject = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCP_PROJECT || process.env.VERTEX_PROJECT || "689058655022";
 const vertexLocation = process.env.VERTEX_LOCATION || process.env.GOOGLE_CLOUD_LOCATION || "global";
+const mercuryRuntimeUrl = (process.env.MERCURY_RUNTIME_URL || "https://agentic-mercury-runtime-689058655022.us-west1.run.app").replace(/\/$/, "");
 const legacyJwtSecret = process.env.JWT_SECRET || "";
 const sessionSecret = process.env.ARI_SESSION_SECRET || (legacyJwtSecret && legacyJwtSecret !== "CHANGE-ME-IN-PROD" ? legacyJwtSecret : "");
 const ownerAccessCode = process.env.OWNER_ACCESS_CODE || process.env.SIOS_OWNER_ACCESS_CODE || "";
-const authRequired = /^(1|true|yes|on)$/i.test(process.env.ARI_REQUIRE_AUTH || "false");
+const authRequired = !/^(0|false|no|off)$/i.test(process.env.ARI_REQUIRE_AUTH || "true");
 
 const defaultOrigins = [
   "https://jahorin-mercury.netlify.app",
@@ -147,6 +148,65 @@ function requireProvider() {
   return ai;
 }
 
+async function mercuryRequest(path, { method = "GET", body, requestId = crypto.randomUUID(), timeout = 10000 } = {}) {
+  let response;
+  try {
+    response = await fetch(`${mercuryRuntimeUrl}${path}`, {
+      method,
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "X-Request-ID": requestId,
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(timeout),
+    });
+  } catch (cause) {
+    const error = new Error(`Mercury Runtime unavailable: ${cause.message}`);
+    error.status = 503;
+    throw error;
+  }
+
+  const contentType = response.headers.get("content-type") || "";
+  const payload = contentType.includes("json") ? await response.json() : { error: await response.text() };
+  if (!response.ok) {
+    const error = new Error(payload?.error || `Mercury Runtime HTTP ${response.status}`);
+    error.status = response.status >= 500 ? 503 : response.status;
+    throw error;
+  }
+  return payload;
+}
+
+async function mercuryReady() {
+  try {
+    const payload = await mercuryRequest("/api/ready", { timeout: 5000 });
+    return payload?.ready === true && payload?.runtime === "Mercury";
+  } catch {
+    return false;
+  }
+}
+
+async function orchestrateWithMercury(req, { capability, intent, requestId, payload = {} }) {
+  const verifiedGid = sessionGid(req);
+  return mercuryRequest("/api/orchestrate", {
+    method: "POST",
+    requestId,
+    body: {
+      gid: verifiedGid,
+      capability,
+      intent,
+      request_id: requestId,
+      payload,
+      context: {
+        ...(req.body?.context || {}),
+        gid: verifiedGid,
+        authenticated: verifiedGid === OWNER_GID,
+        mode: verifiedGid === OWNER_GID ? OWNER_MODE : "public",
+      },
+    },
+  });
+}
+
 async function generateWithGoogle({ prompt, systemInstruction, temperature = 0.7 }) {
   const client = requireProvider();
   const response = await client.models.generateContent({
@@ -184,15 +244,16 @@ api.get("/health", (_req, res) => {
       runtime: "Mercury",
       status: "healthy",
       provider,
+      mercury_runtime: mercuryRuntimeUrl,
     }),
   );
 });
 
-api.get("/ready", (_req, res) => {
+api.get("/ready", async (_req, res) => {
   const providerConfigured = Boolean(ai);
   const authConfigured = Boolean(sessionSecret && ownerAccessCode);
-  const authReady = !authRequired || authConfigured;
-  const ready = providerConfigured && authReady;
+  const runtimeReady = await mercuryReady();
+  const ready = providerConfigured && authRequired && authConfigured && runtimeReady;
   res.status(ready ? 200 : 503).json(
     responseBase({
       ok: ready,
@@ -205,6 +266,8 @@ api.get("/ready", (_req, res) => {
       vertex_location: provider === "google-vertex-ai" ? vertexLocation : null,
       auth_required: authRequired,
       auth_configured: authConfigured,
+      mercury_runtime_ready: runtimeReady,
+      mercury_runtime: mercuryRuntimeUrl,
     }),
   );
 });
@@ -266,32 +329,89 @@ api.delete("/identity/session", (_req, res) => {
   res.json(responseBase({ authenticated: false }));
 });
 
-api.get("/render-state", (_req, res) => {
-  res.json(renderState());
+api.get("/render-state", async (req, res, next) => {
+  try {
+    const runtime = await mercuryRequest("/api/render-state", { requestId: req.requestId });
+    res.json(responseBase({ render_state: runtime.renderState || runtime.render_state || runtime }));
+  } catch (error) {
+    next(error);
+  }
 });
 
-api.post("/render-state", (req, res) => {
-  res.json(renderState(String(req.body?.state || req.body?.renderState || "active")));
+api.post("/render-state", async (req, res, next) => {
+  try {
+    const runtime = await mercuryRequest("/api/render-state", {
+      method: "POST",
+      requestId: req.requestId,
+      body: req.body || {},
+    });
+    res.json(responseBase({ render_state: runtime.renderState || runtime.render_state || runtime }));
+  } catch (error) {
+    next(error);
+  }
 });
 
-api.get("/iot", (_req, res) => {
-  res.json(responseBase({ capability: "iot", status: "online", devices: [] }));
+api.get("/iot", async (req, res, next) => {
+  try {
+    const runtime = await orchestrateWithMercury(req, {
+      capability: "iot",
+      intent: "inspect devices",
+      requestId: req.requestId,
+    });
+    res.json(responseBase({ capability: "iot", status: "online", devices: [], orchestration: runtime.orchestration, render_state: runtime.renderState }));
+  } catch (error) {
+    next(error);
+  }
 });
 
-api.post("/iot", (req, res) => {
-  res.json(responseBase({ capability: "iot", accepted: true, payload: req.body || {} }));
+api.post("/iot", async (req, res, next) => {
+  try {
+    const runtime = await orchestrateWithMercury(req, {
+      capability: "iot",
+      intent: String(req.body?.action || "device command"),
+      requestId: req.requestId,
+      payload: req.body || {},
+    });
+    res.json(responseBase({ capability: "iot", accepted: true, payload: req.body || {}, orchestration: runtime.orchestration, render_state: runtime.renderState }));
+  } catch (error) {
+    next(error);
+  }
 });
 
-api.get("/syncori", (_req, res) => {
-  res.json(responseBase({ capability: "syncori", status: "online", engine: "SYNCORI Infinite Audio" }));
+api.get("/syncori", async (req, res, next) => {
+  try {
+    const runtime = await orchestrateWithMercury(req, {
+      capability: "syncori",
+      intent: "inspect SYNCORI",
+      requestId: req.requestId,
+    });
+    res.json(responseBase({ capability: "syncori", status: "online", engine: "SYNCORI Infinite Audio", orchestration: runtime.orchestration, render_state: runtime.renderState }));
+  } catch (error) {
+    next(error);
+  }
 });
 
-api.post("/syncori", (req, res) => {
-  res.json(responseBase({ capability: "syncori", accepted: true, state: req.body || {} }));
+api.post("/syncori", async (req, res, next) => {
+  try {
+    const runtime = await orchestrateWithMercury(req, {
+      capability: "syncori",
+      intent: String(req.body?.action || "update SYNCORI state"),
+      requestId: req.requestId,
+      payload: req.body || {},
+    });
+    res.json(responseBase({ capability: "syncori", accepted: true, state: req.body || {}, orchestration: runtime.orchestration, render_state: runtime.renderState }));
+  } catch (error) {
+    next(error);
+  }
 });
 
-api.get("/tae", (_req, res) => {
-  res.json(responseBase({ engine: "TAE", activation: DEMO_PHRASE }));
+api.get("/tae", async (req, res, next) => {
+  try {
+    const runtime = await mercuryRequest("/api/tae", { requestId: req.requestId });
+    res.json(responseBase({ engine: "TAE", activation: DEMO_PHRASE, runtime }));
+  } catch (error) {
+    next(error);
+  }
 });
 
 api.post("/tae", async (req, res, next) => {
@@ -300,17 +420,29 @@ api.post("/tae", async (req, res, next) => {
     if (!prompt) return res.status(422).json({ ok: false, error: "prompt is required", request_id: req.requestId });
 
     if (prompt.replace(/\.$/, "").toLowerCase() === DEMO_PHRASE.toLowerCase()) {
+      const runtime = await mercuryRequest("/api/tae", {
+        method: "POST",
+        requestId: req.requestId,
+        body: { prompt, context: { gid: sessionGid(req) } },
+      });
       return res.json(
         responseBase({
           request_id: req.body?.request_id || req.requestId,
           demo: true,
-          message: CANONICAL_LINE,
-          render_state: renderState("generate"),
-          reply: { kind: "prose", text: CANONICAL_LINE, tokens: 0 },
+          message: runtime.message || CANONICAL_LINE,
+          render_state: runtime.renderState || renderState("generate"),
+          orchestration: runtime.orchestration,
+          reply: { kind: "prose", text: runtime.message || CANONICAL_LINE, tokens: 0 },
         }),
       );
     }
 
+    const runtime = await orchestrateWithMercury(req, {
+      capability: "tae",
+      intent: prompt,
+      requestId: req.body?.request_id || req.requestId,
+      payload: req.body || {},
+    });
     requireProviderAccess(req);
     const result = await generateWithGoogle({
       prompt,
@@ -322,6 +454,8 @@ api.post("/tae", async (req, res, next) => {
     res.json(
       responseBase({
         request_id: req.body?.request_id || req.requestId,
+        orchestration: runtime.orchestration,
+        render_state: runtime.renderState,
         reply: { kind: "prose", text: result.text, tokens: result.tokens },
         provider: { name: result.provider, model: result.model },
       }),
@@ -337,46 +471,50 @@ api.post("/runtime", async (req, res, next) => {
     const intent = String(req.body?.intent || req.body?.payload?.prompt || "").trim();
     const requestId = req.body?.request_id || req.requestId;
 
-    if (["render", "render-state", "state"].includes(capability)) {
-      return res.json(responseBase({ request_id: requestId, result: renderState("active") }));
-    }
-    if (capability === "identity") {
-      const authenticated = sessionGid(req) === OWNER_GID;
-      return res.json(responseBase({ request_id: requestId, result: { gid: OWNER_GID, mode: OWNER_MODE, authenticated } }));
-    }
-    if (capability === "syncori") {
-      return res.json(responseBase({ request_id: requestId, result: { status: "online", engine: "SYNCORI Infinite Audio" } }));
-    }
-    if (capability === "iot") {
-      return res.json(responseBase({ request_id: requestId, result: { status: "online", devices: [] } }));
-    }
-    if (["tae", "demo"].includes(capability) && intent.replace(/\.$/, "").toLowerCase() === DEMO_PHRASE.toLowerCase()) {
-      return res.json(
-        responseBase({
-          request_id: requestId,
-          result: { demo: true, message: CANONICAL_LINE, render_state: renderState("generate") },
-        }),
-      );
-    }
-    if (["text", "reasoning", "code", "documents", "scribe", "interweb", "vision", "multimodal", "tae"].includes(capability)) {
+    const runtime = await orchestrateWithMercury(req, {
+      capability,
+      intent,
+      requestId,
+      payload: req.body?.payload || {},
+    });
+    const orchestration = runtime.orchestration || {};
+    const providerRequired = orchestration.providerRequired === true;
+
+    if (providerRequired) {
       if (!intent) return res.status(422).json({ ok: false, error: "intent or payload.prompt is required", request_id: requestId });
       requireProviderAccess(req);
       const result = await generateWithGoogle({
         prompt: intent,
         systemInstruction:
-          "You are Jahorin, the user-facing intelligence inside Agentic Mercury Time Runner. Respond directly to the user's intent and use the active capability as an instrument.",
+          "You are Jahorin, the user-facing intelligence inside Agentic Mercury Time Runner. Respond directly to the user's intent and use the active Mercury capability as an instrument.",
         temperature: req.body?.payload?.temperature,
       });
       return res.json(
         responseBase({
           request_id: requestId,
+          orchestration,
+          render_state: runtime.renderState,
           result: { text: result.text, model: result.model, provider: result.provider, tokens: result.tokens },
           provider: { name: result.provider, model: result.model },
         }),
       );
     }
 
-    return res.status(400).json({ ok: false, error: `Unsupported capability: ${capability}`, request_id: requestId });
+    if (capability === "identity") {
+      const authenticated = sessionGid(req) === OWNER_GID;
+      return res.json(responseBase({ request_id: requestId, orchestration, render_state: runtime.renderState, result: { gid: authenticated ? OWNER_GID : null, mode: authenticated ? OWNER_MODE : "public", authenticated } }));
+    }
+    if (capability === "syncori") {
+      return res.json(responseBase({ request_id: requestId, orchestration, render_state: runtime.renderState, result: { status: "online", engine: "SYNCORI Infinite Audio" } }));
+    }
+    if (capability === "iot") {
+      return res.json(responseBase({ request_id: requestId, orchestration, render_state: runtime.renderState, result: { status: "online", devices: [] } }));
+    }
+    if (["tae", "demo"].includes(capability) && intent.replace(/\.$/, "").toLowerCase() === DEMO_PHRASE.toLowerCase()) {
+      return res.json(responseBase({ request_id: requestId, orchestration, render_state: runtime.renderState, result: { demo: true, message: CANONICAL_LINE } }));
+    }
+
+    return res.json(responseBase({ request_id: requestId, orchestration, render_state: runtime.renderState, result: { accepted: true, execution: orchestration.execution || "local-runtime" } }));
   } catch (error) {
     next(error);
   }
@@ -387,6 +525,13 @@ api.post("/generate", async (req, res, next) => {
     const prompt = String(req.body?.prompt || "").trim();
     if (!prompt) return res.status(400).json({ ok: false, error: "prompt is required", request_id: req.requestId });
     if (prompt.length > 20000) return res.status(413).json({ ok: false, error: "prompt is too long", request_id: req.requestId });
+
+    const runtime = await orchestrateWithMercury(req, {
+      capability: String(req.body?.type || "text").toLowerCase(),
+      intent: prompt,
+      requestId: req.requestId,
+      payload: req.body || {},
+    });
     requireProviderAccess(req);
     const result = await generateWithGoogle({
       prompt,
@@ -395,14 +540,14 @@ api.post("/generate", async (req, res, next) => {
         "You are Jahorin inside Agentic Mercury Time Runner. Produce useful, original, polished content that directly fulfills the user's request.",
       temperature: req.body?.temperature,
     });
-    res.json(responseBase({ type: String(req.body?.type || "text"), output: result.text, model: result.model, provider: result.provider, usage: result.usage }));
+    res.json(responseBase({ type: String(req.body?.type || "text"), orchestration: runtime.orchestration, render_state: runtime.renderState, output: result.text, model: result.model, provider: result.provider, usage: result.usage }));
   } catch (error) {
     next(error);
   }
 });
 
 app.get("/", (_req, res) => {
-  res.json(responseBase({ service: "ARI", runtime: "Mercury", status: "online", provider }));
+  res.json(responseBase({ service: "ARI", runtime: "Mercury", status: "online", provider, mercury_runtime: mercuryRuntimeUrl }));
 });
 
 app.use("/api", api);
