@@ -18,8 +18,9 @@ const geminiApiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY ||
 const geminiModel = process.env.GEMINI_MODEL || process.env.GEMINI_DEFAULT_MODEL || "gemini-2.5-flash";
 const vertexProject = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCP_PROJECT || process.env.VERTEX_PROJECT || "689058655022";
 const vertexLocation = process.env.VERTEX_LOCATION || process.env.GOOGLE_CLOUD_LOCATION || "global";
-const sessionSecret = process.env.ARI_SESSION_SECRET || "";
-const ownerAccessCode = process.env.OWNER_ACCESS_CODE || "";
+const legacyJwtSecret = process.env.JWT_SECRET || "";
+const sessionSecret = process.env.ARI_SESSION_SECRET || (legacyJwtSecret && legacyJwtSecret !== "CHANGE-ME-IN-PROD" ? legacyJwtSecret : "");
+const ownerAccessCode = process.env.OWNER_ACCESS_CODE || process.env.SIOS_OWNER_ACCESS_CODE || "";
 const authRequired = /^(1|true|yes|on)$/i.test(process.env.ARI_REQUIRE_AUTH || "false");
 
 const defaultOrigins = [
