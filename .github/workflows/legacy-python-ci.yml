@@ -1,0 +1,58 @@
+name: legacy-python-maintenance
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'app/**'
+      - 'tests/**'
+      - 'alembic/**'
+      - 'scripts/*.py'
+      - 'pyproject.toml'
+      - 'uv.lock'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'app/**'
+      - 'tests/**'
+      - 'alembic/**'
+      - 'scripts/*.py'
+      - 'pyproject.toml'
+      - 'uv.lock'
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --no-dev
+      - run: uv run --with ruff ruff check . --select E,F,W,I --ignore E501
+
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: tae_test
+          POSTGRES_USER: tae
+          POSTGRES_PASSWORD: tae
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tae -d tae_test"
+          --health-interval 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync
+      - run: uv run --with pytest pytest tests/ -v
+        env:
+          DATABASE_URL: postgresql://tae:tae@localhost:5432/tae_test
+          JWT_SECRET: test-secret-not-for-prod
