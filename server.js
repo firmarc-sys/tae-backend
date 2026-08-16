@@ -26,13 +26,13 @@ const ownerAccessCode = process.env.OWNER_ACCESS_CODE || process.env.SIOS_OWNER_
 const authRequired = !/^(0|false|no|off)$/i.test(process.env.ARI_REQUIRE_AUTH || "true");
 
 const publicDomain = (process.env.PUBLIC_DOMAIN || process.env.FRONTEND_URL || "https://siaas.space").replace(/\/$/, "");
-const supabaseUrl = (process.env.SUPABASE_URL || "").replace(/\/$/, "");
-const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || "";
+const supabaseUrl = (process.env.SUPABASE_URL || "https://zrkkilsynurpgwrijicq.supabase.co").replace(/\/$/, "");
+const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || "sb_publishable_s4e9QrRI3JtedJlIbuWCgw_BuLR5Iov";
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || "";
 const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET || "";
-const stripePriceBeta = process.env.STRIPE_PRICE_BETA || "";
-const stripePriceAlpha = process.env.STRIPE_PRICE_ALPHA || "";
+const stripePriceBeta = process.env.STRIPE_PRICE_BETA || "price_1U54rcPJM0SZC6VXiBCv8uG8";
+const stripePriceAlpha = process.env.STRIPE_PRICE_ALPHA || "price_1U54rmPJM0SZC6VXTZYX5PXz";
 const stripe = stripeSecretKey ? new Stripe(stripeSecretKey) : null;
 
 const TIER_CONFIG = Object.freeze({
@@ -609,8 +609,10 @@ api.get("/health", (_req, res) => {
 api.get("/ready", async (_req, res) => {
   const providerConfigured = Boolean(ai);
   const ownerAuthConfigured = Boolean(sessionSecret && ownerAccessCode);
+  const memberAuthConfigured = supabaseConfigured;
+  const authenticationConfigured = !authRequired || memberAuthConfigured || ownerAuthConfigured;
   const runtimeReady = await mercuryReady();
-  const ready = providerConfigured && authRequired && ownerAuthConfigured && runtimeReady;
+  const ready = providerConfigured && authenticationConfigured && runtimeReady;
   res.status(ready ? 200 : 503).json(
     responseBase({
       ok: ready,
@@ -622,7 +624,9 @@ api.get("/ready", async (_req, res) => {
       vertex_project: provider === "google-vertex-ai" ? vertexProject : null,
       vertex_location: provider === "google-vertex-ai" ? vertexLocation : null,
       auth_required: authRequired,
-      auth_configured: ownerAuthConfigured,
+      auth_configured: authenticationConfigured,
+      member_auth_configured: memberAuthConfigured,
+      owner_auth_configured: ownerAuthConfigured,
       supabase_configured: supabaseConfigured,
       stripe_configured: stripeConfigured,
       billing_configured: billingConfigured,
