@@ -609,8 +609,10 @@ api.get("/health", (_req, res) => {
 api.get("/ready", async (_req, res) => {
   const providerConfigured = Boolean(ai);
   const ownerAuthConfigured = Boolean(sessionSecret && ownerAccessCode);
+  const memberAuthConfigured = supabaseConfigured;
+  const authenticationConfigured = !authRequired || memberAuthConfigured || ownerAuthConfigured;
   const runtimeReady = await mercuryReady();
-  const ready = providerConfigured && authRequired && ownerAuthConfigured && runtimeReady;
+  const ready = providerConfigured && authenticationConfigured && runtimeReady;
   res.status(ready ? 200 : 503).json(
     responseBase({
       ok: ready,
@@ -622,7 +624,9 @@ api.get("/ready", async (_req, res) => {
       vertex_project: provider === "google-vertex-ai" ? vertexProject : null,
       vertex_location: provider === "google-vertex-ai" ? vertexLocation : null,
       auth_required: authRequired,
-      auth_configured: ownerAuthConfigured,
+      auth_configured: authenticationConfigured,
+      member_auth_configured: memberAuthConfigured,
+      owner_auth_configured: ownerAuthConfigured,
       supabase_configured: supabaseConfigured,
       stripe_configured: stripeConfigured,
       billing_configured: billingConfigured,
