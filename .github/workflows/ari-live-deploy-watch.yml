@@ -31,7 +31,14 @@ jobs:
               body=json.load(open('/tmp/health.json'))
           except Exception:
               raise SystemExit(1)
-          ok=body.get('ok') is True and body.get('service')=='ARI' and body.get('runtime')=='Mercury'
+          ok=(
+              body.get('ok') is True
+              and body.get('service')=='ARI'
+              and body.get('runtime')=='Mercury'
+              and 'supabase_configured' in body
+              and 'stripe_configured' in body
+              and 'billing_configured' in body
+          )
           raise SystemExit(0 if ok else 1)
           PY
             then
@@ -42,13 +49,13 @@ jobs:
             sleep 5
           done
           if [ "$matched" -ne 1 ]; then
-            echo 'Canonical ARI contract did not reach the Cloud Run hostname.' >&2
+            echo 'Current Mercury ARI revision did not reach the Cloud Run hostname.' >&2
             echo 'Last response:' >&2
             cat /tmp/health.json >&2 || true
             exit 1
           fi
 
-      - name: Verify gateway surface and readiness
+      - name: Verify gateway surface and production readiness
         shell: bash
         run: |
           set -euo pipefail
@@ -71,59 +78,58 @@ jobs:
           assert identity.get('authenticated') is False
           assert ready.get('provider_configured') is True
           assert ready.get('provider') in ('google-vertex-ai','google-gemini-api')
-          print('PASS ARI readiness + unauthenticated GID state')
+          assert ready.get('member_auth_configured') is True
+          assert ready.get('billing_configured') is True
+          print('PASS ARI readiness + member auth + Stripe billing')
           PY
 
-      - name: Verify real Jahorin provider generation
+      - name: Verify provider routes reject unauthenticated generation
         shell: bash
         run: |
           set -euo pipefail
           code="$(curl -sS --connect-timeout 5 --max-time 45 \
             -o /tmp/runtime.json -w '%{http_code}' \
             -H 'content-type: application/json' \
-            -H 'x-request-id: live-jahorin-provider-smoke' \
-            -d '{"capability":"text","intent":"Reply with exactly: JAHORIN ONLINE","request_id":"live-jahorin-provider-smoke"}' \
+            -H 'x-request-id: live-jahorin-auth-smoke' \
+            -d '{"capability":"text","intent":"Reply with exactly: JAHORIN ONLINE","request_id":"live-jahorin-auth-smoke"}' \
             "$ARI/api/runtime")"
-          if [ "$code" != "200" ]; then
-            echo "/api/runtime provider generation returned HTTP $code" >&2
+          if [ "$code" != "401" ]; then
+            echo "Expected unauthenticated provider generation to return 401, got $code" >&2
             cat /tmp/runtime.json >&2 || true
             exit 1
           fi
-          python3 - <<'PY'
-          import json
-          body=json.load(open('/tmp/runtime.json'))
-          result=body.get('result') or {}
-          text=str(result.get('text') or '').strip()
-          provider=str(result.get('provider') or body.get('provider',{}).get('name') or '')
-          assert text, body
-          assert provider in ('google-vertex-ai','google-gemini-api'), body
-          print('PASS real Jahorin generation:', provider, text[:160])
-          PY
+          echo 'PASS unauthenticated provider generation rejected with 401'
 
-      - name: Verify GID session security configuration
+      - name: Verify member authentication and optional owner path
         shell: bash
         run: |
           set -euo pipefail
           curl -fsS "$ARI/api/ready" -o /tmp/ready-auth.json
-          python3 - <<'PY'
+          owner_configured="$(python3 - <<'PY'
           import json
           ready=json.load(open('/tmp/ready-auth.json'))
-          if ready.get('auth_configured') is not True:
-              raise SystemExit('ARI GID session security is not fully configured: auth_configured=false')
-          print('PASS ARI GID session security configured')
+          if ready.get('member_auth_configured') is not True:
+              raise SystemExit('Supabase member authentication is not configured')
+          print('true' if ready.get('owner_auth_configured') is True else 'false')
           PY
+          )"
+          echo 'PASS Supabase member authentication configured'
 
-          code="$(curl -sS --connect-timeout 5 --max-time 15 \
-            -o /tmp/bad-session.json -w '%{http_code}' \
-            -H 'content-type: application/json' \
-            -d '{"access_code":"__invalid_live_smoke_code__"}' \
-            "$ARI/api/identity/session")"
-          if [ "$code" != "401" ]; then
-            echo "Expected invalid GID access code to return 401, got $code" >&2
-            cat /tmp/bad-session.json >&2 || true
-            exit 1
+          if [ "$owner_configured" = "true" ]; then
+            code="$(curl -sS --connect-timeout 5 --max-time 15 \
+              -o /tmp/bad-session.json -w '%{http_code}' \
+              -H 'content-type: application/json' \
+              -d '{"access_code":"__invalid_live_smoke_code__"}' \
+              "$ARI/api/identity/session")"
+            if [ "$code" != "401" ]; then
+              echo "Expected invalid Prime Orchestrator access code to return 401, got $code" >&2
+              cat /tmp/bad-session.json >&2 || true
+              exit 1
+            fi
+            echo 'PASS invalid Prime Orchestrator access rejected with 401'
+          else
+            echo 'INFO Prime Orchestrator access-code path is not configured; member auth remains the public authority'
           fi
-          echo 'PASS invalid GID access rejected with 401'
 
       - name: Verify demo runtime seam
         shell: bash
