@@ -175,15 +175,20 @@ function sessionGid(req) {
   return timingSafeEqualText(signature, expected) ? gid : null;
 }
 
+function generateMemberGid() {
+  return String(crypto.randomInt(100000000000, 1000000000000));
+}
+
 function bearerToken(req) {
   const value = String(req.get("authorization") || "");
   return value.startsWith("Bearer ") ? value.slice(7).trim() : "";
 }
 
-function requireProviderAccess(req) {
-  if (authRequired && sessionGid(req) !== OWNER_GID) {
-    throw httpError(401, "Authenticated ARI session required");
-  }
+async function requireProviderAccess(req) {
+  if (!authRequired) return { kind: "public" };
+  if (sessionGid(req) === OWNER_GID) return { kind: "owner", gid: OWNER_GID, tier: "owner" };
+  if (bearerToken(req) && supabaseConfigured) return authenticatedPrincipal(req);
+  throw httpError(401, "Authenticated ARI or Supabase session required");
 }
 
 function renderState(state = "idle") {
@@ -423,8 +428,8 @@ async function syncStripeSubscription(subscription, { fallbackUserId = null, fal
     status,
     stripe_customer_id: customerId,
     stripe_subscription_id: subscription.id,
-    current_period_start: isoFromUnix(subscription.current_period_start),
-    current_period_end: isoFromUnix(subscription.current_period_end),
+    current_period_start: isoFromUnix(subscription.current_period_start ?? item?.current_period_start),
+    current_period_end: isoFromUnix(subscription.current_period_end ?? item?.current_period_end),
     price_id: priceId,
     cancel_at_period_end: Boolean(subscription.cancel_at_period_end),
   });
@@ -454,7 +459,8 @@ async function processStripeEvent(event) {
     case "invoice.paid":
     case "invoice.payment_failed": {
       const invoice = event.data.object;
-      const subscriptionId = typeof invoice.subscription === "string" ? invoice.subscription : invoice.subscription?.id || null;
+      const invoiceSubscription = invoice.subscription ?? invoice.parent?.subscription_details?.subscription ?? null;
+      const subscriptionId = typeof invoiceSubscription === "string" ? invoiceSubscription : invoiceSubscription?.id || null;
       if (subscriptionId) {
         const subscription = await stripe.subscriptions.retrieve(subscriptionId);
         await syncStripeSubscription(subscription);
@@ -526,7 +532,13 @@ async function mercuryReady() {
 }
 
 async function orchestrateWithMercury(req, { capability, intent, requestId, payload = {} }) {
-  const verifiedGid = sessionGid(req);
+  let principal = null;
+  if (sessionGid(req) === OWNER_GID) {
+    principal = { kind: "owner", gid: OWNER_GID };
+  } else if (bearerToken(req) && supabaseConfigured) {
+    try { principal = await authenticatedPrincipal(req); } catch { principal = null; }
+  }
+  const verifiedGid = principal?.gid || principal?.id || null;
   return mercuryRequest("/api/orchestrate", {
     method: "POST",
     requestId,
@@ -539,8 +551,8 @@ async function orchestrateWithMercury(req, { capability, intent, requestId, payl
       context: {
         ...(req.body?.context || {}),
         gid: verifiedGid,
-        authenticated: verifiedGid === OWNER_GID,
-        mode: verifiedGid === OWNER_GID ? OWNER_MODE : "public",
+        authenticated: Boolean(principal),
+        mode: principal?.kind === "owner" ? OWNER_MODE : principal ? "member" : "public",
       },
     },
   });
@@ -708,7 +720,7 @@ api.post("/auth/signup", async (req, res, next) => {
       body: {
         email,
         password,
-        data: displayName ? { display_name: displayName } : {},
+        data: { ...(displayName ? { display_name: displayName } : {}), gid: generateMemberGid() },
       },
     });
     if (result?.user?.id) await ensureFreeSubscription(result.user.id);
@@ -818,6 +830,9 @@ api.post("/billing/checkout", async (req, res, next) => {
     if (!priceId) throw httpError(503, `Stripe price for ${tier} is not configured`);
 
     let subscription = await ensureFreeSubscription(principal.id);
+    if (subscription?.stripe_subscription_id && ["active", "trialing", "past_due"].includes(subscription?.status) && subscription?.tier !== "free") {
+      throw httpError(409, "An active paid subscription already exists; use the billing portal to change plans");
+    }
     let customerId = subscription?.stripe_customer_id || null;
     if (!customerId) {
       const customer = await stripeClient.customers.create({
@@ -977,7 +992,7 @@ api.post("/tae", async (req, res, next) => {
       requestId: req.body?.request_id || req.requestId,
       payload: req.body || {},
     });
-    requireProviderAccess(req);
+    await requireProviderAccess(req);
     const result = await generateWithGoogle({
       prompt,
       systemInstruction:
@@ -1016,7 +1031,7 @@ api.post("/runtime", async (req, res, next) => {
 
     if (providerRequired) {
       if (!intent) return res.status(422).json({ ok: false, error: "intent or payload.prompt is required", request_id: requestId });
-      requireProviderAccess(req);
+      await requireProviderAccess(req);
       const result = await generateWithGoogle({
         prompt: intent,
         systemInstruction:
@@ -1066,7 +1081,7 @@ api.post("/generate", async (req, res, next) => {
       requestId: req.requestId,
       payload: req.body || {},
     });
-    requireProviderAccess(req);
+    await requireProviderAccess(req);
     const result = await generateWithGoogle({
       prompt,
       systemInstruction:
