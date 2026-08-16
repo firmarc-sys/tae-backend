@@ -28,7 +28,7 @@ const authRequired = !/^(0|false|no|off)$/i.test(process.env.ARI_REQUIRE_AUTH ||
 const publicDomain = (process.env.PUBLIC_DOMAIN || process.env.FRONTEND_URL || "https://siaas.space").replace(/\/$/, "");
 const supabaseUrl = (process.env.SUPABASE_URL || "https://zrkkilsynurpgwrijicq.supabase.co").replace(/\/$/, "");
 const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || "sb_publishable_s4e9QrRI3JtedJlIbuWCgw_BuLR5Iov";
-const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+const supabaseServerKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || "";
 const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET || "";
 const stripePriceBeta = process.env.STRIPE_PRICE_BETA || "price_1U54rcPJM0SZC6VXiBCv8uG8";
@@ -93,7 +93,7 @@ const ai = geminiApiKey
     ? new GoogleGenAI({ vertexai: true, project: vertexProject, location: vertexLocation })
     : null;
 
-const supabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey && supabaseServiceRoleKey);
+const supabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey && supabaseServerKey);
 const stripeConfigured = Boolean(stripe && stripeWebhookSecret && stripePriceBeta && stripePriceAlpha);
 const billingConfigured = Boolean(supabaseConfigured && stripeConfigured);
 
@@ -233,13 +233,15 @@ async function readResponse(response) {
 
 async function supabaseRequest(path, { method = "GET", body, userToken, service = false, prefer } = {}) {
   requireSupabase();
-  const apiKey = service ? supabaseServiceRoleKey : supabaseAnonKey;
-  const authorization = userToken || (service ? supabaseServiceRoleKey : supabaseAnonKey);
+  const apiKey = service ? supabaseServerKey : supabaseAnonKey;
   const headers = {
     apikey: apiKey,
-    Authorization: `Bearer ${authorization}`,
     Accept: "application/json",
   };
+  // Modern sb_secret_* server keys authenticate through the apikey header and are not JWTs.
+  // User sessions and legacy anon/service_role keys still use Authorization: Bearer JWT.
+  if (userToken) headers.Authorization = `Bearer ${userToken}`;
+  else if (!service || !apiKey.startsWith("sb_secret_")) headers.Authorization = `Bearer ${apiKey}`;
   if (body !== undefined) headers["Content-Type"] = "application/json";
   if (prefer) headers.Prefer = prefer;
 
