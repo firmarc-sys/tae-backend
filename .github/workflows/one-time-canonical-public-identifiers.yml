@@ -21,7 +21,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - run: python3 scripts/patch_canonical_public_identifiers.py
+      - name: Apply canonical public identifiers
+        run: python3 scripts/patch_canonical_public_identifiers.py
       - run: node --check server.js
       - shell: bash
         run: |
