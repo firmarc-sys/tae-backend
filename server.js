@@ -298,7 +298,7 @@ function normalizedTier(tier) {
 function entitlementsFor(tier, status = "active") {
   const normalized = normalizedTier(tier);
   if (normalized === "owner") return TIER_CONFIG.owner.entitlements;
-  if (status === "canceled") return TIER_CONFIG.free.entitlements;
+  if (!["active", "trialing"].includes(status)) return TIER_CONFIG.free.entitlements;
   return TIER_CONFIG[normalized].entitlements;
 }
 
@@ -420,8 +420,15 @@ async function syncStripeSubscription(subscription, { fallbackUserId = null, fal
   const item = subscription.items?.data?.[0] || null;
   const priceId = item?.price?.id || null;
   const eventTier = subscription.metadata?.tier || fallbackTier || tierFromPrice(priceId) || existing?.tier;
-  const status = subscription.status === "canceled" ? "canceled" : subscription.status === "past_due" ? "past_due" : subscription.status === "trialing" ? "trialing" : "active";
-  const tier = status === "canceled" ? "free" : normalizedTier(eventTier);
+  const stripeStatus = String(subscription.status || "").toLowerCase();
+  const status = stripeStatus === "active"
+    ? "active"
+    : stripeStatus === "trialing"
+      ? "trialing"
+      : ["canceled", "incomplete_expired"].includes(stripeStatus)
+        ? "canceled"
+        : "past_due";
+  const tier = ["active", "trialing"].includes(status) ? normalizedTier(eventTier) : "free";
 
   return patchSubscription(userId, {
     tier,
