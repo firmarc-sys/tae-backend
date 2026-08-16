@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
+import Stripe from "stripe";
 import { GoogleGenAI } from "@google/genai";
 
 const app = express();
@@ -24,8 +25,57 @@ const sessionSecret = process.env.ARI_SESSION_SECRET || (legacyJwtSecret && lega
 const ownerAccessCode = process.env.OWNER_ACCESS_CODE || process.env.SIOS_OWNER_ACCESS_CODE || "";
 const authRequired = !/^(0|false|no|off)$/i.test(process.env.ARI_REQUIRE_AUTH || "true");
 
+const publicDomain = (process.env.PUBLIC_DOMAIN || process.env.FRONTEND_URL || "https://siaas.space").replace(/\/$/, "");
+const supabaseUrl = (process.env.SUPABASE_URL || "").replace(/\/$/, "");
+const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || "";
+const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+const stripeSecretKey = process.env.STRIPE_SECRET_KEY || "";
+const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET || "";
+const stripePriceBeta = process.env.STRIPE_PRICE_BETA || "";
+const stripePriceAlpha = process.env.STRIPE_PRICE_ALPHA || "";
+const stripe = stripeSecretKey ? new Stripe(stripeSecretKey) : null;
+
+const TIER_CONFIG = Object.freeze({
+  free: {
+    priceId: null,
+    entitlements: ["interweb.basic", "chat.basic", "scribe.basic"],
+  },
+  beta: {
+    priceId: stripePriceBeta || null,
+    entitlements: [
+      "interweb.full",
+      "chat.full",
+      "scribe.full",
+      "voice",
+      "persistence",
+      "syncori.audio",
+      "optics.basic",
+    ],
+  },
+  alpha: {
+    priceId: stripePriceAlpha || null,
+    entitlements: [
+      "interweb.full",
+      "chat.full",
+      "scribe.full",
+      "voice",
+      "persistence",
+      "syncori.audio",
+      "syncori.audio.advanced",
+      "optics.full",
+      "advanced-render",
+      "direct-orchestration",
+    ],
+  },
+  owner: {
+    priceId: null,
+    entitlements: ["*"],
+  },
+});
+
 const defaultOrigins = [
   "https://jahorin-mercury.netlify.app",
+  "https://mercury-timerunner.netlify.app",
   "https://siaas.space",
   "https://www.siaas.space",
   "https://myaihome.space",
@@ -43,8 +93,12 @@ const ai = geminiApiKey
     ? new GoogleGenAI({ vertexai: true, project: vertexProject, location: vertexLocation })
     : null;
 
+const supabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey && supabaseServiceRoleKey);
+const stripeConfigured = Boolean(stripe && stripeWebhookSecret && stripePriceBeta && stripePriceAlpha);
+const billingConfigured = Boolean(supabaseConfigured && stripeConfigured);
+
 app.use(helmet({ crossOriginResourcePolicy: false }));
-app.use(express.json({ limit: "10mb" }));
+
 app.use(
   cors({
     credentials: true,
@@ -76,6 +130,12 @@ function responseBase(extra = {}) {
   };
 }
 
+function httpError(status, message) {
+  const error = new Error(message);
+  error.status = status;
+  return error;
+}
+
 function parseCookies(header = "") {
   return Object.fromEntries(
     header
@@ -98,11 +158,7 @@ function timingSafeEqualText(left, right) {
 }
 
 function signSession(gid, expires) {
-  if (!sessionSecret) {
-    const error = new Error("ARI session security is not configured");
-    error.status = 503;
-    throw error;
-  }
+  if (!sessionSecret) throw httpError(503, "ARI session security is not configured");
   const payload = `${gid}.${expires}`;
   const signature = crypto.createHmac("sha256", sessionSecret).update(payload).digest("hex");
   return `${payload}.${signature}`;
@@ -119,12 +175,20 @@ function sessionGid(req) {
   return timingSafeEqualText(signature, expected) ? gid : null;
 }
 
-function requireProviderAccess(req) {
-  if (authRequired && sessionGid(req) !== OWNER_GID) {
-    const error = new Error("Authenticated ARI session required");
-    error.status = 401;
-    throw error;
-  }
+function generateMemberGid() {
+  return String(crypto.randomInt(100000000000, 1000000000000));
+}
+
+function bearerToken(req) {
+  const value = String(req.get("authorization") || "");
+  return value.startsWith("Bearer ") ? value.slice(7).trim() : "";
+}
+
+async function requireProviderAccess(req) {
+  if (!authRequired) return { kind: "public" };
+  if (sessionGid(req) === OWNER_GID) return { kind: "owner", gid: OWNER_GID, tier: "owner" };
+  if (bearerToken(req) && supabaseConfigured) return authenticatedPrincipal(req);
+  throw httpError(401, "Authenticated ARI or Supabase session required");
 }
 
 function renderState(state = "idle") {
@@ -140,13 +204,298 @@ function renderState(state = "idle") {
 }
 
 function requireProvider() {
-  if (!ai) {
-    const error = new Error("Google provider is not configured on the ARI service.");
-    error.status = 503;
-    throw error;
-  }
+  if (!ai) throw httpError(503, "Google provider is not configured on the ARI service.");
   return ai;
 }
+
+function requireSupabase() {
+  if (!supabaseConfigured) throw httpError(503, "Supabase is not configured on ARI");
+}
+
+function requireStripe() {
+  if (!billingConfigured) throw httpError(503, "Stripe billing is not fully configured on ARI");
+  return stripe;
+}
+
+async function readResponse(response) {
+  const text = await response.text();
+  if (!text) return null;
+  const type = response.headers.get("content-type") || "";
+  if (type.includes("json")) {
+    try {
+      return JSON.parse(text);
+    } catch {
+      return { raw: text };
+    }
+  }
+  return text;
+}
+
+async function supabaseRequest(path, { method = "GET", body, userToken, service = false, prefer } = {}) {
+  requireSupabase();
+  const apiKey = service ? supabaseServiceRoleKey : supabaseAnonKey;
+  const authorization = userToken || (service ? supabaseServiceRoleKey : supabaseAnonKey);
+  const headers = {
+    apikey: apiKey,
+    Authorization: `Bearer ${authorization}`,
+    Accept: "application/json",
+  };
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  if (prefer) headers.Prefer = prefer;
+
+  const response = await fetch(`${supabaseUrl}${path}`, {
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal: AbortSignal.timeout(15000),
+  });
+  const payload = await readResponse(response);
+  if (!response.ok) {
+    const message = payload?.msg || payload?.message || payload?.error_description || payload?.error || `Supabase HTTP ${response.status}`;
+    const error = httpError(response.status >= 500 ? 503 : response.status, message);
+    error.supabaseStatus = response.status;
+    throw error;
+  }
+  return payload;
+}
+
+async function supabaseUserFromToken(token) {
+  if (!token) throw httpError(401, "Supabase access token required");
+  const user = await supabaseRequest("/auth/v1/user", { userToken: token });
+  if (!user?.id) throw httpError(401, "Invalid Supabase access token");
+  return user;
+}
+
+async function authenticatedPrincipal(req) {
+  if (sessionGid(req) === OWNER_GID) {
+    return {
+      kind: "owner",
+      id: null,
+      email: null,
+      gid: OWNER_GID,
+      tier: "owner",
+      accessToken: null,
+    };
+  }
+
+  const token = bearerToken(req);
+  const user = await supabaseUserFromToken(token);
+  return {
+    kind: "user",
+    id: user.id,
+    email: user.email || null,
+    gid: user.user_metadata?.gid || null,
+    tier: null,
+    accessToken: token,
+    user,
+  };
+}
+
+function normalizedTier(tier) {
+  return Object.hasOwn(TIER_CONFIG, tier) ? tier : "free";
+}
+
+function entitlementsFor(tier, status = "active") {
+  const normalized = normalizedTier(tier);
+  if (normalized === "owner") return TIER_CONFIG.owner.entitlements;
+  if (status === "canceled") return TIER_CONFIG.free.entitlements;
+  return TIER_CONFIG[normalized].entitlements;
+}
+
+function tierFromPrice(priceId) {
+  if (priceId && priceId === stripePriceAlpha) return "alpha";
+  if (priceId && priceId === stripePriceBeta) return "beta";
+  return "free";
+}
+
+function isoFromUnix(value) {
+  return Number.isFinite(Number(value)) ? new Date(Number(value) * 1000).toISOString() : null;
+}
+
+async function getSubscription(userId) {
+  const rows = await supabaseRequest(
+    `/rest/v1/subscriptions?user_id=eq.${encodeURIComponent(userId)}&select=id,user_id,tier,status,stripe_customer_id,stripe_subscription_id,current_period_start,current_period_end,price_id,cancel_at_period_end,created_at,updated_at&limit=1`,
+    { service: true },
+  );
+  return Array.isArray(rows) && rows.length ? rows[0] : null;
+}
+
+async function getSubscriptionByCustomer(customerId) {
+  if (!customerId) return null;
+  const rows = await supabaseRequest(
+    `/rest/v1/subscriptions?stripe_customer_id=eq.${encodeURIComponent(customerId)}&select=id,user_id,tier,status,stripe_customer_id,stripe_subscription_id,current_period_start,current_period_end,price_id,cancel_at_period_end&limit=1`,
+    { service: true },
+  );
+  return Array.isArray(rows) && rows.length ? rows[0] : null;
+}
+
+async function ensureFreeSubscription(userId) {
+  const current = await getSubscription(userId);
+  if (current) return current;
+  const rows = await supabaseRequest("/rest/v1/subscriptions", {
+    method: "POST",
+    service: true,
+    prefer: "return=representation",
+    body: {
+      user_id: userId,
+      tier: "free",
+      status: "active",
+      cancel_at_period_end: false,
+    },
+  });
+  return Array.isArray(rows) ? rows[0] : rows;
+}
+
+async function patchSubscription(userId, patch) {
+  await ensureFreeSubscription(userId);
+  const rows = await supabaseRequest(`/rest/v1/subscriptions?user_id=eq.${encodeURIComponent(userId)}`, {
+    method: "PATCH",
+    service: true,
+    prefer: "return=representation",
+    body: { ...patch, updated_at: new Date().toISOString() },
+  });
+  return Array.isArray(rows) ? rows[0] : rows;
+}
+
+async function recordPayment(session, userId, tier) {
+  if (!session?.id) return;
+  await supabaseRequest("/rest/v1/payments?on_conflict=stripe_checkout_session_id", {
+    method: "POST",
+    service: true,
+    prefer: "resolution=merge-duplicates,return=minimal",
+    body: {
+      stripe_checkout_session_id: session.id,
+      user_id: userId || null,
+      stripe_customer_id: typeof session.customer === "string" ? session.customer : session.customer?.id || null,
+      stripe_subscription_id: typeof session.subscription === "string" ? session.subscription : session.subscription?.id || null,
+      amount_total: session.amount_total ?? null,
+      currency: session.currency || null,
+      payment_status: session.payment_status || null,
+      mode: session.mode || null,
+      plan: tier,
+      updated_at: new Date().toISOString(),
+    },
+  });
+}
+
+async function claimStripeEvent(event) {
+  try {
+    await supabaseRequest("/rest/v1/stripe_events", {
+      method: "POST",
+      service: true,
+      prefer: "return=minimal",
+      body: {
+        id: event.id,
+        type: event.type,
+        payload: event,
+        processed_at: null,
+      },
+    });
+    return true;
+  } catch (error) {
+    if (error.supabaseStatus === 409) {
+      const rows = await supabaseRequest(`/rest/v1/stripe_events?id=eq.${encodeURIComponent(event.id)}&select=id,processed_at&limit=1`, { service: true });
+      const existing = Array.isArray(rows) ? rows[0] : null;
+      return !existing?.processed_at;
+    }
+    throw error;
+  }
+}
+
+async function completeStripeEvent(eventId) {
+  await supabaseRequest(`/rest/v1/stripe_events?id=eq.${encodeURIComponent(eventId)}`, {
+    method: "PATCH",
+    service: true,
+    prefer: "return=minimal",
+    body: { processed_at: new Date().toISOString() },
+  });
+}
+
+async function syncStripeSubscription(subscription, { fallbackUserId = null, fallbackTier = null } = {}) {
+  const customerId = typeof subscription.customer === "string" ? subscription.customer : subscription.customer?.id || null;
+  const existing = await getSubscriptionByCustomer(customerId);
+  const userId = subscription.metadata?.user_id || fallbackUserId || existing?.user_id || null;
+  if (!userId) return null;
+
+  const item = subscription.items?.data?.[0] || null;
+  const priceId = item?.price?.id || null;
+  const eventTier = subscription.metadata?.tier || fallbackTier || tierFromPrice(priceId) || existing?.tier;
+  const status = subscription.status === "canceled" ? "canceled" : subscription.status === "past_due" ? "past_due" : subscription.status === "trialing" ? "trialing" : "active";
+  const tier = status === "canceled" ? "free" : normalizedTier(eventTier);
+
+  return patchSubscription(userId, {
+    tier,
+    status,
+    stripe_customer_id: customerId,
+    stripe_subscription_id: subscription.id,
+    current_period_start: isoFromUnix(subscription.current_period_start ?? item?.current_period_start),
+    current_period_end: isoFromUnix(subscription.current_period_end ?? item?.current_period_end),
+    price_id: priceId,
+    cancel_at_period_end: Boolean(subscription.cancel_at_period_end),
+  });
+}
+
+async function processStripeEvent(event) {
+  switch (event.type) {
+    case "checkout.session.completed": {
+      const session = event.data.object;
+      const userId = session.metadata?.user_id || session.client_reference_id || null;
+      const tier = normalizedTier(session.metadata?.tier || "free");
+      if (userId) {
+        await recordPayment(session, userId, tier);
+        if (session.subscription) {
+          const subscription = await stripe.subscriptions.retrieve(typeof session.subscription === "string" ? session.subscription : session.subscription.id);
+          await syncStripeSubscription(subscription, { fallbackUserId: userId, fallbackTier: tier });
+        }
+      }
+      break;
+    }
+    case "customer.subscription.created":
+    case "customer.subscription.updated":
+    case "customer.subscription.deleted": {
+      await syncStripeSubscription(event.data.object);
+      break;
+    }
+    case "invoice.paid":
+    case "invoice.payment_failed": {
+      const invoice = event.data.object;
+      const invoiceSubscription = invoice.subscription ?? invoice.parent?.subscription_details?.subscription ?? null;
+      const subscriptionId = typeof invoiceSubscription === "string" ? invoiceSubscription : invoiceSubscription?.id || null;
+      if (subscriptionId) {
+        const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+        await syncStripeSubscription(subscription);
+        if (event.type === "invoice.payment_failed") {
+          const customerId = typeof invoice.customer === "string" ? invoice.customer : invoice.customer?.id || null;
+          const existing = await getSubscriptionByCustomer(customerId);
+          if (existing?.user_id) await patchSubscription(existing.user_id, { status: "past_due" });
+        }
+      }
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+async function stripeWebhookHandler(req, res, next) {
+  try {
+    if (!stripe || !stripeWebhookSecret || !supabaseConfigured) throw httpError(503, "Stripe webhook is not configured");
+    const signature = req.get("stripe-signature");
+    if (!signature) throw httpError(400, "Missing Stripe-Signature header");
+    const event = stripe.webhooks.constructEvent(req.body, signature, stripeWebhookSecret);
+    const shouldProcess = await claimStripeEvent(event);
+    if (!shouldProcess) return res.json({ received: true, duplicate: true });
+    await processStripeEvent(event);
+    await completeStripeEvent(event.id);
+    return res.json({ received: true, id: event.id, type: event.type });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), stripeWebhookHandler);
+app.post("/stripe/webhook", express.raw({ type: "application/json" }), stripeWebhookHandler);
+app.use(express.json({ limit: "10mb" }));
 
 async function mercuryRequest(path, { method = "GET", body, requestId = crypto.randomUUID(), timeout = 10000 } = {}) {
   let response;
@@ -162,17 +511,13 @@ async function mercuryRequest(path, { method = "GET", body, requestId = crypto.r
       signal: AbortSignal.timeout(timeout),
     });
   } catch (cause) {
-    const error = new Error(`Mercury Runtime unavailable: ${cause.message}`);
-    error.status = 503;
-    throw error;
+    throw httpError(503, `Mercury Runtime unavailable: ${cause.message}`);
   }
 
   const contentType = response.headers.get("content-type") || "";
   const payload = contentType.includes("json") ? await response.json() : { error: await response.text() };
   if (!response.ok) {
-    const error = new Error(payload?.error || `Mercury Runtime HTTP ${response.status}`);
-    error.status = response.status >= 500 ? 503 : response.status;
-    throw error;
+    throw httpError(response.status >= 500 ? 503 : response.status, payload?.error || `Mercury Runtime HTTP ${response.status}`);
   }
   return payload;
 }
@@ -187,7 +532,13 @@ async function mercuryReady() {
 }
 
 async function orchestrateWithMercury(req, { capability, intent, requestId, payload = {} }) {
-  const verifiedGid = sessionGid(req);
+  let principal = null;
+  if (sessionGid(req) === OWNER_GID) {
+    principal = { kind: "owner", gid: OWNER_GID };
+  } else if (bearerToken(req) && supabaseConfigured) {
+    try { principal = await authenticatedPrincipal(req); } catch { principal = null; }
+  }
+  const verifiedGid = principal?.gid || principal?.id || null;
   return mercuryRequest("/api/orchestrate", {
     method: "POST",
     requestId,
@@ -200,8 +551,8 @@ async function orchestrateWithMercury(req, { capability, intent, requestId, payl
       context: {
         ...(req.body?.context || {}),
         gid: verifiedGid,
-        authenticated: verifiedGid === OWNER_GID,
-        mode: verifiedGid === OWNER_GID ? OWNER_MODE : "public",
+        authenticated: Boolean(principal),
+        mode: principal?.kind === "owner" ? OWNER_MODE : principal ? "member" : "public",
       },
     },
   });
@@ -220,11 +571,7 @@ async function generateWithGoogle({ prompt, systemInstruction, temperature = 0.7
   });
 
   const text = String(response.text || "").trim();
-  if (!text) {
-    const error = new Error("Google provider returned no generated text.");
-    error.status = 502;
-    throw error;
-  }
+  if (!text) throw httpError(502, "Google provider returned no generated text.");
 
   return {
     text,
@@ -245,15 +592,18 @@ api.get("/health", (_req, res) => {
       status: "healthy",
       provider,
       mercury_runtime: mercuryRuntimeUrl,
+      supabase_configured: supabaseConfigured,
+      stripe_configured: stripeConfigured,
+      billing_configured: billingConfigured,
     }),
   );
 });
 
 api.get("/ready", async (_req, res) => {
   const providerConfigured = Boolean(ai);
-  const authConfigured = Boolean(sessionSecret && ownerAccessCode);
+  const ownerAuthConfigured = Boolean(sessionSecret && ownerAccessCode);
   const runtimeReady = await mercuryReady();
-  const ready = providerConfigured && authRequired && authConfigured && runtimeReady;
+  const ready = providerConfigured && authRequired && ownerAuthConfigured && runtimeReady;
   res.status(ready ? 200 : 503).json(
     responseBase({
       ok: ready,
@@ -265,60 +615,87 @@ api.get("/ready", async (_req, res) => {
       vertex_project: provider === "google-vertex-ai" ? vertexProject : null,
       vertex_location: provider === "google-vertex-ai" ? vertexLocation : null,
       auth_required: authRequired,
-      auth_configured: authConfigured,
+      auth_configured: ownerAuthConfigured,
+      supabase_configured: supabaseConfigured,
+      stripe_configured: stripeConfigured,
+      billing_configured: billingConfigured,
       mercury_runtime_ready: runtimeReady,
       mercury_runtime: mercuryRuntimeUrl,
     }),
   );
 });
 
-api.get("/identity", (req, res) => {
+api.get("/identity", async (req, res) => {
   const gid = sessionGid(req);
-  const authenticated = gid === OWNER_GID;
-  res.json(
-    responseBase({
-      authenticated,
-      identity_scope: authenticated ? "prime" : "display",
-      clearance: authenticated ? OWNER_MODE : "public",
-    }),
-  );
+  if (gid === OWNER_GID) {
+    return res.json(responseBase({ authenticated: true, identity_scope: "prime", clearance: OWNER_MODE, tier: "owner", entitlements: ["*"] }));
+  }
+
+  const token = bearerToken(req);
+  if (token && supabaseConfigured) {
+    try {
+      const user = await supabaseUserFromToken(token);
+      const subscription = await ensureFreeSubscription(user.id);
+      return res.json(
+        responseBase({
+          gid: user.user_metadata?.gid || null,
+          mode: "member",
+          authenticated: true,
+          identity_scope: "member",
+          clearance: "member",
+          user: { id: user.id, email: user.email || null, display_name: user.user_metadata?.display_name || null },
+          tier: normalizedTier(subscription?.tier),
+          subscription_status: subscription?.status || "active",
+          entitlements: entitlementsFor(subscription?.tier, subscription?.status),
+        }),
+      );
+    } catch {
+      // Invalid bearer token falls through to unauthenticated display state.
+    }
+  }
+
+  return res.json(responseBase({ authenticated: false, identity_scope: "display", clearance: "public", tier: "free", entitlements: TIER_CONFIG.free.entitlements }));
 });
 
-api.post("/identity", (req, res) => {
+api.post("/identity", async (req, res) => {
   const gid = sessionGid(req);
-  const authenticated = gid === OWNER_GID;
-  res.json(
-    responseBase({
-      authenticated,
-      identity: {
-        gid: authenticated ? OWNER_GID : null,
-        verified: authenticated,
-        clearance: authenticated ? OWNER_MODE : "public",
-      },
-    }),
-  );
+  if (gid === OWNER_GID) {
+    return res.json(responseBase({ authenticated: true, identity: { gid: OWNER_GID, verified: true, clearance: OWNER_MODE, tier: "owner" } }));
+  }
+  try {
+    const principal = await authenticatedPrincipal(req);
+    const subscription = principal.kind === "user" ? await ensureFreeSubscription(principal.id) : null;
+    return res.json(
+      responseBase({
+        gid: principal.gid,
+        mode: principal.kind === "owner" ? OWNER_MODE : "member",
+        authenticated: true,
+        identity: {
+          gid: principal.gid,
+          user_id: principal.id,
+          verified: true,
+          clearance: principal.kind === "owner" ? OWNER_MODE : "member",
+          tier: principal.kind === "owner" ? "owner" : normalizedTier(subscription?.tier),
+        },
+      }),
+    );
+  } catch {
+    return res.json(responseBase({ authenticated: false, identity: { gid: null, verified: false, clearance: "public", tier: "free" } }));
+  }
 });
 
 api.post("/identity/session", (req, res, next) => {
   try {
-    if (!ownerAccessCode || !sessionSecret) {
-      const error = new Error("ARI session security is not configured");
-      error.status = 503;
-      throw error;
-    }
+    if (!ownerAccessCode || !sessionSecret) throw httpError(503, "ARI session security is not configured");
     const supplied = String(req.body?.access_code || "");
-    if (!timingSafeEqualText(supplied, ownerAccessCode)) {
-      const error = new Error("Invalid access code");
-      error.status = 401;
-      throw error;
-    }
+    if (!timingSafeEqualText(supplied, ownerAccessCode)) throw httpError(401, "Invalid access code");
     const expires = Math.floor(Date.now() / 1000) + Number(process.env.ARI_SESSION_TTL_SECONDS || 43200);
     const token = signSession(OWNER_GID, expires);
     res.setHeader(
       "Set-Cookie",
       `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; Max-Age=${Math.max(60, expires - Math.floor(Date.now() / 1000))}; HttpOnly; Secure; SameSite=Strict`,
     );
-    res.json(responseBase({ authenticated: true, expires }));
+    res.json(responseBase({ authenticated: true, expires, tier: "owner", entitlements: ["*"] }));
   } catch (error) {
     next(error);
   }
@@ -327,6 +704,178 @@ api.post("/identity/session", (req, res, next) => {
 api.delete("/identity/session", (_req, res) => {
   res.setHeader("Set-Cookie", `${SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Strict`);
   res.json(responseBase({ authenticated: false }));
+});
+
+api.post("/auth/signup", async (req, res, next) => {
+  try {
+    requireSupabase();
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    const password = String(req.body?.password || "");
+    const displayName = String(req.body?.display_name || "").trim();
+    if (!email || !password) throw httpError(400, "email and password are required");
+    if (password.length < 8) throw httpError(400, "password must be at least 8 characters");
+
+    const result = await supabaseRequest("/auth/v1/signup", {
+      method: "POST",
+      body: {
+        email,
+        password,
+        data: { ...(displayName ? { display_name: displayName } : {}), gid: generateMemberGid() },
+      },
+    });
+    if (result?.user?.id) await ensureFreeSubscription(result.user.id);
+    res.status(201).json({
+      ok: true,
+      user: result?.user || null,
+      access_token: result?.access_token || null,
+      refresh_token: result?.refresh_token || null,
+      expires_in: result?.expires_in || null,
+      confirmation_required: Boolean(result?.user && !result?.access_token),
+      tier: "free",
+      entitlements: TIER_CONFIG.free.entitlements,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+api.post("/auth/login", async (req, res, next) => {
+  try {
+    requireSupabase();
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    const password = String(req.body?.password || "");
+    if (!email || !password) throw httpError(400, "email and password are required");
+    const result = await supabaseRequest("/auth/v1/token?grant_type=password", {
+      method: "POST",
+      body: { email, password },
+    });
+    if (result?.user?.id) await ensureFreeSubscription(result.user.id);
+    const subscription = result?.user?.id ? await getSubscription(result.user.id) : null;
+    res.json({
+      ok: true,
+      ...result,
+      tier: normalizedTier(subscription?.tier),
+      subscription_status: subscription?.status || "active",
+      entitlements: entitlementsFor(subscription?.tier, subscription?.status),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+api.post("/auth/refresh", async (req, res, next) => {
+  try {
+    requireSupabase();
+    const refreshToken = String(req.body?.refresh_token || "");
+    if (!refreshToken) throw httpError(400, "refresh_token is required");
+    const result = await supabaseRequest("/auth/v1/token?grant_type=refresh_token", {
+      method: "POST",
+      body: { refresh_token: refreshToken },
+    });
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+api.get("/auth/me", async (req, res, next) => {
+  try {
+    const principal = await authenticatedPrincipal(req);
+    if (principal.kind === "owner") return res.json(responseBase({ authenticated: true, tier: "owner", entitlements: ["*"] }));
+    const subscription = await ensureFreeSubscription(principal.id);
+    res.json({
+      ok: true,
+      authenticated: true,
+      user: { id: principal.id, email: principal.email, gid: principal.gid, display_name: principal.user?.user_metadata?.display_name || null },
+      tier: normalizedTier(subscription?.tier),
+      subscription_status: subscription?.status || "active",
+      entitlements: entitlementsFor(subscription?.tier, subscription?.status),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+api.get("/billing/status", async (req, res, next) => {
+  try {
+    const principal = await authenticatedPrincipal(req);
+    if (principal.kind === "owner") {
+      return res.json(responseBase({ billing_configured: billingConfigured, tier: "owner", status: "active", entitlements: ["*"], subscription: null }));
+    }
+    const subscription = await ensureFreeSubscription(principal.id);
+    const tier = normalizedTier(subscription?.tier);
+    const status = subscription?.status || "active";
+    return res.json({
+      ok: true,
+      billing_configured: billingConfigured,
+      user_id: principal.id,
+      tier,
+      status,
+      entitlements: entitlementsFor(tier, status),
+      subscription,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+api.post("/billing/checkout", async (req, res, next) => {
+  try {
+    const stripeClient = requireStripe();
+    const principal = await authenticatedPrincipal(req);
+    if (principal.kind === "owner") throw httpError(400, "Owner tier does not require Stripe checkout");
+    const tier = normalizedTier(String(req.body?.tier || req.body?.plan || ""));
+    if (!["beta", "alpha"].includes(tier)) throw httpError(400, "Paid tier must be beta or alpha");
+    const priceId = TIER_CONFIG[tier].priceId;
+    if (!priceId) throw httpError(503, `Stripe price for ${tier} is not configured`);
+
+    let subscription = await ensureFreeSubscription(principal.id);
+    if (subscription?.stripe_subscription_id && ["active", "trialing", "past_due"].includes(subscription?.status) && subscription?.tier !== "free") {
+      throw httpError(409, "An active paid subscription already exists; use the billing portal to change plans");
+    }
+    let customerId = subscription?.stripe_customer_id || null;
+    if (!customerId) {
+      const customer = await stripeClient.customers.create({
+        email: principal.email || undefined,
+        metadata: { user_id: principal.id, gid: principal.gid || "" },
+      });
+      customerId = customer.id;
+      subscription = await patchSubscription(principal.id, { stripe_customer_id: customerId });
+    }
+
+    const checkout = await stripeClient.checkout.sessions.create({
+      mode: "subscription",
+      customer: customerId,
+      client_reference_id: principal.id,
+      line_items: [{ price: priceId, quantity: 1 }],
+      allow_promotion_codes: true,
+      success_url: `${publicDomain}/?checkout=return&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${publicDomain}/?checkout=cancel`,
+      metadata: { user_id: principal.id, tier },
+      subscription_data: { metadata: { user_id: principal.id, tier } },
+    });
+
+    res.json({ ok: true, url: checkout.url, session_id: checkout.id, tier });
+  } catch (error) {
+    next(error);
+  }
+});
+
+api.post("/billing/portal", async (req, res, next) => {
+  try {
+    const stripeClient = requireStripe();
+    const principal = await authenticatedPrincipal(req);
+    if (principal.kind === "owner") throw httpError(400, "Owner tier does not require a billing portal");
+    const subscription = await getSubscription(principal.id);
+    if (!subscription?.stripe_customer_id) throw httpError(409, "No Stripe customer exists for this account yet");
+    const portal = await stripeClient.billingPortal.sessions.create({
+      customer: subscription.stripe_customer_id,
+      return_url: `${publicDomain}/?billing=return`,
+    });
+    res.json({ ok: true, url: portal.url });
+  } catch (error) {
+    next(error);
+  }
 });
 
 api.get("/render-state", async (req, res, next) => {
@@ -443,7 +992,7 @@ api.post("/tae", async (req, res, next) => {
       requestId: req.body?.request_id || req.requestId,
       payload: req.body || {},
     });
-    requireProviderAccess(req);
+    await requireProviderAccess(req);
     const result = await generateWithGoogle({
       prompt,
       systemInstruction:
@@ -482,7 +1031,7 @@ api.post("/runtime", async (req, res, next) => {
 
     if (providerRequired) {
       if (!intent) return res.status(422).json({ ok: false, error: "intent or payload.prompt is required", request_id: requestId });
-      requireProviderAccess(req);
+      await requireProviderAccess(req);
       const result = await generateWithGoogle({
         prompt: intent,
         systemInstruction:
@@ -532,7 +1081,7 @@ api.post("/generate", async (req, res, next) => {
       requestId: req.requestId,
       payload: req.body || {},
     });
-    requireProviderAccess(req);
+    await requireProviderAccess(req);
     const result = await generateWithGoogle({
       prompt,
       systemInstruction:
@@ -547,7 +1096,7 @@ api.post("/generate", async (req, res, next) => {
 });
 
 app.get("/", (_req, res) => {
-  res.json(responseBase({ service: "ARI", runtime: "Mercury", status: "online", provider, mercury_runtime: mercuryRuntimeUrl }));
+  res.json(responseBase({ service: "ARI", runtime: "Mercury", status: "online", provider, mercury_runtime: mercuryRuntimeUrl, billing_configured: billingConfigured }));
 });
 
 app.use("/api", api);
