@@ -1,15 +1,16 @@
 {
   "name": "tae-backend",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "private": true,
   "type": "module",
   "engines": {
     "node": ">=20"
   },
   "scripts": {
-    "start": "node identity-runtime-gateway.js",
+    "start": "node manifest-runtime-gateway.js",
+    "start:identity": "node identity-runtime-gateway.js",
     "start:inner": "node server.js",
-    "dev": "node --watch identity-runtime-gateway.js"
+    "dev": "node --watch manifest-runtime-gateway.js"
   },
   "dependencies": {
     "@google/genai": "^1.17.0",
