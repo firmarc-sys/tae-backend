@@ -1,5 +1,6 @@
 import "dotenv/config";
 import http from "node:http";
+import net from "node:net";
 import { spawn } from "node:child_process";
 
 const outerPort = Number(process.env.PORT || 8080);
@@ -336,9 +337,33 @@ const gateway = http.createServer((req, res) => {
   return proxyStream(req, res);
 });
 
-gateway.listen(outerPort, "0.0.0.0", () => {
-  console.log(`ARI identity runtime gateway listening on ${outerPort}; inner ARI on ${innerPort}`);
-});
+function waitForPort(port, { timeout = 20000, interval = 100 } = {}) {
+  const deadline = Date.now() + timeout;
+  return new Promise((resolve, reject) => {
+    const attempt = () => {
+      const socket = net.createConnection({ host: "127.0.0.1", port });
+      socket.once("connect", () => { socket.destroy(); resolve(); });
+      socket.once("error", (error) => {
+        socket.destroy();
+        if (Date.now() >= deadline) reject(error);
+        else setTimeout(attempt, interval);
+      });
+    };
+    attempt();
+  });
+}
+
+waitForPort(innerPort)
+  .then(() => {
+    gateway.listen(outerPort, "0.0.0.0", () => {
+      console.log(`ARI identity runtime gateway listening on ${outerPort}; inner ARI on ${innerPort}`);
+    });
+  })
+  .catch((error) => {
+    console.error(`ARI child runtime failed readiness: ${error.message}`);
+    if (!child.killed) child.kill("SIGTERM");
+    process.exit(1);
+  });
 
 function shutdown(signal) {
   console.log(`ARI identity runtime gateway received ${signal}`);
