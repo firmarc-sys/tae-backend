@@ -3,6 +3,7 @@ import http from "node:http";
 import net from "node:net";
 import crypto from "node:crypto";
 import { spawn } from "node:child_process";
+import { createAutonomyRuntime } from "./autonomy-runtime.js";
 
 const port = Number(process.env.PORT || 8080);
 const innerPort = Number(process.env.ARI_IDENTITY_PORT || 8081);
@@ -14,6 +15,7 @@ const usage = new Map();
 const child = spawn(process.execPath,["identity-runtime-gateway.js"],{env:{...process.env,PORT:String(innerPort),ARI_INNER_PORT:String(corePort),ARI_REQUIRE_AUTH:freeAccess?"false":(process.env.ARI_REQUIRE_AUTH||"true")},stdio:"inherit"});
 child.on("exit",code=>process.exit(code||1));
 
+const autonomy = createAutonomyRuntime({ innerPort });
 const rid=req=>String(req.headers["x-request-id"]||crypto.randomUUID());
 function json(res,status,body,id){const data=Buffer.from(JSON.stringify(body));res.writeHead(status,{"content-type":"application/json; charset=utf-8","content-length":String(data.length),"cache-control":"no-store","x-runtime":"ARI",...(id?{"x-request-id":id}:{})});res.end(data)}
 function read(req,cap=12*1024*1024){return new Promise((resolve,reject)=>{const a=[];let n=0;req.on("data",c=>{n+=c.length;if(n>cap){reject(Object.assign(new Error("request body too large"),{status:413}));req.destroy();return}a.push(c)});req.on("end",()=>resolve(Buffer.concat(a)));req.on("error",reject)})}
@@ -38,7 +40,14 @@ async function manifest(req,res,b,id){const intent=String(b?.intent||b?.payload?
 
 function proxy(req,res,raw,id){const u=http.request({hostname:"127.0.0.1",port:innerPort,path:req.url,method:req.method,headers:{...req.headers,host:`127.0.0.1:${innerPort}`,"content-length":String(raw.length),"x-request-id":id}},r=>{const a=[];r.on("data",c=>a.push(c));r.on("end",()=>{const d=Buffer.concat(a),status=r.statusCode||502,type=String(r.headers["content-type"]||"");if(type.includes("json")){let p;try{p=JSON.parse(d.toString("utf8"))}catch{}if(status>=500||(p?.ok===false&&String(p?.error||"").trim()==="500"))return json(res,status>=500?status:500,err(status>=500?status:500,p,id,p?.capability||"runtime"),id)}res.writeHead(status,r.headers);res.end(d)})});u.on("error",e=>json(res,503,err(503,{error:`ARI gateway unavailable: ${e.message}`},id),id));u.end(raw)}
 
-async function handle(req,res){const id=rid(req),url=new URL(req.url||"/","http://localhost"),runtime=req.method==="POST"&&(url.pathname==="/api/runtime"||url.pathname==="/runtime");if(!url.pathname.startsWith("/api/")&&url.pathname!=="/runtime"){const u=http.request({hostname:"127.0.0.1",port:innerPort,path:req.url,method:req.method,headers:{...req.headers,host:`127.0.0.1:${innerPort}`}},r=>{res.writeHead(r.statusCode||502,r.headers);r.pipe(res)});u.on("error",e=>json(res,503,err(503,{error:e.message},id),id));req.pipe(u);return}let raw;try{raw=await read(req)}catch(e){return json(res,e.status||400,err(e.status||400,{error:e.message},id),id)}if(runtime){if(!allowed(req))return json(res,429,err(429,{error:"Free runtime request limit reached for this hour."},id),id);let b={};try{b=raw.length?JSON.parse(raw.toString("utf8")): {}}catch{return json(res,400,err(400,{error:"Invalid JSON body."},id),id)}const c=String(b?.capability||"").trim().toLowerCase(),auto=b?.context?.auto_route===true||b?.payload?.auto_route===true;if(!c||auto||["intent","orchestration","orchestrate","trismegistus","jahorin"].includes(c))return manifest(req,res,b,id)}return proxy(req,res,raw,id)}
+async function handle(req,res){
+  const id=rid(req),url=new URL(req.url||"/","http://localhost"),runtime=req.method==="POST"&&(url.pathname==="/api/runtime"||url.pathname==="/runtime"),autonomyRoute=autonomy.matches(url.pathname);
+  if(!url.pathname.startsWith("/api/")&&url.pathname!=="/runtime"&&!autonomyRoute){const u=http.request({hostname:"127.0.0.1",port:innerPort,path:req.url,method:req.method,headers:{...req.headers,host:`127.0.0.1:${innerPort}`}},r=>{res.writeHead(r.statusCode||502,r.headers);r.pipe(res)});u.on("error",e=>json(res,503,err(503,{error:e.message},id),id));req.pipe(u);return}
+  let raw;try{raw=await read(req)}catch(e){return json(res,e.status||400,err(e.status||400,{error:e.message},id),id)}
+  if(autonomyRoute)return autonomy.handle(req,res,{pathname:url.pathname,raw,requestId:id});
+  if(runtime){if(!allowed(req))return json(res,429,err(429,{error:"Free runtime request limit reached for this hour."},id),id);let b={};try{b=raw.length?JSON.parse(raw.toString("utf8")): {}}catch{return json(res,400,err(400,{error:"Invalid JSON body."},id),id)}const c=String(b?.capability||"").trim().toLowerCase(),auto=b?.context?.auto_route===true||b?.payload?.auto_route===true;if(!c||auto||["intent","orchestration","orchestrate","trismegistus","jahorin"].includes(c))return manifest(req,res,b,id)}
+  return proxy(req,res,raw,id)
+}
 
 const gateway=http.createServer((req,res)=>void handle(req,res).catch(e=>json(res,Number(e.status)||500,err(Number(e.status)||500,{error:e.message||"Unexpected runtime failure"},rid(req)),rid(req))));
 function waitForPort(port, { timeout = 20000, interval = 100 } = {}) {
@@ -59,7 +68,7 @@ function waitForPort(port, { timeout = 20000, interval = 100 } = {}) {
 
 waitForPort(innerPort)
   .then(() => {
-    gateway.listen(port,"0.0.0.0",()=>console.log(`Jahorin manifest gateway ${port}; free_access=${freeAccess}; hourly_limit=${limit}`));
+    gateway.listen(port,"0.0.0.0",()=>console.log(`Jahorin manifest gateway ${port}; free_access=${freeAccess}; hourly_limit=${limit}; autonomy=${process.env.ARI_AUTONOMY_ENABLED||"true"}`));
   })
   .catch((error) => {
     console.error(`ARI child runtime failed readiness: ${error.message}`);
