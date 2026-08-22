@@ -1,0 +1,7 @@
+THOTH GCP DEPLOY DIAGNOSTIC
+source_sha=86757b2de67641867c3c6685dfd3f31d9b945761
+auth_outcome=failure
+sdk_outcome=skipped
+project_id=project-7e6f2720-0291-4c91-8c3
+project_number=689058655022
+region=us-west1
