@@ -1,0 +1,110 @@
+name: thoth-consumer-beta
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/thoth-consumer-beta.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  cut:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch ARI for consumer beta
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p=Path('server.js')
+          s=p.read_text()
+
+          # 1) Signed guest sessions are valid consumer sessions.
+          old='''async function requireProviderAccess(req) {\n  if (!authRequired) return { kind: "public" };\n  if (sessionGid(req) === OWNER_GID) return { kind: "owner", gid: OWNER_GID, tier: "owner" };\n  if (bearerToken(req) && supabaseConfigured) return authenticatedPrincipal(req);\n  throw httpError(401, "Authenticated ARI or Supabase session required");\n}'''
+          new='''async function requireProviderAccess(req) {\n  if (!authRequired) return { kind: "public" };\n  const cookieGid = sessionGid(req);\n  if (cookieGid) {\n    return cookieGid === OWNER_GID\n      ? { kind: "owner", gid: OWNER_GID, tier: "owner" }\n      : { kind: "guest", gid: cookieGid, tier: "free" };\n  }\n  if (bearerToken(req) && supabaseConfigured) return authenticatedPrincipal(req);\n  throw httpError(401, "Authenticated ARI session required");\n}'''
+          if s.count(old)!=1: raise SystemExit('requireProviderAccess block drift')
+          s=s.replace(old,new,1)
+
+          # 2) Mercury orchestration must see signed guest GIDs.
+          old='''async function orchestrateWithMercury(req, { capability, intent, requestId, payload = {} }) {\n  let principal = null;\n  if (sessionGid(req) === OWNER_GID) {\n    principal = { kind: "owner", gid: OWNER_GID };\n  } else if (bearerToken(req) && supabaseConfigured) {\n    try { principal = await authenticatedPrincipal(req); } catch { principal = null; }\n  }\n  const verifiedGid = principal?.gid || principal?.id || null;'''
+          new='''async function orchestrateWithMercury(req, { capability, intent, requestId, payload = {} }) {\n  let principal = null;\n  const cookieGid = sessionGid(req);\n  if (cookieGid) {\n    principal = cookieGid === OWNER_GID\n      ? { kind: "owner", gid: OWNER_GID }\n      : { kind: "guest", gid: cookieGid };\n  } else if (bearerToken(req) && supabaseConfigured) {\n    try { principal = await authenticatedPrincipal(req); } catch { principal = null; }\n  }\n  const verifiedGid = principal?.gid || principal?.id || null;'''
+          if s.count(old)!=1: raise SystemExit('orchestrateWithMercury block drift')
+          s=s.replace(old,new,1)
+
+          # 3) Readiness includes signed guest auth and does not depend on paid Supabase availability.
+          old='''  const ownerAuthConfigured = Boolean(sessionSecret && ownerAccessCode);\n  const memberAuthConfigured = supabaseConfigured;\n  const authenticationConfigured = !authRequired || memberAuthConfigured || ownerAuthConfigured;'''
+          new='''  const ownerAuthConfigured = Boolean(sessionSecret && ownerAccessCode);\n  const memberAuthConfigured = supabaseConfigured;\n  const guestAuthConfigured = Boolean(sessionSecret);\n  const authenticationConfigured = !authRequired || guestAuthConfigured || memberAuthConfigured || ownerAuthConfigured;'''
+          if s.count(old)!=1: raise SystemExit('ready auth block drift')
+          s=s.replace(old,new,1)
+          s=s.replace('''      member_auth_configured: memberAuthConfigured,\n      owner_auth_configured: ownerAuthConfigured,''','''      member_auth_configured: memberAuthConfigured,\n      guest_auth_configured: guestAuthConfigured,\n      owner_auth_configured: ownerAuthConfigured,''',1)
+
+          # 4) Consumer identity from signed guest cookie.
+          marker='''  if (gid === OWNER_GID) {\n    return res.json(responseBase({ authenticated: true, identity_scope: "prime", clearance: OWNER_MODE, tier: "owner", entitlements: ["*"] }));\n  }\n\n  const token = bearerToken(req);'''
+          replacement='''  if (gid === OWNER_GID) {\n    return res.json(responseBase({ authenticated: true, identity_scope: "prime", clearance: OWNER_MODE, tier: "owner", entitlements: ["*"] }));\n  }\n  if (gid) {\n    return res.json(responseBase({ gid, mode: "consumer", authenticated: true, identity_scope: "consumer", clearance: "member", tier: "free", entitlements: TIER_CONFIG.free.entitlements }));\n  }\n\n  const token = bearerToken(req);'''
+          if s.count(marker)!=1: raise SystemExit('identity GET marker drift')
+          s=s.replace(marker,replacement,1)
+
+          marker='''  if (gid === OWNER_GID) {\n    return res.json(responseBase({ authenticated: true, identity: { gid: OWNER_GID, verified: true, clearance: OWNER_MODE, tier: "owner" } }));\n  }\n  try {'''
+          replacement='''  if (gid === OWNER_GID) {\n    return res.json(responseBase({ authenticated: true, identity: { gid: OWNER_GID, verified: true, clearance: OWNER_MODE, tier: "owner" } }));\n  }\n  if (gid) {\n    return res.json(responseBase({ gid, mode: "consumer", authenticated: true, identity: { gid, verified: true, clearance: "member", tier: "free" } }));\n  }\n  try {'''
+          if s.count(marker)!=1: raise SystemExit('identity POST marker drift')
+          s=s.replace(marker,replacement,1)
+
+          # 5) Guest-session bootstrap route.
+          marker='''api.delete("/identity/session", (_req, res) => {\n  res.setHeader("Set-Cookie", `${SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Strict`);\n  res.json(responseBase({ authenticated: false }));\n});\n'''
+          guest='''api.delete("/identity/session", (_req, res) => {\n  res.setHeader("Set-Cookie", `${SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Strict`);\n  res.json(responseBase({ authenticated: false }));\n});\n\napi.post("/identity/guest", (req, res, next) => {\n  try {\n    if (!sessionSecret) throw httpError(503, "ARI session security is not configured");\n    let gid = generateMemberGid();\n    while (gid === OWNER_GID) gid = generateMemberGid();\n    const expires = Math.floor(Date.now() / 1000) + Number(process.env.ARI_SESSION_TTL_SECONDS || 2592000);\n    const token = signSession(gid, expires);\n    res.setHeader(\n      "Set-Cookie",\n      `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; Max-Age=${Math.max(60, expires - Math.floor(Date.now() / 1000))}; HttpOnly; Secure; SameSite=Strict`,\n    );\n    res.status(201).json(responseBase({ gid, mode: "consumer", authenticated: true, identity_scope: "consumer", tier: "free", expires }));\n  } catch (error) {\n    next(error);\n  }\n});\n'''
+          if s.count(marker)!=1: raise SystemExit('guest route marker drift')
+          s=s.replace(marker,guest,1)
+
+          # 6) Server-authoritative manifestation contract.
+          marker='''const api = express.Router();\n'''
+          block='''function inferManifest(intent = "", requestedCapability = "", context = {}) {\n  const text = String(intent || "").toLowerCase();\n  const requested = String(requestedCapability || "").toLowerCase();\n  const rules = [\n    ["interweb", /search|find|web|research|discover|forecast|weather|news|look up|traverse/],\n    ["augment", /music|audio|sound|beat|mix|syncori|song|loop|keys|drums|sample/],\n    ["code", /code|build|deploy|terminal|function|html|javascript|repo|runtime|debug|fix|ship/],\n    ["thoth", /write|scribe|explain|document|notes|file|summar|draft|memory|recall/],\n    ["optics", /camera|image|video|see|capture|analy|optic|horus|xr|visual|photo/],\n    ["novalife", /home|novalife|garden|sanctum|project|continue|next|timeline|routine/],\n  ];\n  let capability = rules.find(([,rx]) => rx.test(text))?.[0] || (["interweb","augment","code","thoth","optics","novalife"].includes(requested) ? requested : "novalife");\n  let page = "home";\n  if (capability === "interweb") page = /forecast|weather/.test(text) ? "search" : "search";\n  if (capability === "augment") page = /keys/.test(text) ? "keys" : /drum/.test(text) ? "drums" : /sample/.test(text) ? "sample" : /loop/.test(text) ? "loop" : "mix";\n  if (capability === "code") page = /deploy|ship|publish/.test(text) ? "deploy" : /runtime|debug|test/.test(text) ? "runtime" : "intent";\n  if (capability === "thoth") page = /explain/.test(text) ? "explain" : /file/.test(text) ? "files" : /sketch/.test(text) ? "sketch" : "scribe";\n  if (capability === "optics") page = /capture|photo/.test(text) ? "capture" : /analy/.test(text) ? "analyze" : "see";\n  if (capability === "novalife") page = /weather|forecast/.test(text) ? "weather" : /project|continue|unfinished/.test(text) ? "projects" : /timeline|next|now/.test(text) ? "timeline" : "home-room";\n  const requires_confirmation = /\b(send|publish|deploy|delete|purchase|buy|pay|subscribe|cancel|message|email|post|transfer|book|order)\b/.test(text);\n  const matched = rules.some(([,rx]) => rx.test(text));\n  return {\n    capability,\n    page,\n    confidence: matched ? 0.91 : 0.72,\n    reason: matched ? `Jahorin mapped this intention to ${capability.toUpperCase()} · ${page.toUpperCase()}.` : `Jahorin kept the current context and selected ${capability.toUpperCase()} · ${page.toUpperCase()}.`,\n    requires_confirmation,\n    context_source: context?.scene || null,\n  };\n}\n\nconst api = express.Router();\n\n// Cost protection for consumer guest sessions.\nconst rateBuckets = new Map();\napi.use((req, res, next) => {\n  if (req.method !== "POST" || !["/runtime", "/generate", "/tae"].includes(req.path)) return next();\n  const key = String(req.get("x-forwarded-for") || req.ip || "unknown").split(",")[0].trim();\n  const now = Date.now();\n  const windowMs = 60_000;\n  const max = 24;\n  const bucket = rateBuckets.get(key);\n  if (!bucket || now - bucket.started > windowMs) { rateBuckets.set(key, { started: now, count: 1 }); return next(); }\n  bucket.count += 1;\n  if (bucket.count > max) return res.status(429).json({ ok: false, error: "Rate limit exceeded. Try again shortly.", request_id: req.requestId });\n  next();\n});\n'''
+          if s.count(marker)!=1: raise SystemExit('api router marker drift')
+          s=s.replace(marker,block,1)
+
+          # 7) Consumer-safe capability/Twin compatibility surface.
+          marker='''api.get("/health", (_req, res) => {'''
+          compat='''api.get("/capabilities", (_req, res) => {\n  res.json(responseBase({ capabilities: [\n    { id: "interweb", deity: "Wepwawet" },\n    { id: "augment", deity: "Hathor" },\n    { id: "code", deity: "Ptah" },\n    { id: "thoth", deity: "Thoth" },\n    { id: "optics", deity: "Horus" },\n    { id: "novalife", deity: "NovaLife" },\n  ] }));\n});\napi.get("/timeline", (req, res) => res.json(responseBase({ gid: sessionGid(req), turns: [], persistence: "device-local", cloud_sync: false })));\napi.post("/timeline", (req, res) => res.json(responseBase({ gid: sessionGid(req), accepted: true, persistence: "device-local", cloud_sync: false, turn: req.body || {} })));\napi.get("/state/:gid", (req, res, next) => {\n  const gid = sessionGid(req);\n  if (!gid) return next(httpError(401, "Authenticated ARI session required"));\n  if (req.params.gid !== gid) return next(httpError(403, "GID state access denied"));\n  return res.json(responseBase({ gid, state: null, persistence: "device-local", cloud_sync: false }));\n});\napi.get("/twin", (req, res, next) => { const gid=sessionGid(req); if(!gid)return next(httpError(401,"Authenticated ARI session required")); res.json(responseBase({ gid, twin:null, persistence:"device-local", cloud_sync:false })); });\nfor (const path of ["/twin/context","/twin/interaction","/twin/outcome","/twin/correction"]) {\n  api.post(path, (req, res, next) => { const gid=sessionGid(req); if(!gid)return next(httpError(401,"Authenticated ARI session required")); res.json(responseBase({ gid, accepted:true, persistence:"device-local", cloud_sync:false })); });\n}\napi.get("/twin/predictions", (req, res, next) => { const gid=sessionGid(req); if(!gid)return next(httpError(401,"Authenticated ARI session required")); res.json(responseBase({ gid, predictions:[], persistence:"device-local", cloud_sync:false })); });\n\napi.get("/health", (_req, res) => {'''
+          if s.count(marker)!=1: raise SystemExit('health marker drift')
+          s=s.replace(marker,compat,1)
+
+          # 8) Include manifestation contract in every /runtime result and let ARI choose capability/page.
+          old='''    const capability = String(req.body?.capability || "text").trim().toLowerCase();\n    const intent = String(req.body?.intent || req.body?.payload?.prompt || "").trim();\n    const requestId = req.body?.request_id || req.requestId;\n\n    const runtime = await orchestrateWithMercury(req, {\n      capability,\n      intent,'''
+          new='''    const requestedCapability = String(req.body?.capability || "text").trim().toLowerCase();\n    const intent = String(req.body?.intent || req.body?.payload?.prompt || "").trim();\n    const requestId = req.body?.request_id || req.requestId;\n    const manifest = inferManifest(intent, requestedCapability, req.body?.context || {});\n    const capability = manifest.capability;\n\n    const runtime = await orchestrateWithMercury(req, {\n      capability,\n      intent,'''
+          if s.count(old)!=1: raise SystemExit('runtime start drift')
+          s=s.replace(old,new,1)
+
+          # Insert fields after request_id in runtime responses.
+          s=s.replace('''          request_id: requestId,\n          orchestration,''','''          request_id: requestId,\n          manifest, capability: manifest.capability, page: manifest.page, confidence: manifest.confidence, reason: manifest.reason, requires_confirmation: manifest.requires_confirmation,\n          orchestration,''')
+          s=s.replace('''return res.json(responseBase({ request_id: requestId, orchestration, render_state: runtime.renderState,''','''return res.json(responseBase({ request_id: requestId, manifest, capability: manifest.capability, page: manifest.page, confidence: manifest.confidence, reason: manifest.reason, requires_confirmation: manifest.requires_confirmation, orchestration, render_state: runtime.renderState,''')
+
+          p.write_text(s)
+          PY
+
+      - name: Validate consumer beta ARI
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check server.js
+          grep -q '/identity/guest' server.js
+          grep -q 'guest_auth_configured' server.js
+          grep -q 'function inferManifest' server.js
+          grep -q 'cloud_sync: false' server.js
+          grep -q 'Rate limit exceeded' server.js
+
+      - name: Commit consumer beta runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/thoth-consumer-beta.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "THOTH: enable consumer guest runtime and ARI manifestation"
+          git pull --rebase origin main
+          git push origin HEAD:main
