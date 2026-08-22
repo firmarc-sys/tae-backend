@@ -7,7 +7,6 @@ const pool = connectionString
       max: Math.max(2, Number(process.env.NEON_POOL_MAX || 5)),
       idleTimeoutMillis: 30_000,
       connectionTimeoutMillis: 8_000,
-      ssl: /localhost|127\.0\.0\.1/.test(connectionString) ? undefined : { rejectUnauthorized: false },
     })
   : null;
 
@@ -245,20 +244,23 @@ export async function getTimeline(gid, limit = 40) {
 
 export async function clearTwin(gid) {
   const db = requirePool();
-  await db.query("begin");
+  const client = await db.connect();
   try {
-    await db.query(`delete from public.jahorin_twin_events where gid=$1`, [gid]);
-    await db.query(`delete from public.jahorin_twin_predictions where gid=$1`, [gid]);
-    await db.query(`delete from public.jahorin_projects where gid=$1`, [gid]);
-    await db.query(`delete from public.jahorin_timeline where gid=$1`, [gid]);
-    await db.query(`delete from public.jahorin_capability_usage where gid=$1`, [gid]);
-    await db.query(`update public.jahorin_twin_state set learning_enabled=true, confidence=0.5, state='{}'::jsonb, updated_at=now() where gid=$1`, [gid]);
-    await db.query(`update public.jahorin_preferences set preferences='{}'::jsonb, updated_at=now() where gid=$1`, [gid]);
-    await db.query("commit");
+    await client.query("begin");
+    await client.query(`delete from public.jahorin_twin_events where gid=$1`, [gid]);
+    await client.query(`delete from public.jahorin_twin_predictions where gid=$1`, [gid]);
+    await client.query(`delete from public.jahorin_projects where gid=$1`, [gid]);
+    await client.query(`delete from public.jahorin_timeline where gid=$1`, [gid]);
+    await client.query(`delete from public.jahorin_capability_usage where gid=$1`, [gid]);
+    await client.query(`update public.jahorin_twin_state set learning_enabled=true, confidence=0.5, state='{}'::jsonb, updated_at=now() where gid=$1`, [gid]);
+    await client.query(`update public.jahorin_preferences set preferences='{}'::jsonb, updated_at=now() where gid=$1`, [gid]);
+    await client.query("commit");
     return true;
   } catch (error) {
-    await db.query("rollback");
+    await client.query("rollback");
     throw error;
+  } finally {
+    client.release();
   }
 }
 
