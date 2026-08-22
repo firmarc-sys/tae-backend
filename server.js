@@ -186,9 +186,14 @@ function bearerToken(req) {
 
 async function requireProviderAccess(req) {
   if (!authRequired) return { kind: "public" };
-  if (sessionGid(req) === OWNER_GID) return { kind: "owner", gid: OWNER_GID, tier: "owner" };
+  const cookieGid = sessionGid(req);
+  if (cookieGid) {
+    return cookieGid === OWNER_GID
+      ? { kind: "owner", gid: OWNER_GID, tier: "owner" }
+      : { kind: "guest", gid: cookieGid, tier: "free" };
+  }
   if (bearerToken(req) && supabaseConfigured) return authenticatedPrincipal(req);
-  throw httpError(401, "Authenticated ARI or Supabase session required");
+  throw httpError(401, "Authenticated ARI session required");
 }
 
 function renderState(state = "idle") {
@@ -542,8 +547,11 @@ async function mercuryReady() {
 
 async function orchestrateWithMercury(req, { capability, intent, requestId, payload = {} }) {
   let principal = null;
-  if (sessionGid(req) === OWNER_GID) {
-    principal = { kind: "owner", gid: OWNER_GID };
+  const cookieGid = sessionGid(req);
+  if (cookieGid) {
+    principal = cookieGid === OWNER_GID
+      ? { kind: "owner", gid: OWNER_GID }
+      : { kind: "guest", gid: cookieGid };
   } else if (bearerToken(req) && supabaseConfigured) {
     try { principal = await authenticatedPrincipal(req); } catch { principal = null; }
   }
@@ -591,7 +599,77 @@ async function generateWithGoogle({ prompt, systemInstruction, temperature = 0.7
   };
 }
 
+function inferManifest(intent = "", requestedCapability = "", context = {}) {
+  const text = String(intent || "").toLowerCase();
+  const requested = String(requestedCapability || "").toLowerCase();
+  const rules = [
+    ["interweb", /search|find|web|research|discover|forecast|weather|news|look up|traverse/],
+    ["augment", /music|audio|sound|beat|mix|syncori|song|loop|keys|drums|sample/],
+    ["code", /code|build|deploy|terminal|function|html|javascript|repo|runtime|debug|fix|ship/],
+    ["thoth", /write|scribe|explain|document|notes|file|summar|draft|memory|recall/],
+    ["optics", /camera|image|video|see|capture|analy|optic|horus|xr|visual|photo/],
+    ["novalife", /home|novalife|garden|sanctum|project|continue|next|timeline|routine/],
+  ];
+  let capability = rules.find(([,rx]) => rx.test(text))?.[0] || (["interweb","augment","code","thoth","optics","novalife"].includes(requested) ? requested : "novalife");
+  let page = "home";
+  if (capability === "interweb") page = /forecast|weather/.test(text) ? "search" : "search";
+  if (capability === "augment") page = /keys/.test(text) ? "keys" : /drum/.test(text) ? "drums" : /sample/.test(text) ? "sample" : /loop/.test(text) ? "loop" : "mix";
+  if (capability === "code") page = /deploy|ship|publish/.test(text) ? "deploy" : /runtime|debug|test/.test(text) ? "runtime" : "intent";
+  if (capability === "thoth") page = /explain/.test(text) ? "explain" : /file/.test(text) ? "files" : /sketch/.test(text) ? "sketch" : "scribe";
+  if (capability === "optics") page = /capture|photo/.test(text) ? "capture" : /analy/.test(text) ? "analyze" : "see";
+  if (capability === "novalife") page = /weather|forecast/.test(text) ? "weather" : /project|continue|unfinished/.test(text) ? "projects" : /timeline|next|now/.test(text) ? "timeline" : "home-room";
+  const requires_confirmation = /(send|publish|deploy|delete|purchase|buy|pay|subscribe|cancel|message|email|post|transfer|book|order)/.test(text);
+  const matched = rules.some(([,rx]) => rx.test(text));
+  return {
+    capability,
+    page,
+    confidence: matched ? 0.91 : 0.72,
+    reason: matched ? `Jahorin mapped this intention to ${capability.toUpperCase()} · ${page.toUpperCase()}.` : `Jahorin kept the current context and selected ${capability.toUpperCase()} · ${page.toUpperCase()}.`,
+    requires_confirmation,
+    context_source: context?.scene || null,
+  };
+}
+
 const api = express.Router();
+
+// Cost protection for consumer guest sessions.
+const rateBuckets = new Map();
+api.use((req, res, next) => {
+  if (req.method !== "POST" || !["/runtime", "/generate", "/tae"].includes(req.path)) return next();
+  const key = String(req.get("x-forwarded-for") || req.ip || "unknown").split(",")[0].trim();
+  const now = Date.now();
+  const windowMs = 60_000;
+  const max = 24;
+  const bucket = rateBuckets.get(key);
+  if (!bucket || now - bucket.started > windowMs) { rateBuckets.set(key, { started: now, count: 1 }); return next(); }
+  bucket.count += 1;
+  if (bucket.count > max) return res.status(429).json({ ok: false, error: "Rate limit exceeded. Try again shortly.", request_id: req.requestId });
+  next();
+});
+
+api.get("/capabilities", (_req, res) => {
+  res.json(responseBase({ capabilities: [
+    { id: "interweb", deity: "Wepwawet" },
+    { id: "augment", deity: "Hathor" },
+    { id: "code", deity: "Ptah" },
+    { id: "thoth", deity: "Thoth" },
+    { id: "optics", deity: "Horus" },
+    { id: "novalife", deity: "NovaLife" },
+  ] }));
+});
+api.get("/timeline", (req, res) => res.json(responseBase({ gid: sessionGid(req), turns: [], persistence: "device-local", cloud_sync: false })));
+api.post("/timeline", (req, res) => res.json(responseBase({ gid: sessionGid(req), accepted: true, persistence: "device-local", cloud_sync: false, turn: req.body || {} })));
+api.get("/state/:gid", (req, res, next) => {
+  const gid = sessionGid(req);
+  if (!gid) return next(httpError(401, "Authenticated ARI session required"));
+  if (req.params.gid !== gid) return next(httpError(403, "GID state access denied"));
+  return res.json(responseBase({ gid, state: null, persistence: "device-local", cloud_sync: false }));
+});
+api.get("/twin", (req, res, next) => { const gid=sessionGid(req); if(!gid)return next(httpError(401,"Authenticated ARI session required")); res.json(responseBase({ gid, twin:null, persistence:"device-local", cloud_sync:false })); });
+for (const path of ["/twin/context","/twin/interaction","/twin/outcome","/twin/correction"]) {
+  api.post(path, (req, res, next) => { const gid=sessionGid(req); if(!gid)return next(httpError(401,"Authenticated ARI session required")); res.json(responseBase({ gid, accepted:true, persistence:"device-local", cloud_sync:false })); });
+}
+api.get("/twin/predictions", (req, res, next) => { const gid=sessionGid(req); if(!gid)return next(httpError(401,"Authenticated ARI session required")); res.json(responseBase({ gid, predictions:[], persistence:"device-local", cloud_sync:false })); });
 
 api.get("/health", (_req, res) => {
   res.json(
@@ -612,7 +690,8 @@ api.get("/ready", async (_req, res) => {
   const providerConfigured = Boolean(ai);
   const ownerAuthConfigured = Boolean(sessionSecret && ownerAccessCode);
   const memberAuthConfigured = supabaseConfigured;
-  const authenticationConfigured = !authRequired || memberAuthConfigured || ownerAuthConfigured;
+  const guestAuthConfigured = Boolean(sessionSecret);
+  const authenticationConfigured = !authRequired || guestAuthConfigured || memberAuthConfigured || ownerAuthConfigured;
   const runtimeReady = await mercuryReady();
   const ready = providerConfigured && authenticationConfigured && runtimeReady;
   res.status(ready ? 200 : 503).json(
@@ -628,6 +707,7 @@ api.get("/ready", async (_req, res) => {
       auth_required: authRequired,
       auth_configured: authenticationConfigured,
       member_auth_configured: memberAuthConfigured,
+      guest_auth_configured: guestAuthConfigured,
       owner_auth_configured: ownerAuthConfigured,
       supabase_configured: supabaseConfigured,
       stripe_configured: stripeConfigured,
@@ -642,6 +722,9 @@ api.get("/identity", async (req, res) => {
   const gid = sessionGid(req);
   if (gid === OWNER_GID) {
     return res.json(responseBase({ authenticated: true, identity_scope: "prime", clearance: OWNER_MODE, tier: "owner", entitlements: ["*"] }));
+  }
+  if (gid) {
+    return res.json(responseBase({ gid, mode: "consumer", authenticated: true, identity_scope: "consumer", clearance: "member", tier: "free", entitlements: TIER_CONFIG.free.entitlements }));
   }
 
   const token = bearerToken(req);
@@ -674,6 +757,9 @@ api.post("/identity", async (req, res) => {
   const gid = sessionGid(req);
   if (gid === OWNER_GID) {
     return res.json(responseBase({ authenticated: true, identity: { gid: OWNER_GID, verified: true, clearance: OWNER_MODE, tier: "owner" } }));
+  }
+  if (gid) {
+    return res.json(responseBase({ gid, mode: "consumer", authenticated: true, identity: { gid, verified: true, clearance: "member", tier: "free" } }));
   }
   try {
     const principal = await authenticatedPrincipal(req);
@@ -717,6 +803,23 @@ api.post("/identity/session", (req, res, next) => {
 api.delete("/identity/session", (_req, res) => {
   res.setHeader("Set-Cookie", `${SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Strict`);
   res.json(responseBase({ authenticated: false }));
+});
+
+api.post("/identity/guest", (req, res, next) => {
+  try {
+    if (!sessionSecret) throw httpError(503, "ARI session security is not configured");
+    let gid = generateMemberGid();
+    while (gid === OWNER_GID) gid = generateMemberGid();
+    const expires = Math.floor(Date.now() / 1000) + Number(process.env.ARI_SESSION_TTL_SECONDS || 2592000);
+    const token = signSession(gid, expires);
+    res.setHeader(
+      "Set-Cookie",
+      `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; Max-Age=${Math.max(60, expires - Math.floor(Date.now() / 1000))}; HttpOnly; Secure; SameSite=Strict`,
+    );
+    res.status(201).json(responseBase({ gid, mode: "consumer", authenticated: true, identity_scope: "consumer", tier: "free", expires }));
+  } catch (error) {
+    next(error);
+  }
 });
 
 api.post("/auth/signup", async (req, res, next) => {
@@ -1029,9 +1132,11 @@ api.post("/tae", async (req, res, next) => {
 
 api.post("/runtime", async (req, res, next) => {
   try {
-    const capability = String(req.body?.capability || "text").trim().toLowerCase();
+    const requestedCapability = String(req.body?.capability || "text").trim().toLowerCase();
     const intent = String(req.body?.intent || req.body?.payload?.prompt || "").trim();
     const requestId = req.body?.request_id || req.requestId;
+    const manifest = inferManifest(intent, requestedCapability, req.body?.context || {});
+    const capability = manifest.capability;
 
     const runtime = await orchestrateWithMercury(req, {
       capability,
@@ -1054,6 +1159,7 @@ api.post("/runtime", async (req, res, next) => {
       return res.json(
         responseBase({
           request_id: requestId,
+          manifest, capability: manifest.capability, page: manifest.page, confidence: manifest.confidence, reason: manifest.reason, requires_confirmation: manifest.requires_confirmation,
           orchestration,
           render_state: runtime.renderState,
           result: { text: result.text, model: result.model, provider: result.provider, tokens: result.tokens },
@@ -1064,19 +1170,19 @@ api.post("/runtime", async (req, res, next) => {
 
     if (capability === "identity") {
       const authenticated = sessionGid(req) === OWNER_GID;
-      return res.json(responseBase({ request_id: requestId, orchestration, render_state: runtime.renderState, result: { gid: authenticated ? OWNER_GID : null, mode: authenticated ? OWNER_MODE : "public", authenticated } }));
+      return res.json(responseBase({ request_id: requestId, manifest, capability: manifest.capability, page: manifest.page, confidence: manifest.confidence, reason: manifest.reason, requires_confirmation: manifest.requires_confirmation, orchestration, render_state: runtime.renderState, result: { gid: authenticated ? OWNER_GID : null, mode: authenticated ? OWNER_MODE : "public", authenticated } }));
     }
     if (capability === "syncori") {
-      return res.json(responseBase({ request_id: requestId, orchestration, render_state: runtime.renderState, result: { status: "online", engine: "SYNCORI Infinite Audio" } }));
+      return res.json(responseBase({ request_id: requestId, manifest, capability: manifest.capability, page: manifest.page, confidence: manifest.confidence, reason: manifest.reason, requires_confirmation: manifest.requires_confirmation, orchestration, render_state: runtime.renderState, result: { status: "online", engine: "SYNCORI Infinite Audio" } }));
     }
     if (capability === "iot") {
-      return res.json(responseBase({ request_id: requestId, orchestration, render_state: runtime.renderState, result: { status: "online", devices: [] } }));
+      return res.json(responseBase({ request_id: requestId, manifest, capability: manifest.capability, page: manifest.page, confidence: manifest.confidence, reason: manifest.reason, requires_confirmation: manifest.requires_confirmation, orchestration, render_state: runtime.renderState, result: { status: "online", devices: [] } }));
     }
     if (["tae", "demo"].includes(capability) && intent.replace(/\.$/, "").toLowerCase() === DEMO_PHRASE.toLowerCase()) {
-      return res.json(responseBase({ request_id: requestId, orchestration, render_state: runtime.renderState, result: { demo: true, message: CANONICAL_LINE } }));
+      return res.json(responseBase({ request_id: requestId, manifest, capability: manifest.capability, page: manifest.page, confidence: manifest.confidence, reason: manifest.reason, requires_confirmation: manifest.requires_confirmation, orchestration, render_state: runtime.renderState, result: { demo: true, message: CANONICAL_LINE } }));
     }
 
-    return res.json(responseBase({ request_id: requestId, orchestration, render_state: runtime.renderState, result: { accepted: true, execution: orchestration.execution || "local-runtime" } }));
+    return res.json(responseBase({ request_id: requestId, manifest, capability: manifest.capability, page: manifest.page, confidence: manifest.confidence, reason: manifest.reason, requires_confirmation: manifest.requires_confirmation, orchestration, render_state: runtime.renderState, result: { accepted: true, execution: orchestration.execution || "local-runtime" } }));
   } catch (error) {
     next(error);
   }
