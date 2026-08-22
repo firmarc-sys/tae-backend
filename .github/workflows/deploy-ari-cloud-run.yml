@@ -1,0 +1,145 @@
+name: Deploy ARI to Cloud Run
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'server.js'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'Dockerfile'
+      - '.github/workflows/deploy-ari-cloud-run.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: deploy-ari-cloud-run
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: project-7e6f2720-0291-4c91-8c3
+  GCP_PROJECT_NUMBER: '689058655022'
+  GCP_REGION: us-west1
+  CLOUD_RUN_SERVICE: ari
+  ARTIFACT_REPOSITORY: cloud-run-source-deploy
+  IMAGE_NAME: ari
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout canonical ARI source
+        uses: actions/checkout@v4
+
+      - name: Validate source before deployment
+        run: |
+          set -euo pipefail
+          node --check server.js
+          grep -q '/identity/guest' server.js
+          grep -q 'guest_auth_configured' server.js
+          grep -q 'function inferManifest' server.js
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/${{ env.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github/providers/github
+          service_account: github-actions@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Configure Artifact Registry
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
+          gcloud artifacts repositories describe "$ARTIFACT_REPOSITORY" --location="$GCP_REGION" --project="$GCP_PROJECT_ID" >/dev/null 2>&1 || \
+            gcloud artifacts repositories create "$ARTIFACT_REPOSITORY" --repository-format=docker --location="$GCP_REGION" --project="$GCP_PROJECT_ID" --quiet
+
+      - name: Build and push ARI image
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/${IMAGE_NAME}:${GITHUB_SHA}"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+
+      - name: Deploy ARI revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run deploy "$CLOUD_RUN_SERVICE" \
+            --project="$GCP_PROJECT_ID" \
+            --region="$GCP_REGION" \
+            --platform=managed \
+            --image="$IMAGE" \
+            --allow-unauthenticated \
+            --quiet
+
+      - name: Prove live consumer runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARI="https://ari-${GCP_PROJECT_NUMBER}.${GCP_REGION}.run.app"
+          ready=0
+          for attempt in $(seq 1 36); do
+            code="$(curl -sS --connect-timeout 5 --max-time 15 -o /tmp/ready.json -w '%{http_code}' "$ARI/api/ready" || true)"
+            if [ "$code" = "200" ] && node -e "const j=require('/tmp/ready.json'); if(!(j.ok===true&&j.guest_auth_configured===true&&j.provider_configured===true&&j.mercury_runtime_ready===true)) process.exit(1)"; then
+              ready=1
+              break
+            fi
+            sleep 5
+          done
+          test "$ready" = 1
+
+          code="$(curl -sS -c /tmp/cookies -o /tmp/guest.json -w '%{http_code}' -H 'content-type: application/json' -d '{}' "$ARI/api/identity/guest")"
+          test "$code" = 201
+          node -e "const j=require('/tmp/guest.json'); if(!/^\\d{12}$/.test(String(j.gid||''))) process.exit(1)"
+
+          code="$(curl -sS -b /tmp/cookies -o /tmp/runtime.json -w '%{http_code}' -H 'content-type: application/json' -H 'x-request-id: ari-consumer-release-proof' -d '{"intent":"Write exactly: JAHORIN CONSUMER ONLINE","capability":"thoth","module":"mercury","payload":{"page":"scribe","source":"release-proof"},"context":{"scene":"novalife","page":"home-room"},"request_id":"ari-consumer-release-proof"}' "$ARI/api/runtime")"
+          test "$code" = 200
+          node -e "const j=require('/tmp/runtime.json'); if(!(j.manifest&&j.capability&&j.page&&j.result&&String(j.result.text||'').trim())) process.exit(1)"
+
+          code="$(curl -sS -b /tmp/cookies -o /tmp/twin.json -w '%{http_code}' "$ARI/api/twin")"
+          test "$code" = 200
+          node -e "const j=require('/tmp/twin.json'); if(!(j.persistence==='device-local'&&j.cloud_sync===false)) process.exit(1)"
+
+          node - <<'NODE'
+          const fs=require('fs');
+          const ready=JSON.parse(fs.readFileSync('/tmp/ready.json'));
+          const guest=JSON.parse(fs.readFileSync('/tmp/guest.json'));
+          const runtime=JSON.parse(fs.readFileSync('/tmp/runtime.json'));
+          fs.writeFileSync('ARI_CONSUMER_RELEASE_PROOF.json', JSON.stringify({
+            ok:true,
+            verified_at:new Date().toISOString(),
+            service:'ARI',
+            runtime:'Mercury',
+            consumer_gid_verified:/^\d{12}$/.test(String(guest.gid||'')),
+            guest_auth_configured:ready.guest_auth_configured===true,
+            provider_configured:ready.provider_configured===true,
+            mercury_runtime_ready:ready.mercury_runtime_ready===true,
+            manifestation:{capability:runtime.capability,page:runtime.page,has_result:Boolean(runtime.result&&String(runtime.result.text||'').trim())},
+            twin_persistence:'device-local',
+            cloud_sync:false,
+            source_sha:process.env.GITHUB_SHA
+          },null,2)+'\n');
+          NODE
+
+      - name: Record verified release
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/deploy-ari-cloud-run.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "THOTH: verify ARI consumer release on Cloud Run"
+          git pull --rebase origin main
+          git push origin HEAD:main
