@@ -1,0 +1,78 @@
+name: THOTH GCP deploy diagnostic
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/thoth-gcp-diagnostic.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    env:
+      GCP_PROJECT_ID: project-7e6f2720-0291-4c91-8c3
+      GCP_PROJECT_NUMBER: '689058655022'
+      GCP_REGION: us-west1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        continue-on-error: true
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/${{ env.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github/providers/github
+          service_account: github-actions@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com
+
+      - name: Set up Cloud SDK
+        id: sdk
+        if: steps.auth.outcome == 'success'
+        continue-on-error: true
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Probe deployment authority
+        shell: bash
+        run: |
+          set +e
+          {
+            echo "THOTH GCP DEPLOY DIAGNOSTIC"
+            echo "source_sha=$GITHUB_SHA"
+            echo "auth_outcome=${{ steps.auth.outcome }}"
+            echo "sdk_outcome=${{ steps.sdk.outcome }}"
+            echo "project_id=$GCP_PROJECT_ID"
+            echo "project_number=$GCP_PROJECT_NUMBER"
+            echo "region=$GCP_REGION"
+            if [ "${{ steps.auth.outcome }}" = "success" ] && [ "${{ steps.sdk.outcome }}" = "success" ]; then
+              echo "--- auth list ---"
+              gcloud auth list --filter=status:ACTIVE --format='value(account)' 2>&1
+              echo "--- project describe ---"
+              gcloud projects describe "$GCP_PROJECT_ID" --format='value(projectId,projectNumber)' 2>&1
+              echo "--- cloud run ari ---"
+              gcloud run services describe ari --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format='value(metadata.name,status.url,status.latestReadyRevisionName)' 2>&1
+              echo "cloud_run_describe_exit=$?"
+              echo "--- artifact repositories ---"
+              gcloud artifacts repositories list --project="$GCP_PROJECT_ID" --location="$GCP_REGION" --format='value(name)' 2>&1
+              echo "artifact_list_exit=$?"
+            fi
+          } > GCP_DEPLOY_DIAGNOSTIC.txt
+          cat GCP_DEPLOY_DIAGNOSTIC.txt
+          exit 0
+
+      - name: Record diagnostic
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/thoth-gcp-diagnostic.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add GCP_DEPLOY_DIAGNOSTIC.txt .github/workflows/thoth-gcp-diagnostic.yml
+          git commit -m "THOTH: record GCP deployment diagnostic"
+          git pull --rebase origin main
+          git push origin HEAD:main
