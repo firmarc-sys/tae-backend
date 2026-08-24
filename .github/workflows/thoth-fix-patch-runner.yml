@@ -1,0 +1,46 @@
+name: THOTH fix ARI patch runner
+
+on:
+  push:
+    branches: [thoth/ari-auth-multimodal]
+    paths:
+      - '.github/workflows/thoth-fix-patch-runner.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: thoth/ari-auth-multimodal
+      - name: Make replacement literals safe
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p=Path('.github/workflows/thoth-patch-ari-auth-multimodal.yml')
+          s=p.read_text()
+          old='out, count = re.subn(pattern, replacement, text, count=1, flags=re.S)'
+          new='out, count = re.subn(pattern, lambda _m: replacement, text, count=1, flags=re.S)'
+          if s.count(old)!=1: raise SystemExit(f'literal subn target count={s.count(old)}')
+          s=s.replace(old,new,1)
+          pattern=r'''          s = sub1\(\n              s,\n              r'\(capability: \\"tae\\".*?              'remove redundant TAE auth',\n          \)\n'''
+          s,n=re.subn(pattern,'',s,count=1,flags=re.S)
+          if n!=1: raise SystemExit(f'redundant TAE patch block count={n}')
+          p.write_text(s)
+          PY
+      - name: Commit repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/thoth-fix-patch-runner.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/thoth-patch-ari-auth-multimodal.yml .github/workflows/thoth-fix-patch-runner.yml
+          git commit -m "THOTH: make ARI patch substitutions literal"
+          git push origin HEAD:thoth/ari-auth-multimodal
