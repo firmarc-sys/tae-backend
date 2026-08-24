@@ -17,7 +17,7 @@ jobs:
         with:
           ref: thoth/ari-auth-multimodal
 
-      - name: Patch ARI production security and multimodal path
+      - name: Patch ARI backend source
         shell: bash
         run: |
           set -euo pipefail
@@ -26,28 +26,20 @@ jobs:
           import re
 
           def one(text, old, new, label):
-              count = text.count(old)
-              if count != 1:
-                  raise SystemExit(f'{label}: expected 1 target, found {count}')
-              return text.replace(old, new, 1)
+              count=text.count(old)
+              if count!=1: raise SystemExit(f'{label}: expected 1 target, found {count}')
+              return text.replace(old,new,1)
 
           def sub1(text, pattern, replacement, label):
-              out, count = re.subn(pattern, replacement, text, count=1, flags=re.S)
-              if count != 1:
-                  raise SystemExit(f'{label}: expected 1 regex target, found {count}')
-              return out
+              matches=list(re.finditer(pattern,text,re.S))
+              if len(matches)!=1: raise SystemExit(f'{label}: expected 1 target, found {len(matches)}')
+              m=matches[0]
+              value=m.group(1) if replacement=='GROUP1' else replacement
+              return text[:m.start()]+value+text[m.end():]
 
-          p = Path('server.js')
-          s = p.read_text()
-
-          google = r'''const SUPPORTED_INLINE_IMAGE_MIME_TYPES = new Set([
-            "image/jpeg",
-            "image/png",
-            "image/webp",
-            "image/gif",
-            "image/avif",
-            "image/heic",
-            "image/heif",
+          p=Path('server.js'); s=p.read_text()
+          google=r'''const SUPPORTED_INLINE_IMAGE_MIME_TYPES = new Set([
+            "image/jpeg", "image/png", "image/webp", "image/gif", "image/avif", "image/heic", "image/heif",
           ]);
           const MAX_INLINE_IMAGE_BYTES = Math.max(1024, Number(process.env.ARI_MAX_INLINE_IMAGE_BYTES || 6 * 1024 * 1024));
 
@@ -56,16 +48,11 @@ jobs:
             let data = image.data || image.base64 || payload?.image_data || payload?.imageData || "";
             let mimeType = image.mime_type || image.mimeType || payload?.image_mime_type || payload?.imageMimeType || "";
             if (!data) return null;
-
             const dataUrl = /^data:([^;,]+);base64,(.+)$/s.exec(String(data));
-            if (dataUrl) {
-              mimeType ||= dataUrl[1];
-              data = dataUrl[2];
-            }
+            if (dataUrl) { mimeType ||= dataUrl[1]; data = dataUrl[2]; }
             mimeType = String(mimeType || "").trim().toLowerCase();
             if (mimeType === "image/jpg") mimeType = "image/jpeg";
             if (!SUPPORTED_INLINE_IMAGE_MIME_TYPES.has(mimeType)) throw httpError(415, `Unsupported inline image MIME type: ${mimeType || "missing"}`);
-
             const compact = String(data).replace(/\s+/g, "");
             if (!compact || !/^[A-Za-z0-9+/]+={0,2}$/.test(compact)) throw httpError(400, "Invalid base64 image data");
             const bytes = Buffer.from(compact, "base64");
@@ -77,143 +64,42 @@ jobs:
 
           async function generateWithGoogle({ prompt, systemInstruction, temperature = 0.7, image = null }) {
             const client = requireProvider();
-            const contents = image
-              ? [{ inlineData: { mimeType: image.mimeType, data: image.data } }, { text: prompt }]
-              : prompt;
+            const contents = image ? [{ inlineData: { mimeType: image.mimeType, data: image.data } }, { text: prompt }] : prompt;
             const response = await client.models.generateContent({
               model: geminiModel,
               contents,
-              config: {
-                systemInstruction,
-                temperature: Math.max(0, Math.min(2, Number(temperature) || 0.7)),
-                maxOutputTokens: 4096,
-              },
+              config: { systemInstruction, temperature: Math.max(0, Math.min(2, Number(temperature) || 0.7)), maxOutputTokens: 4096 },
             });
             const text = String(response.text || "").trim();
             if (!text) throw httpError(502, "Google provider returned no generated text.");
-            return {
-              text,
-              model: geminiModel,
-              provider,
-              tokens: response.usageMetadata?.totalTokenCount ?? null,
-              usage: response.usageMetadata || null,
-              media_input: image ? { type: "image", mime_type: image.mimeType, bytes: image.bytes } : null,
-            };
+            return { text, model: geminiModel, provider, tokens: response.usageMetadata?.totalTokenCount ?? null, usage: response.usageMetadata || null,
+              media_input: image ? { type: "image", mime_type: image.mimeType, bytes: image.bytes } : null };
           }
 
           function inferManifest'''
-          s = sub1(
-              s,
-              r'async function generateWithGoogle\(\{ prompt, systemInstruction, temperature = 0\.7 \}\) \{.*?\n\}\n\nfunction inferManifest',
-              google,
-              'generateWithGoogle multimodal adapter',
-          )
-
-          s = one(
-              s,
-              '    const capability = manifest.capability;\n\n    const runtime = await orchestrateWithMercury(req, {',
-              '    const capability = manifest.capability;\n    const inlineImage = normalizeInlineImage(req.body?.payload || {});\n    await requireProviderAccess(req);\n\n    const runtime = await orchestrateWithMercury(req, {',
-              'runtime early auth/image',
-          )
-          s = one(
-              s,
-              '    const providerRequired = orchestration.providerRequired === true;',
-              '    const providerRequired = orchestration.providerRequired === true || Boolean(inlineImage);',
-              'runtime image provider requirement',
-          )
-          s = one(
-              s,
-              '      if (!intent) return res.status(422).json({ ok: false, error: "intent or payload.prompt is required", request_id: requestId });\n      await requireProviderAccess(req);\n      const result = await generateWithGoogle({\n        prompt: intent,',
-              '      const providerPrompt = intent || (inlineImage ? "Analyze the provided image and answer the user’s visual question." : "");\n      if (!providerPrompt) return res.status(422).json({ ok: false, error: "intent or payload.prompt is required", request_id: requestId });\n      const result = await generateWithGoogle({\n        prompt: providerPrompt,\n        image: inlineImage,',
-              'runtime multimodal provider call',
-          )
-          s = one(
-              s,
-              'result: { text: result.text, model: result.model, provider: result.provider, tokens: result.tokens },',
-              'result: { text: result.text, model: result.model, provider: result.provider, tokens: result.tokens, media_input: result.media_input },',
-              'runtime media metadata',
-          )
-
-          s = one(
-              s,
-              '    const prompt = String(req.body?.prompt || "").trim();\n    if (!prompt) return res.status(400).json({ ok: false, error: "prompt is required", request_id: req.requestId });\n    if (prompt.length > 20000) return res.status(413).json({ ok: false, error: "prompt is too long", request_id: req.requestId });\n\n    const runtime = await orchestrateWithMercury(req, {',
-              '    const inlineImage = normalizeInlineImage(req.body || {});\n    const prompt = String(req.body?.prompt || "").trim() || (inlineImage ? "Analyze the provided image." : "");\n    if (!prompt) return res.status(400).json({ ok: false, error: "prompt is required", request_id: req.requestId });\n    if (prompt.length > 20000) return res.status(413).json({ ok: false, error: "prompt is too long", request_id: req.requestId });\n    await requireProviderAccess(req);\n\n    const runtime = await orchestrateWithMercury(req, {',
-              'generate early auth/image',
-          )
-          s = one(
-              s,
-              '    await requireProviderAccess(req);\n    const result = await generateWithGoogle({\n      prompt,\n      systemInstruction:',
-              '    const result = await generateWithGoogle({\n      prompt,\n      image: inlineImage,\n      systemInstruction:',
-              'generate image provider call',
-          )
-          s = one(
-              s,
-              'provider: result.provider, usage: result.usage }));',
-              'provider: result.provider, usage: result.usage, media_input: result.media_input }));',
-              'generate media metadata',
-          )
-
-          tae_prompt = '    const prompt = String(req.body?.prompt || req.body?.command || "").trim();\n    if (!prompt) return res.status(422).json({ ok: false, error: "prompt is required", request_id: req.requestId });\n\n    if (prompt.replace(/\\.$/, "").toLowerCase() === DEMO_PHRASE.toLowerCase()) {'
-          s = one(
-              s,
-              tae_prompt,
-              tae_prompt.replace('\n\n    if', '\n    await requireProviderAccess(req);\n\n    if'),
-              'TAE early auth',
-          )
-          s = sub1(
-              s,
-              r'(capability: "tae",\n\s+intent: prompt,\n\s+requestId: req\.body\?\.request_id \|\| req\.requestId,\n\s+payload: req\.body \|\| \{\},\n\s+\}\);)\n\s+await requireProviderAccess\(req\);',
-              r'\1',
-              'remove redundant TAE auth',
-          )
+          s=sub1(s,r'async function generateWithGoogle\(\{ prompt, systemInstruction, temperature = 0\.7 \}\) \{.*?\n\}\n\nfunction inferManifest',google,'google multimodal adapter')
+          s=one(s,'    const capability = manifest.capability;\n\n    const runtime = await orchestrateWithMercury(req, {','    const capability = manifest.capability;\n    const inlineImage = normalizeInlineImage(req.body?.payload || {});\n    await requireProviderAccess(req);\n\n    const runtime = await orchestrateWithMercury(req, {','runtime auth/image')
+          s=one(s,'    const providerRequired = orchestration.providerRequired === true;','    const providerRequired = orchestration.providerRequired === true || Boolean(inlineImage);','runtime image requirement')
+          s=one(s,'      if (!intent) return res.status(422).json({ ok: false, error: "intent or payload.prompt is required", request_id: requestId });\n      await requireProviderAccess(req);\n      const result = await generateWithGoogle({\n        prompt: intent,','      const providerPrompt = intent || (inlineImage ? "Analyze the provided image and answer the user’s visual question." : "");\n      if (!providerPrompt) return res.status(422).json({ ok: false, error: "intent or payload.prompt is required", request_id: requestId });\n      const result = await generateWithGoogle({\n        prompt: providerPrompt,\n        image: inlineImage,','runtime provider image')
+          s=one(s,'result: { text: result.text, model: result.model, provider: result.provider, tokens: result.tokens },','result: { text: result.text, model: result.model, provider: result.provider, tokens: result.tokens, media_input: result.media_input },','runtime media metadata')
+          s=one(s,'    const prompt = String(req.body?.prompt || "").trim();\n    if (!prompt) return res.status(400).json({ ok: false, error: "prompt is required", request_id: req.requestId });\n    if (prompt.length > 20000) return res.status(413).json({ ok: false, error: "prompt is too long", request_id: req.requestId });\n\n    const runtime = await orchestrateWithMercury(req, {','    const inlineImage = normalizeInlineImage(req.body || {});\n    const prompt = String(req.body?.prompt || "").trim() || (inlineImage ? "Analyze the provided image." : "");\n    if (!prompt) return res.status(400).json({ ok: false, error: "prompt is required", request_id: req.requestId });\n    if (prompt.length > 20000) return res.status(413).json({ ok: false, error: "prompt is too long", request_id: req.requestId });\n    await requireProviderAccess(req);\n\n    const runtime = await orchestrateWithMercury(req, {','generate auth/image')
+          s=one(s,'    await requireProviderAccess(req);\n    const result = await generateWithGoogle({\n      prompt,\n      systemInstruction:','    const result = await generateWithGoogle({\n      prompt,\n      image: inlineImage,\n      systemInstruction:','generate image provider')
+          s=one(s,'provider: result.provider, usage: result.usage }));','provider: result.provider, usage: result.usage, media_input: result.media_input }));','generate media metadata')
+          tae='    const prompt = String(req.body?.prompt || req.body?.command || "").trim();\n    if (!prompt) return res.status(422).json({ ok: false, error: "prompt is required", request_id: req.requestId });\n\n    if (prompt.replace(/\\.$/, "").toLowerCase() === DEMO_PHRASE.toLowerCase()) {'
+          s=one(s,tae,tae.replace('\n\n    if','\n    await requireProviderAccess(req);\n\n    if'),'TAE auth')
+          s=sub1(s,r'(capability: "tae",\n\s+intent: prompt,\n\s+requestId: req\.body\?\.request_id \|\| req\.requestId,\n\s+payload: req\.body \|\| \{\},\n\s+\}\);)\n\s+await requireProviderAccess\(req\);','GROUP1','remove redundant TAE auth')
           p.write_text(s)
 
-          p = Path('manifest-runtime-gateway.js')
-          s = p.read_text()
-          s = one(s,
-              'process.env.JAHORIN_FREE_ACCESS || "true"',
-              'process.env.JAHORIN_FREE_ACCESS || "false"',
-              'fail-closed free access default')
+          p=Path('manifest-runtime-gateway.js'); s=p.read_text()
+          s=one(s,'process.env.JAHORIN_FREE_ACCESS || "true"','process.env.JAHORIN_FREE_ACCESS || "false"','fail-closed free access')
           p.write_text(s)
 
-          p = Path('.github/workflows/deploy-ari-cloud-run.yml')
-          s = p.read_text()
-          s = one(s,
-              '            --allow-unauthenticated \\\n            --quiet',
-              '            --allow-unauthenticated \\\n            --update-env-vars="ARI_REQUIRE_AUTH=true,JAHORIN_FREE_ACCESS=false" \\\n            --quiet',
-              'Cloud Run auth env')
-          s = one(s,
-              'j.ok===true&&j.guest_auth_configured===true&&j.provider_configured===true&&j.mercury_runtime_ready===true',
-              'j.ok===true&&j.auth_required===true&&j.guest_auth_configured===true&&j.provider_configured===true&&j.mercury_runtime_ready===true',
-              'readiness auth assertion')
-
-          guest = '          code="$(curl -sS -c /tmp/cookies -o /tmp/guest.json -w \'%{http_code}\' -H \'content-type: application/json\' -d \'{}\' "$ARI/api/identity/guest")"\n'
-          unauth = '''          code="$(curl -sS -o /tmp/unauth-runtime.json -w '%{http_code}' -H 'content-type: application/json' -H 'x-request-id: ari-unauth-release-proof' -d '{"intent":"This must be rejected","capability":"thoth","module":"mercury","request_id":"ari-unauth-release-proof"}' "$ARI/api/runtime")"
-          test "$code" = 401
-          node -e "const j=require('/tmp/unauth-runtime.json'); if(j.ok!==false) process.exit(1)"
-
-          ''' + guest
-          s = one(s, guest, unauth, 'unauthenticated runtime proof')
-
-          text_assert = '          node -e "const j=require(\'/tmp/runtime.json\'); if(!(j.manifest&&j.capability&&j.page&&j.result&&String(j.result.text||\'\').trim())) process.exit(1)"\n'
-          image_probe = text_assert + '''
-          code="$(curl -sS -b /tmp/cookies -o /tmp/optics.json -w '%{http_code}' -H 'content-type: application/json' -H 'x-request-id: ari-optics-release-proof' -d '{"intent":"Describe the supplied image briefly.","capability":"optics","module":"mercury","payload":{"action":"analyze","image":{"mime_type":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl9ZQAAAABJRU5ErkJggg=="}},"request_id":"ari-optics-release-proof"}' "$ARI/api/runtime")"
-          test "$code" = 200
-          node -e "const j=require('/tmp/optics.json'); const m=j?.result?.media_input; if(!(String(j?.result?.text||'').trim()&&m?.type==='image'&&m?.mime_type==='image/png'&&Number(m?.bytes)>0)) process.exit(1)"
-          '''
-          s = one(s, text_assert, image_probe, 'live multimodal provider proof')
-          p.write_text(s)
-
-          p = Path('scripts/configure_ari_production.sh')
-          s = p.read_text()
-          s = one(s,
-              'ARI_REQUIRE_AUTH=true,SIOS_OWNER_GID=',
-              'ARI_REQUIRE_AUTH=true,JAHORIN_FREE_ACCESS=false,SIOS_OWNER_GID=',
-              'production auth env')
+          p=Path('scripts/configure_ari_production.sh'); s=p.read_text()
+          s=one(s,'ARI_REQUIRE_AUTH=true,SIOS_OWNER_GID=','ARI_REQUIRE_AUTH=true,JAHORIN_FREE_ACCESS=false,SIOS_OWNER_GID=','production auth flags')
           p.write_text(s)
           PY
 
-      - name: Validate patched contracts
+      - name: Validate backend source
         shell: bash
         run: |
           set -euo pipefail
@@ -223,17 +109,14 @@ jobs:
           grep -q 'normalizeInlineImage' server.js
           grep -q 'media_input' server.js
           grep -q 'JAHORIN_FREE_ACCESS || "false"' manifest-runtime-gateway.js
-          grep -q 'ARI_REQUIRE_AUTH=true,JAHORIN_FREE_ACCESS=false' .github/workflows/deploy-ari-cloud-run.yml
-          grep -q 'ari-optics-release-proof' .github/workflows/deploy-ari-cloud-run.yml
-          grep -q 'ari-unauth-release-proof' .github/workflows/deploy-ari-cloud-run.yml
+          grep -q 'ARI_REQUIRE_AUTH=true,JAHORIN_FREE_ACCESS=false' scripts/configure_ari_production.sh
 
-      - name: Commit production patch
+      - name: Commit backend source patch
         shell: bash
         run: |
           set -euo pipefail
-          rm -f .github/workflows/thoth-patch-ari-auth-multimodal.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add server.js manifest-runtime-gateway.js .github/workflows/deploy-ari-cloud-run.yml scripts/configure_ari_production.sh .github/workflows/thoth-patch-ari-auth-multimodal.yml
+          git add server.js manifest-runtime-gateway.js scripts/configure_ari_production.sh
           git commit -m "THOTH: enforce ARI auth and add multimodal image transport"
           git push origin HEAD:thoth/ari-auth-multimodal
