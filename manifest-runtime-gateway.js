@@ -8,7 +8,7 @@ import { createAutonomyRuntime } from "./autonomy-runtime.js";
 const port = Number(process.env.PORT || 8080);
 const innerPort = Number(process.env.ARI_IDENTITY_PORT || 8081);
 const corePort = Number(process.env.ARI_CORE_PORT || 8082);
-const freeAccess = !/^(0|false|no|off)$/i.test(process.env.JAHORIN_FREE_ACCESS || "true");
+const freeAccess = !/^(0|false|no|off)$/i.test(process.env.JAHORIN_FREE_ACCESS || "false");
 const limit = Math.max(10, Number(process.env.FREE_RUNTIME_REQUESTS_PER_HOUR || 120));
 const usage = new Map();
 
