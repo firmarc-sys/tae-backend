@@ -1,4 +1,5 @@
 name: Deploy ARI to Cloud Run
+# MA'AT production release trigger: authenticated multimodal ARI
 
 on:
   push:
