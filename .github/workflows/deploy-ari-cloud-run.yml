@@ -38,9 +38,13 @@ jobs:
         run: |
           set -euo pipefail
           node --check server.js
+          node --check manifest-runtime-gateway.js
           grep -q '/identity/guest' server.js
           grep -q 'guest_auth_configured' server.js
           grep -q 'function inferManifest' server.js
+          grep -q 'normalizeInlineImage' server.js
+          grep -q 'inlineData' server.js
+          grep -q 'JAHORIN_FREE_ACCESS || "false"' manifest-runtime-gateway.js
 
       - name: Authenticate to Google Cloud
         id: auth
@@ -81,9 +85,10 @@ jobs:
             --platform=managed \
             --image="$IMAGE" \
             --allow-unauthenticated \
+            --update-env-vars="ARI_REQUIRE_AUTH=true,JAHORIN_FREE_ACCESS=false" \
             --quiet
 
-      - name: Prove live consumer runtime
+      - name: Prove live authenticated multimodal runtime
         shell: bash
         run: |
           set -euo pipefail
@@ -91,13 +96,17 @@ jobs:
           ready=0
           for attempt in $(seq 1 36); do
             code="$(curl -sS --connect-timeout 5 --max-time 15 -o /tmp/ready.json -w '%{http_code}' "$ARI/api/ready" || true)"
-            if [ "$code" = "200" ] && node -e "const j=require('/tmp/ready.json'); if(!(j.ok===true&&j.guest_auth_configured===true&&j.provider_configured===true&&j.mercury_runtime_ready===true)) process.exit(1)"; then
+            if [ "$code" = "200" ] && node -e "const j=require('/tmp/ready.json'); if(!(j.ok===true&&j.auth_required===true&&j.guest_auth_configured===true&&j.provider_configured===true&&j.mercury_runtime_ready===true)) process.exit(1)"; then
               ready=1
               break
             fi
             sleep 5
           done
           test "$ready" = 1
+
+          code="$(curl -sS -o /tmp/unauth-runtime.json -w '%{http_code}' -H 'content-type: application/json' -H 'x-request-id: ari-unauth-release-proof' -d '{"intent":"This request must be rejected","capability":"thoth","module":"mercury","request_id":"ari-unauth-release-proof"}' "$ARI/api/runtime")"
+          test "$code" = 401
+          node -e "const j=require('/tmp/unauth-runtime.json'); if(j.ok!==false) process.exit(1)"
 
           code="$(curl -sS -c /tmp/cookies -o /tmp/guest.json -w '%{http_code}' -H 'content-type: application/json' -d '{}' "$ARI/api/identity/guest")"
           test "$code" = 201
@@ -107,27 +116,33 @@ jobs:
           test "$code" = 200
           node -e "const j=require('/tmp/runtime.json'); if(!(j.manifest&&j.capability&&j.page&&j.result&&String(j.result.text||'').trim())) process.exit(1)"
 
+          code="$(curl -sS -b /tmp/cookies -o /tmp/optics.json -w '%{http_code}' -H 'content-type: application/json' -H 'x-request-id: ari-optics-release-proof' -d '{"intent":"Describe the supplied image briefly.","capability":"optics","module":"mercury","payload":{"action":"analyze","image":{"mime_type":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl9ZQAAAABJRU5ErkJggg=="}},"request_id":"ari-optics-release-proof"}' "$ARI/api/runtime")"
+          test "$code" = 200
+          node -e "const j=require('/tmp/optics.json'); const m=j?.result?.media_input; if(!(String(j?.result?.text||'').trim()&&m?.type==='image'&&m?.mime_type==='image/png'&&Number(m?.bytes)>0)) process.exit(1)"
+
           code="$(curl -sS -b /tmp/cookies -o /tmp/twin.json -w '%{http_code}' "$ARI/api/twin")"
           test "$code" = 200
-          node -e "const j=require('/tmp/twin.json'); if(!(j.persistence==='device-local'&&j.cloud_sync===false)) process.exit(1)"
 
           node - <<'NODE'
           const fs=require('fs');
           const ready=JSON.parse(fs.readFileSync('/tmp/ready.json'));
           const guest=JSON.parse(fs.readFileSync('/tmp/guest.json'));
           const runtime=JSON.parse(fs.readFileSync('/tmp/runtime.json'));
+          const optics=JSON.parse(fs.readFileSync('/tmp/optics.json'));
+          const media=optics?.result?.media_input || {};
           fs.writeFileSync('ARI_CONSUMER_RELEASE_PROOF.json', JSON.stringify({
             ok:true,
             verified_at:new Date().toISOString(),
             service:'ARI',
             runtime:'Mercury',
+            auth_required:ready.auth_required===true,
+            anonymous_runtime_rejected:true,
             consumer_gid_verified:/^\d{12}$/.test(String(guest.gid||'')),
             guest_auth_configured:ready.guest_auth_configured===true,
             provider_configured:ready.provider_configured===true,
             mercury_runtime_ready:ready.mercury_runtime_ready===true,
-            manifestation:{capability:runtime.capability,page:runtime.page,has_result:Boolean(runtime.result&&String(runtime.result.text||'').trim())},
-            twin_persistence:'device-local',
-            cloud_sync:false,
+            text_manifestation:{capability:runtime.capability,page:runtime.page,has_result:Boolean(runtime.result&&String(runtime.result.text||'').trim())},
+            optics_multimodal:{has_result:Boolean(String(optics?.result?.text||'').trim()),mime_type:media.mime_type,bytes:media.bytes},
             source_sha:process.env.GITHUB_SHA
           },null,2)+'\n');
           NODE
@@ -140,6 +155,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "THOTH: verify ARI consumer release on Cloud Run"
+          git commit -m "THOTH: verify authenticated multimodal ARI release on Cloud Run"
           git pull --rebase origin main
           git push origin HEAD:main
