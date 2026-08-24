@@ -44,13 +44,16 @@ jobs:
           curl -fsS http://127.0.0.1:8080/api/iot >/tmp/iot.json
           curl -fsS http://127.0.0.1:8080/api/syncori >/tmp/syncori.json
           curl -fsS http://127.0.0.1:8080/api/tae >/tmp/tae.json
-          curl -fsS -H 'content-type: application/json' -d '{"prompt":"TAE, enter Demo Mode"}' http://127.0.0.1:8080/api/tae >/tmp/demo.json
 
           bad_code="$(curl -sS -o /tmp/bad-auth.json -w '%{http_code}' -H 'content-type: application/json' -d '{"access_code":"wrong"}' http://127.0.0.1:8080/api/identity/session)"
           test "$bad_code" = '401'
 
+          unauth_demo="$(curl -sS -o /tmp/unauth-demo.json -w '%{http_code}' -H 'content-type: application/json' -d '{"prompt":"TAE, enter Demo Mode"}' http://127.0.0.1:8080/api/tae)"
+          test "$unauth_demo" = '401'
+
           curl -fsS -c /tmp/cookies.txt -H 'content-type: application/json' -d '{"access_code":"test-owner-code"}' http://127.0.0.1:8080/api/identity/session >/tmp/session.json
           curl -fsS -b /tmp/cookies.txt http://127.0.0.1:8080/api/identity >/tmp/authenticated.json
+          curl -fsS -b /tmp/cookies.txt -H 'content-type: application/json' -d '{"prompt":"TAE, enter Demo Mode"}' http://127.0.0.1:8080/api/tae >/tmp/demo.json
 
           unauth_runtime="$(curl -sS -o /tmp/unauth-runtime.json -w '%{http_code}' -H 'content-type: application/json' -d '{"capability":"text","intent":"test"}' http://127.0.0.1:8080/api/runtime)"
           test "$unauth_runtime" = '401'

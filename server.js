@@ -575,28 +575,32 @@ async function orchestrateWithMercury(req, { capability, intent, requestId, payl
   });
 }
 
-async function generateWithGoogle({ prompt, systemInstruction, temperature = 0.7 }) {
+const SUPPORTED_INLINE_IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif", "image/avif", "image/heic", "image/heif"]);
+const MAX_INLINE_IMAGE_BYTES = Math.max(1024, Number(process.env.ARI_MAX_INLINE_IMAGE_BYTES || 6 * 1024 * 1024));
+function normalizeInlineImage(payload = {}) {
+  const image = payload?.image && typeof payload.image === "object" ? payload.image : {};
+  let data = image.data || image.base64 || payload?.image_data || payload?.imageData || "";
+  let mimeType = image.mime_type || image.mimeType || payload?.image_mime_type || payload?.imageMimeType || "";
+  if (!data) return null;
+  const dataUrl = /^data:([^;,]+);base64,(.+)$/s.exec(String(data));
+  if (dataUrl) { mimeType ||= dataUrl[1]; data = dataUrl[2]; }
+  mimeType = String(mimeType || "").trim().toLowerCase();
+  if (mimeType === "image/jpg") mimeType = "image/jpeg";
+  if (!SUPPORTED_INLINE_IMAGE_MIME_TYPES.has(mimeType)) throw httpError(415, `Unsupported inline image MIME type: ${mimeType || "missing"}`);
+  const compact = String(data).replace(/\s+/g, "");
+  if (!compact || !/^[A-Za-z0-9+/]+={0,2}$/.test(compact)) throw httpError(400, "Invalid base64 image data");
+  const bytes = Buffer.from(compact, "base64");
+  if (!bytes.length || bytes.toString("base64").replace(/=+$/, "") !== compact.replace(/=+$/, "")) throw httpError(400, "Invalid base64 image data");
+  if (bytes.length > MAX_INLINE_IMAGE_BYTES) throw httpError(413, `Inline image exceeds ${MAX_INLINE_IMAGE_BYTES} byte limit`);
+  return { mimeType, data: bytes.toString("base64"), bytes: bytes.length };
+}
+async function generateWithGoogle({ prompt, systemInstruction, temperature = 0.7, image = null }) {
   const client = requireProvider();
-  const response = await client.models.generateContent({
-    model: geminiModel,
-    contents: prompt,
-    config: {
-      systemInstruction,
-      temperature: Math.max(0, Math.min(2, Number(temperature) || 0.7)),
-      maxOutputTokens: 4096,
-    },
-  });
-
+  const contents = image ? [{ inlineData: { mimeType: image.mimeType, data: image.data } }, { text: prompt }] : prompt;
+  const response = await client.models.generateContent({ model: geminiModel, contents, config: { systemInstruction, temperature: Math.max(0, Math.min(2, Number(temperature) || 0.7)), maxOutputTokens: 4096 } });
   const text = String(response.text || "").trim();
   if (!text) throw httpError(502, "Google provider returned no generated text.");
-
-  return {
-    text,
-    model: geminiModel,
-    provider,
-    tokens: response.usageMetadata?.totalTokenCount ?? null,
-    usage: response.usageMetadata || null,
-  };
+  return { text, model: geminiModel, provider, tokens: response.usageMetadata?.totalTokenCount ?? null, usage: response.usageMetadata || null, media_input: image ? { type: "image", mime_type: image.mimeType, bytes: image.bytes } : null };
 }
 
 function inferManifest(intent = "", requestedCapability = "", context = {}) {
@@ -1083,6 +1087,7 @@ api.post("/tae", async (req, res, next) => {
   try {
     const prompt = String(req.body?.prompt || req.body?.command || "").trim();
     if (!prompt) return res.status(422).json({ ok: false, error: "prompt is required", request_id: req.requestId });
+    await requireProviderAccess(req);
 
     if (prompt.replace(/\.$/, "").toLowerCase() === DEMO_PHRASE.toLowerCase()) {
       const runtime = await mercuryRequest("/api/tae", {
@@ -1137,6 +1142,8 @@ api.post("/runtime", async (req, res, next) => {
     const requestId = req.body?.request_id || req.requestId;
     const manifest = inferManifest(intent, requestedCapability, req.body?.context || {});
     const capability = manifest.capability;
+    const inlineImage = normalizeInlineImage(req.body?.payload || {});
+    await requireProviderAccess(req);
 
     const runtime = await orchestrateWithMercury(req, {
       capability,
@@ -1145,13 +1152,15 @@ api.post("/runtime", async (req, res, next) => {
       payload: req.body?.payload || {},
     });
     const orchestration = runtime.orchestration || {};
-    const providerRequired = orchestration.providerRequired === true;
+    const providerRequired = orchestration.providerRequired === true || Boolean(inlineImage);
 
     if (providerRequired) {
-      if (!intent) return res.status(422).json({ ok: false, error: "intent or payload.prompt is required", request_id: requestId });
+      const providerPrompt = intent || (inlineImage ? "Analyze the provided image and answer the user’s visual question." : "");
+      if (!providerPrompt) return res.status(422).json({ ok: false, error: "intent or payload.prompt is required", request_id: requestId });
       await requireProviderAccess(req);
       const result = await generateWithGoogle({
-        prompt: intent,
+        prompt: providerPrompt,
+        image: inlineImage,
         systemInstruction:
           "You are Jahorin, the user-facing intelligence inside Agentic Mercury Time Runner. Respond directly to the user's intent and use the active Mercury capability as an instrument.",
         temperature: req.body?.payload?.temperature,
@@ -1162,7 +1171,7 @@ api.post("/runtime", async (req, res, next) => {
           manifest, capability: manifest.capability, page: manifest.page, confidence: manifest.confidence, reason: manifest.reason, requires_confirmation: manifest.requires_confirmation,
           orchestration,
           render_state: runtime.renderState,
-          result: { text: result.text, model: result.model, provider: result.provider, tokens: result.tokens },
+          result: { text: result.text, model: result.model, provider: result.provider, tokens: result.tokens, media_input: result.media_input },
           provider: { name: result.provider, model: result.model },
         }),
       );
@@ -1190,9 +1199,11 @@ api.post("/runtime", async (req, res, next) => {
 
 api.post("/generate", async (req, res, next) => {
   try {
-    const prompt = String(req.body?.prompt || "").trim();
+    const inlineImage = normalizeInlineImage(req.body || {});
+    const prompt = String(req.body?.prompt || "").trim() || (inlineImage ? "Analyze the provided image." : "");
     if (!prompt) return res.status(400).json({ ok: false, error: "prompt is required", request_id: req.requestId });
     if (prompt.length > 20000) return res.status(413).json({ ok: false, error: "prompt is too long", request_id: req.requestId });
+    await requireProviderAccess(req);
 
     const runtime = await orchestrateWithMercury(req, {
       capability: String(req.body?.type || "text").toLowerCase(),
@@ -1203,12 +1214,13 @@ api.post("/generate", async (req, res, next) => {
     await requireProviderAccess(req);
     const result = await generateWithGoogle({
       prompt,
+      image: inlineImage,
       systemInstruction:
         String(req.body?.systemInstruction || "").trim() ||
         "You are Jahorin inside Agentic Mercury Time Runner. Produce useful, original, polished content that directly fulfills the user's request.",
       temperature: req.body?.temperature,
     });
-    res.json(responseBase({ type: String(req.body?.type || "text"), orchestration: runtime.orchestration, render_state: runtime.renderState, output: result.text, model: result.model, provider: result.provider, usage: result.usage }));
+    res.json(responseBase({ type: String(req.body?.type || "text"), orchestration: runtime.orchestration, render_state: runtime.renderState, output: result.text, model: result.model, provider: result.provider, usage: result.usage, media_input: result.media_input }));
   } catch (error) {
     next(error);
   }
