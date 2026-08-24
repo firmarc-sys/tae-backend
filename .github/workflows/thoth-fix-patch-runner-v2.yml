@@ -1,0 +1,54 @@
+name: THOTH fix ARI patch runner v2
+
+on:
+  push:
+    branches: [thoth/ari-auth-multimodal]
+    paths:
+      - '.github/workflows/thoth-fix-patch-runner-v2.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: thoth/ari-auth-multimodal
+      - name: Replace patch substitution engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('.github/workflows/thoth-patch-ari-auth-multimodal.yml')
+          s=p.read_text()
+          old='''          def sub1(text, pattern, replacement, label):
+              out, count = re.subn(pattern, replacement, text, count=1, flags=re.S)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected 1 regex target, found {count}')
+              return out
+          '''
+          new='''          def sub1(text, pattern, replacement, label):
+              regex = re.compile(pattern, re.S)
+              matches = list(regex.finditer(text))
+              if len(matches) != 1:
+                  raise SystemExit(f'{label}: expected 1 regex target, found {len(matches)}')
+              match = matches[0]
+              value = match.expand(replacement) if replacement == r'\\1' else replacement
+              return text[:match.start()] + value + text[match.end():]
+          '''
+          if s.count(old)!=1: raise SystemExit(f'sub1 definition target count={s.count(old)}')
+          p.write_text(s.replace(old,new,1))
+          PY
+      - name: Commit repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/thoth-fix-patch-runner.yml .github/workflows/thoth-fix-patch-runner-v2.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/thoth-patch-ari-auth-multimodal.yml .github/workflows/thoth-fix-patch-runner.yml .github/workflows/thoth-fix-patch-runner-v2.yml
+          git commit -m "THOTH: harden ARI patch substitution engine"
+          git push origin HEAD:thoth/ari-auth-multimodal
