@@ -1,0 +1,329 @@
+name: THOTH patch ARI auth multimodal
+
+on:
+  push:
+    branches: [thoth/ari-auth-multimodal]
+    paths:
+      - '.github/workflows/thoth-patch-ari-auth-multimodal.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: thoth/ari-auth-multimodal
+
+      - name: Patch ARI production security and multimodal path
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(text, old, new, label):
+              if old not in text:
+                  raise SystemExit(f'missing patch target: {label}')
+              if text.count(old) != 1:
+                  raise SystemExit(f'non-unique patch target: {label} ({text.count(old)})')
+              return text.replace(old, new, 1)
+
+          p = Path('server.js')
+          s = p.read_text()
+
+          old = '''async function generateWithGoogle({ prompt, systemInstruction, temperature = 0.7 }) {
+            const client = requireProvider();
+            const response = await client.models.generateContent({
+              model: geminiModel,
+              contents: prompt,
+              config: {
+                systemInstruction,
+                temperature: Math.max(0, Math.min(2, Number(temperature) || 0.7)),
+                maxOutputTokens: 4096,
+              },
+            });
+
+            const text = String(response.text || "").trim();
+            if (!text) throw httpError(502, "Google provider returned no generated text.");
+
+            return {
+              text,
+              model: geminiModel,
+              provider,
+              tokens: response.usageMetadata?.totalTokenCount ?? null,
+              usage: response.usageMetadata || null,
+            };
+          }
+          '''
+          new = '''const SUPPORTED_INLINE_IMAGE_MIME_TYPES = new Set([
+            "image/jpeg",
+            "image/png",
+            "image/webp",
+            "image/gif",
+            "image/avif",
+            "image/heic",
+            "image/heif",
+          ]);
+          const MAX_INLINE_IMAGE_BYTES = Math.max(1024, Number(process.env.ARI_MAX_INLINE_IMAGE_BYTES || 6 * 1024 * 1024));
+
+          function normalizeInlineImage(payload = {}) {
+            const image = payload?.image && typeof payload.image === "object" ? payload.image : {};
+            let data = image.data || image.base64 || payload?.image_data || payload?.imageData || "";
+            let mimeType = image.mime_type || image.mimeType || payload?.image_mime_type || payload?.imageMimeType || "";
+            if (!data) return null;
+
+            const dataUrl = /^data:([^;,]+);base64,(.+)$/s.exec(String(data));
+            if (dataUrl) {
+              mimeType ||= dataUrl[1];
+              data = dataUrl[2];
+            }
+
+            mimeType = String(mimeType || "").trim().toLowerCase();
+            if (mimeType === "image/jpg") mimeType = "image/jpeg";
+            if (!SUPPORTED_INLINE_IMAGE_MIME_TYPES.has(mimeType)) {
+              throw httpError(415, `Unsupported inline image MIME type: ${mimeType || "missing"}`);
+            }
+
+            const compact = String(data).replace(/\\s+/g, "");
+            if (!compact || !/^[A-Za-z0-9+/]+={0,2}$/.test(compact)) throw httpError(400, "Invalid base64 image data");
+            const bytes = Buffer.from(compact, "base64");
+            if (!bytes.length) throw httpError(400, "Inline image is empty");
+            const canonical = bytes.toString("base64").replace(/=+$/, "");
+            if (canonical !== compact.replace(/=+$/, "")) throw httpError(400, "Invalid base64 image data");
+            if (bytes.length > MAX_INLINE_IMAGE_BYTES) {
+              throw httpError(413, `Inline image exceeds ${MAX_INLINE_IMAGE_BYTES} byte limit`);
+            }
+
+            return { mimeType, data: bytes.toString("base64"), bytes: bytes.length };
+          }
+
+          async function generateWithGoogle({ prompt, systemInstruction, temperature = 0.7, image = null }) {
+            const client = requireProvider();
+            const contents = image
+              ? [
+                  { inlineData: { mimeType: image.mimeType, data: image.data } },
+                  { text: prompt },
+                ]
+              : prompt;
+            const response = await client.models.generateContent({
+              model: geminiModel,
+              contents,
+              config: {
+                systemInstruction,
+                temperature: Math.max(0, Math.min(2, Number(temperature) || 0.7)),
+                maxOutputTokens: 4096,
+              },
+            });
+
+            const text = String(response.text || "").trim();
+            if (!text) throw httpError(502, "Google provider returned no generated text.");
+
+            return {
+              text,
+              model: geminiModel,
+              provider,
+              tokens: response.usageMetadata?.totalTokenCount ?? null,
+              usage: response.usageMetadata || null,
+              media_input: image ? { type: "image", mime_type: image.mimeType, bytes: image.bytes } : null,
+            };
+          }
+          '''
+          s = replace_once(s, old, new, 'generateWithGoogle')
+
+          s = replace_once(
+              s,
+              '''    const manifest = inferManifest(intent, requestedCapability, req.body?.context || {});
+              const capability = manifest.capability;
+
+              const runtime = await orchestrateWithMercury(req, {''',
+              '''    const manifest = inferManifest(intent, requestedCapability, req.body?.context || {});
+              const capability = manifest.capability;
+              const inlineImage = normalizeInlineImage(req.body?.payload || {});
+              await requireProviderAccess(req);
+
+              const runtime = await orchestrateWithMercury(req, {''',
+              'runtime auth + image extraction',
+          )
+          s = replace_once(
+              s,
+              '''    const orchestration = runtime.orchestration || {};
+              const providerRequired = orchestration.providerRequired === true;
+
+              if (providerRequired) {
+                if (!intent) return res.status(422).json({ ok: false, error: "intent or payload.prompt is required", request_id: requestId });
+                await requireProviderAccess(req);
+                const result = await generateWithGoogle({
+                  prompt: intent,''',
+              '''    const orchestration = runtime.orchestration || {};
+              const providerRequired = orchestration.providerRequired === true || Boolean(inlineImage);
+
+              if (providerRequired) {
+                const providerPrompt = intent || (inlineImage ? "Analyze the provided image and answer the user's visual question." : "");
+                if (!providerPrompt) return res.status(422).json({ ok: false, error: "intent or payload.prompt is required", request_id: requestId });
+                const result = await generateWithGoogle({
+                  prompt: providerPrompt,
+                  image: inlineImage,''',
+              'runtime provider path',
+          )
+          s = replace_once(
+              s,
+              '''          result: { text: result.text, model: result.model, provider: result.provider, tokens: result.tokens },
+              provider: { name: result.provider, model: result.model },''',
+              '''          result: { text: result.text, model: result.model, provider: result.provider, tokens: result.tokens, media_input: result.media_input },
+              provider: { name: result.provider, model: result.model },''',
+              'runtime result media metadata',
+          )
+
+          s = replace_once(
+              s,
+              '''api.post("/generate", async (req, res, next) => {
+            try {
+              const prompt = String(req.body?.prompt || "").trim();
+              if (!prompt) return res.status(400).json({ ok: false, error: "prompt is required", request_id: req.requestId });
+              if (prompt.length > 20000) return res.status(413).json({ ok: false, error: "prompt is too long", request_id: req.requestId });
+
+              const runtime = await orchestrateWithMercury(req, {''',
+              '''api.post("/generate", async (req, res, next) => {
+            try {
+              const inlineImage = normalizeInlineImage(req.body || {});
+              const prompt = String(req.body?.prompt || "").trim() || (inlineImage ? "Analyze the provided image." : "");
+              if (!prompt) return res.status(400).json({ ok: false, error: "prompt is required", request_id: req.requestId });
+              if (prompt.length > 20000) return res.status(413).json({ ok: false, error: "prompt is too long", request_id: req.requestId });
+              await requireProviderAccess(req);
+
+              const runtime = await orchestrateWithMercury(req, {''',
+              'generate auth + image extraction',
+          )
+          s = replace_once(
+              s,
+              '''    await requireProviderAccess(req);
+              const result = await generateWithGoogle({
+                prompt,
+                systemInstruction:''',
+              '''    const result = await generateWithGoogle({
+                prompt,
+                image: inlineImage,
+                systemInstruction:''',
+              'generate provider image',
+          )
+          s = replace_once(
+              s,
+              '''    res.json(responseBase({ type: String(req.body?.type || "text"), orchestration: runtime.orchestration, render_state: runtime.renderState, output: result.text, model: result.model, provider: result.provider, usage: result.usage }));''',
+              '''    res.json(responseBase({ type: String(req.body?.type || "text"), orchestration: runtime.orchestration, render_state: runtime.renderState, output: result.text, model: result.model, provider: result.provider, usage: result.usage, media_input: result.media_input }));''',
+              'generate result media metadata',
+          )
+
+          s = replace_once(
+              s,
+              '''    const prompt = String(req.body?.prompt || req.body?.command || "").trim();
+              if (!prompt) return res.status(422).json({ ok: false, error: "prompt is required", request_id: req.requestId });
+
+              if (prompt.replace(/\\.$/, "").toLowerCase() === DEMO_PHRASE.toLowerCase()) {''',
+              '''    const prompt = String(req.body?.prompt || req.body?.command || "").trim();
+              if (!prompt) return res.status(422).json({ ok: false, error: "prompt is required", request_id: req.requestId });
+              await requireProviderAccess(req);
+
+              if (prompt.replace(/\\.$/, "").toLowerCase() === DEMO_PHRASE.toLowerCase()) {''',
+              'TAE auth gate',
+          )
+          # Remove the now-redundant second TAE provider auth call only in the non-demo branch.
+          tae_marker = '''    const runtime = await orchestrateWithMercury(req, {
+              capability: "tae",
+              intent: prompt,
+              requestId: req.body?.request_id || req.requestId,
+              payload: req.body || {},
+            });
+            await requireProviderAccess(req);
+            const result = await generateWithGoogle({'''
+          s = replace_once(s, tae_marker, tae_marker.replace('    await requireProviderAccess(req);\n', ''), 'remove redundant TAE auth')
+
+          p.write_text(s)
+
+          p = Path('manifest-runtime-gateway.js')
+          s = p.read_text()
+          s = replace_once(
+              s,
+              'const freeAccess = !/^(0|false|no|off)$/i.test(process.env.JAHORIN_FREE_ACCESS || "true");',
+              'const freeAccess = !/^(0|false|no|off)$/i.test(process.env.JAHORIN_FREE_ACCESS || "false");',
+              'secure freeAccess default',
+          )
+          p.write_text(s)
+
+          p = Path('.github/workflows/deploy-ari-cloud-run.yml')
+          s = p.read_text()
+          s = replace_once(
+              s,
+              '''            --image="$IMAGE" \\
+                        --allow-unauthenticated \\
+                        --quiet''',
+              '''            --image="$IMAGE" \\
+                        --allow-unauthenticated \\
+                        --update-env-vars="ARI_REQUIRE_AUTH=true,JAHORIN_FREE_ACCESS=false" \\
+                        --quiet''',
+              'Cloud Run auth env',
+          )
+          s = replace_once(
+              s,
+              '''if(!(j.ok===true&&j.guest_auth_configured===true&&j.provider_configured===true&&j.mercury_runtime_ready===true))''',
+              '''if(!(j.ok===true&&j.auth_required===true&&j.guest_auth_configured===true&&j.provider_configured===true&&j.mercury_runtime_ready===true))''',
+              'ready auth assertion',
+          )
+          guest_probe = '''          code="$(curl -sS -c /tmp/cookies -o /tmp/guest.json -w '%{http_code}' -H 'content-type: application/json' -d '{}' "$ARI/api/identity/guest")"
+                    test "$code" = 201
+          '''
+          unauth_probe = '''          code="$(curl -sS -o /tmp/unauth-runtime.json -w '%{http_code}' -H 'content-type: application/json' -H 'x-request-id: ari-unauth-release-proof' -d '{"intent":"This must be rejected","capability":"thoth","module":"mercury","request_id":"ari-unauth-release-proof"}' "$ARI/api/runtime")"
+                    test "$code" = 401
+                    node -e "const j=require('/tmp/unauth-runtime.json'); if(j.ok!==false) process.exit(1)"
+
+          ''' + guest_probe
+          s = replace_once(s, guest_probe, unauth_probe, 'unauth runtime proof')
+          runtime_probe = '''          code="$(curl -sS -b /tmp/cookies -o /tmp/runtime.json -w '%{http_code}' -H 'content-type: application/json' -H 'x-request-id: ari-consumer-release-proof' -d '{"intent":"Write exactly: JAHORIN CONSUMER ONLINE","capability":"thoth","module":"mercury","payload":{"page":"scribe","source":"release-proof"},"context":{"scene":"novalife","page":"home-room"},"request_id":"ari-consumer-release-proof"}' "$ARI/api/runtime")"
+                    test "$code" = 200
+                    node -e "const j=require('/tmp/runtime.json'); if(!(j.manifest&&j.capability&&j.page&&j.result&&String(j.result.text||'').trim())) process.exit(1)"
+          '''
+          multimodal_probe = runtime_probe + '''
+                    code="$(curl -sS -b /tmp/cookies -o /tmp/optics.json -w '%{http_code}' -H 'content-type: application/json' -H 'x-request-id: ari-optics-release-proof' -d '{"intent":"Describe the supplied image briefly.","capability":"optics","module":"mercury","payload":{"action":"analyze","image":{"mime_type":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl9ZQAAAABJRU5ErkJggg=="}},"request_id":"ari-optics-release-proof"}' "$ARI/api/runtime")"
+                    test "$code" = 200
+                    node -e "const j=require('/tmp/optics.json'); const m=j?.result?.media_input; if(!(j?.result&&String(j.result.text||'').trim()&&m?.type==='image'&&m?.mime_type==='image/png'&&Number(m?.bytes)>0)) process.exit(1)"
+          '''
+          s = replace_once(s, runtime_probe, multimodal_probe, 'live multimodal proof')
+          p.write_text(s)
+
+          p = Path('scripts/configure_ari_production.sh')
+          s = p.read_text()
+          s = replace_once(
+              s,
+              '--update-env-vars="ARI_REQUIRE_AUTH=true,SIOS_OWNER_GID=${OWNER_GID},VERTEX_PROJECT=${PROJECT_ID},VERTEX_LOCATION=${VERTEX_LOCATION},GEMINI_MODEL=${MODEL}"',
+              '--update-env-vars="ARI_REQUIRE_AUTH=true,JAHORIN_FREE_ACCESS=false,SIOS_OWNER_GID=${OWNER_GID},VERTEX_PROJECT=${PROJECT_ID},VERTEX_LOCATION=${VERTEX_LOCATION},GEMINI_MODEL=${MODEL}"',
+              'configure production auth env',
+          )
+          p.write_text(s)
+          PY
+
+      - name: Validate patched contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check server.js
+          node --check manifest-runtime-gateway.js
+          grep -q 'inlineData' server.js
+          grep -q 'normalizeInlineImage' server.js
+          grep -q 'media_input' server.js
+          grep -q 'JAHORIN_FREE_ACCESS || "false"' manifest-runtime-gateway.js
+          grep -q 'ARI_REQUIRE_AUTH=true,JAHORIN_FREE_ACCESS=false' .github/workflows/deploy-ari-cloud-run.yml
+          grep -q 'ari-optics-release-proof' .github/workflows/deploy-ari-cloud-run.yml
+          grep -q 'ari-unauth-release-proof' .github/workflows/deploy-ari-cloud-run.yml
+
+      - name: Commit production patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/thoth-patch-ari-auth-multimodal.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add server.js manifest-runtime-gateway.js .github/workflows/deploy-ari-cloud-run.yml scripts/configure_ari_production.sh .github/workflows/thoth-patch-ari-auth-multimodal.yml
+          git commit -m "THOTH: enforce ARI auth and add multimodal image transport"
+          git push origin HEAD:thoth/ari-auth-multimodal
