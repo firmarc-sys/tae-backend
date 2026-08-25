@@ -1,6 +1,6 @@
 {
   "ok": true,
-  "verified_at": "2026-08-25T09:52:14.609Z",
+  "verified_at": "2026-08-25T09:54:59.148Z",
   "service": "ARI",
   "runtime": "Mercury",
   "auth_required": true,
@@ -8,13 +8,18 @@
   "authenticated_runtime_verified": true,
   "consumer_gid_verified": true,
   "guest_auth_configured": true,
+  "neon_authorization_verified": true,
+  "trial_entitlement_denial_verified": true,
+  "authorization_before_provider_verified": true,
   "multimodal_parser_verified": true,
   "provider": "google-vertex-ai",
   "optics_multimodal": {
     "has_result": true,
     "mime_type": "image/png",
-    "bytes": 620
+    "bytes": 620,
+    "tier": "trial",
+    "operation": "analyze"
   },
-  "cloud_run_revision": "ari-00067-rz2",
-  "source_sha": "dd495cae3a0407aa64a682d743eab40f9a698159"
+  "cloud_run_revision": "ari-00070-v6x",
+  "source_sha": "d6bcda5b5029d1393e4aa990f0f442b8bde98d91"
 }
