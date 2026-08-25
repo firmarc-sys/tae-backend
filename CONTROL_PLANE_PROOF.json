@@ -1,0 +1,39 @@
+{
+  "ok": true,
+  "verified_at": "2026-08-25T11:49:06.376Z",
+  "cloud_run_revision": "ari-00087-d8r",
+  "runtime_provider": "google-vertex-ai",
+  "provider_registry": {
+    "enabled_routes": 17,
+    "registry_enforced": true
+  },
+  "scenes": {
+    "published": 43,
+    "canonical_target": 43
+  },
+  "tae": {
+    "persistent_commands": 3,
+    "persistence": "neon"
+  },
+  "canonical_tiers": [
+    "trial",
+    "personal",
+    "pro",
+    "business",
+    "enterprise"
+  ],
+  "billing": {
+    "live_configured": false,
+    "configured_paid_tiers": [],
+    "missing_paid_tiers": [
+      "personal",
+      "pro",
+      "business",
+      "enterprise"
+    ]
+  },
+  "retool": {
+    "contract": "RETOOL_CONTROL_PLANE_CONTRACT.md",
+    "direct_builder_connected": false
+  }
+}
