@@ -1,5 +1,5 @@
 name: Deploy ARI to Cloud Run
-# MA'AT production release: authenticated multimodal ARI
+# MA'AT production release: authenticated multimodal ARI + Neon authorization
 
 on:
   push:
@@ -7,6 +7,7 @@ on:
     paths:
       - 'server.js'
       - 'neon-runtime-gateway.js'
+      - 'neon-store.js'
       - 'manifest-runtime-gateway.js'
       - 'identity-runtime-gateway.js'
       - 'package.json'
@@ -43,6 +44,7 @@ jobs:
           set -euo pipefail
           node --check server.js
           node --check neon-runtime-gateway.js
+          node --check neon-store.js
           node --check manifest-runtime-gateway.js
           node --check identity-runtime-gateway.js
           grep -q '/identity/guest' server.js
@@ -51,7 +53,9 @@ jobs:
           grep -q 'normalizeInlineImage' server.js
           grep -q 'inlineData' server.js
           grep -q 'JAHORIN_FREE_ACCESS || "false"' manifest-runtime-gateway.js
-          grep -q 'async function handleRuntime' neon-runtime-gateway.js
+          grep -q 'resolveRuntimeAuthorization' neon-runtime-gateway.js
+          grep -q 'recordRuntimeAuthorizationEvent' neon-runtime-gateway.js
+          grep -q 'runtime_authorization_events' neon-store.js
 
       - name: Authenticate to Google Cloud
         id: auth
@@ -161,15 +165,20 @@ jobs:
           node -e "const j=require('/tmp/guest.json'); if(!(j.authenticated===true&&/^\\d{12}$/.test(String(j.gid||'')))) process.exit(1)"
           echo 'PASS signed consumer GID session established'
 
+          code="$(curl -sS -b /tmp/cookies -o /tmp/entitlement-deny.json -w '%{http_code}' -H 'content-type: application/json' -H 'x-request-id: ari-neon-entitlement-deny-proof' -d '{"intent":"Generate a video that trial users must not be allowed to execute.","capability":"optics","module":"mercury","payload":{"action":"video_generate"},"request_id":"ari-neon-entitlement-deny-proof"}' "$ARI/api/runtime")"
+          test "$code" = 403 || { echo "Expected trial entitlement denial 403, got $code" >&2; cat /tmp/entitlement-deny.json >&2 || true; exit 1; }
+          node -e "const j=require('/tmp/entitlement-deny.json'); const a=j?.authorization; if(!(j.ok===false&&j.code==='ENTITLEMENT_REQUIRED'&&a?.result==='deny'&&a?.tier==='trial'&&a?.capability==='optics'&&a?.operation==='video.generate')) process.exit(1)"
+          echo 'PASS Neon trial entitlement denied optics.video.generate before provider execution'
+
           code="$(curl -sS -b /tmp/cookies -o /tmp/unsupported.json -w '%{http_code}' -H 'content-type: application/json' -H 'x-request-id: ari-optics-invalid-mime-proof' -d '{"intent":"Validate image parser.","capability":"optics","module":"mercury","payload":{"action":"analyze","image":{"mime_type":"application/pdf","data":"QQ=="}},"request_id":"ari-optics-invalid-mime-proof"}' "$ARI/api/runtime")"
           test "$code" = 415 || { echo "Expected authenticated invalid MIME 415, got $code" >&2; cat /tmp/unsupported.json >&2 || true; exit 1; }
           grep -qi 'unsupported inline image MIME type' /tmp/unsupported.json
-          echo 'PASS authenticated request reached image parser and invalid MIME returned 415'
+          echo 'PASS authorized request reached image parser and invalid MIME returned 415'
 
           code="$(curl -sS -b /tmp/cookies -o /tmp/optics.json -w '%{http_code}' --connect-timeout 5 --max-time 90 -H 'content-type: application/json' -H 'x-request-id: ari-optics-release-proof' -d '{"intent":"Describe the supplied image briefly.","capability":"optics","module":"mercury","payload":{"action":"analyze","image":{"mime_type":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAIAAABMXPacAAACM0lEQVR4nO3dsU0DQRBG4TGiBHIC2oDECU25MWJTBgSuBIKVjpWQEPKd9/2rey9CcrKa74ZNzvLh4+G5Zu54OtNHWNUdfYC9JwCcAHACwAkAJwCcAHACwAkAJwCcAHACwAkAJwCcAHACwAkAJwCcAHACwAkAJwCcAHACwAkAJwCcAHACwAkAJwCcAHACwAkAJwCcAHACwAkAJwCcAHD39AGu6en8vvx9qUP/0ePb1/DjrGoagH7of3R5/fGYAmMCgH+O/ncNI5whGuDq0feFM+RewptMf6n/1xRV4gZsO/qlzFWI24AbTX8pbRWyAG49/VaUQRDAmOm3cgxSAEZOvxVikAKw2yIAxj/+rYQl4AGo6bdwAx5g58EA7OPfYpfADYAjARIe/xa4BG4AnABwAsBhADkXQIu6BtwAOAHgBIATAE4AOAHgBIATAA4D+HzJ+vEg6n0hNwBOADgB4EiAnGsAfGHUDYCDARKWgH1f2g2A4wHYJcC/LsADFGeAT79CAPZcCsD4JUh4/CsHoMYahEy/ogBqlEHO9CsNoG5vEDX9qjrE/qb85i8OpY2+FbcBS9uuQub0K3kDllauQuzoWxMAtK5gCB99axqAvj8wphh635QAfcfTmT7CqnIv4Z0kAJwAcALACQAnAJwAcALACQAnAJwAcALACQAnAJwAcALACQAnAJwAcALACQAnAJwAcALACQAnAJwAcALACQAnAJwAcALACQAnAJwAcALACQAnANw3JP9sHueEaqgAAAAASUVORK5CYII="}},"request_id":"ari-optics-release-proof"}' "$ARI/api/runtime")"
           test "$code" = 200 || { echo "Expected authenticated multimodal HTTP 200, got $code" >&2; cat /tmp/optics.json >&2 || true; exit 1; }
-          node -e "const j=require('/tmp/optics.json'); const m=j?.result?.media_input; if(!(String(j?.result?.text||'').trim()&&m?.type==='image'&&m?.mime_type==='image/png'&&Number(m?.bytes)>0&&['google-vertex-ai','google-gemini-api'].includes(j?.provider?.name))) process.exit(1)"
-          echo 'PASS live authenticated PNG reached Google multimodal provider with non-empty response and media evidence'
+          node -e "const j=require('/tmp/optics.json'); const m=j?.result?.media_input; const a=j?.authorization; if(!(String(j?.result?.text||'').trim()&&m?.type==='image'&&m?.mime_type==='image/png'&&Number(m?.bytes)>0&&['google-vertex-ai','google-gemini-api'].includes(j?.provider?.name)&&a?.result==='allow'&&a?.tier==='trial'&&a?.capability==='optics'&&a?.operation==='analyze')) process.exit(1)"
+          echo 'PASS Neon-authorized trial optics.analyze reached Google multimodal provider with non-empty response and media evidence'
 
           code="$(curl -sS -b /tmp/cookies -o /tmp/twin.json -w '%{http_code}' "$ARI/api/twin")"
           test "$code" = 200 || { echo "Expected authenticated Neon twin HTTP 200, got $code" >&2; cat /tmp/twin.json >&2 || true; exit 1; }
@@ -178,6 +187,7 @@ jobs:
           const fs=require('fs');
           const ready=JSON.parse(fs.readFileSync('/tmp/ready.json'));
           const guest=JSON.parse(fs.readFileSync('/tmp/guest.json'));
+          const denied=JSON.parse(fs.readFileSync('/tmp/entitlement-deny.json'));
           const optics=JSON.parse(fs.readFileSync('/tmp/optics.json'));
           const media=optics?.result?.media_input || {};
           fs.writeFileSync('ARI_MULTIMODAL_RELEASE_PROOF.json', JSON.stringify({
@@ -190,12 +200,17 @@ jobs:
             authenticated_runtime_verified:true,
             consumer_gid_verified:/^\d{12}$/.test(String(guest.gid||'')),
             guest_auth_configured:ready.guest_auth_configured===true,
+            neon_authorization_verified:optics?.authorization?.result==='allow',
+            trial_entitlement_denial_verified:denied?.code==='ENTITLEMENT_REQUIRED',
+            authorization_before_provider_verified:denied?.authorization?.result==='deny',
             multimodal_parser_verified:true,
             provider:optics?.provider?.name || null,
             optics_multimodal:{
               has_result:Boolean(String(optics?.result?.text||'').trim()),
               mime_type:media.mime_type,
-              bytes:media.bytes
+              bytes:media.bytes,
+              tier:optics?.authorization?.tier || null,
+              operation:optics?.authorization?.operation || null
             },
             cloud_run_revision:process.env.CLOUD_RUN_REVISION,
             source_sha:process.env.GITHUB_SHA
@@ -210,6 +225,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add ARI_MULTIMODAL_RELEASE_PROOF.json
-          git commit -m "THOTH: verify authenticated multimodal ARI release on Cloud Run"
+          git commit -m "THOTH: verify Neon-authorized ARI release on Cloud Run"
           git pull --rebase origin main
           git push origin HEAD:main
