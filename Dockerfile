@@ -1,5 +1,6 @@
 FROM node:20-slim
 
+# MA'AT release marker: canonical Vertex multimodal content parts
 WORKDIR /app
 
 COPY package*.json ./
