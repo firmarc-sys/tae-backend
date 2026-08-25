@@ -106,13 +106,7 @@ jobs:
             out="/tmp/${cap}.json"
             code="$(curl -sS -o "$out" -w '%{http_code}' --connect-timeout 5 --max-time 90 -H "cookie: $OWNER_COOKIE" -H 'content-type: application/json' -H "x-request-id: jahorin-ga-${cap}" -d "{\"intent\":\"${intent}\",\"capability\":\"${cap}\",\"module\":\"mercury\",\"payload\":{\"action\":\"${action}\"},\"request_id\":\"jahorin-ga-${cap}\"}" "$ARI/api/runtime")"
             test "$code" = 200 || { echo "${cap} returned HTTP $code" >&2; cat "$out" >&2; exit 1; }
-            CAP="$cap" node - <<'NODE'
-            const fs=require('fs');
-            const cap=process.env.CAP;
-            const j=JSON.parse(fs.readFileSync(`/tmp/${cap}.json`));
-            const a=j?.authorization;
-            if(!(j?.ok!==false&&a?.result==='allow'&&a?.capability===cap&&a?.tier==='owner'&&j?.result)) process.exit(1);
-            NODE
+            CAP="$cap" node -e "const fs=require('fs'); const cap=process.env.CAP; const j=JSON.parse(fs.readFileSync('/tmp/'+cap+'.json')); const a=j?.authorization; if(!(j?.ok!==false&&a?.result==='allow'&&a?.capability===cap&&a?.tier==='owner'&&j?.result)) process.exit(1)"
             echo "PASS ${cap} authorized and executed"
           }
 
