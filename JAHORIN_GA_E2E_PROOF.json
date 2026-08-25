@@ -1,0 +1,104 @@
+{
+  "ok": true,
+  "verified_at": "2026-08-25T10:26:52.400Z",
+  "service": "ARI",
+  "runtime": "Mercury",
+  "cloud_run_revision": "ari-00079-b5x",
+  "tae": {
+    "verified": true,
+    "provider": "google-vertex-ai",
+    "has_orchestration": true,
+    "has_render_state": true
+  },
+  "capabilities": {
+    "interweb": {
+      "authorization": {
+        "result": "allow",
+        "user_type": "internal",
+        "role": "prime_orchestrator",
+        "tier": "owner",
+        "capability": "interweb",
+        "operation": "search"
+      },
+      "manifest_capability": "interweb",
+      "page": "search",
+      "provider": "google-vertex-ai",
+      "has_text": true,
+      "execution": null,
+      "result_present": true
+    },
+    "augment": {
+      "authorization": {
+        "result": "allow",
+        "user_type": "internal",
+        "role": "prime_orchestrator",
+        "tier": "owner",
+        "capability": "augment",
+        "operation": "generate"
+      },
+      "manifest_capability": "augment",
+      "page": "mix",
+      "provider": "google-vertex-ai",
+      "has_text": true,
+      "execution": null,
+      "result_present": true
+    },
+    "code": {
+      "authorization": {
+        "result": "allow",
+        "user_type": "internal",
+        "role": "prime_orchestrator",
+        "tier": "owner",
+        "capability": "code",
+        "operation": "generate"
+      },
+      "manifest_capability": "code",
+      "page": "intent",
+      "provider": "google-vertex-ai",
+      "has_text": true,
+      "execution": null,
+      "result_present": true
+    },
+    "scribe": {
+      "authorization": {
+        "result": "allow",
+        "user_type": "internal",
+        "role": "prime_orchestrator",
+        "tier": "owner",
+        "capability": "scribe",
+        "operation": "write"
+      },
+      "manifest_capability": "thoth",
+      "page": "scribe",
+      "provider": "google-vertex-ai",
+      "has_text": true,
+      "execution": null,
+      "result_present": true
+    },
+    "optics": {
+      "authorization": {
+        "result": "allow",
+        "user_type": "internal",
+        "role": "prime_orchestrator",
+        "tier": "owner",
+        "capability": "optics",
+        "operation": "analyze"
+      },
+      "manifest_capability": "optics",
+      "page": "analyze",
+      "provider": "google-vertex-ai",
+      "has_text": true,
+      "execution": null,
+      "result_present": true
+    }
+  },
+  "external_trial_flow": {
+    "gid_verified": true,
+    "entitled_operation_allowed": true,
+    "tier": "trial",
+    "non_entitled_operation_denied": true,
+    "denial_code": "ENTITLEMENT_REQUIRED",
+    "twin_neon_persistence": true
+  },
+  "ga_blocker_note": "Billing is not asserted by this proof. GA still requires a verified live Stripe subscription lifecycle tied to Neon tier state."
+}
