@@ -1,6 +1,6 @@
 {
   "ok": true,
-  "verified_at": "2026-08-25T02:46:48.888Z",
+  "verified_at": "2026-08-25T09:52:14.609Z",
   "service": "ARI",
   "runtime": "Mercury",
   "auth_required": true,
@@ -15,6 +15,6 @@
     "mime_type": "image/png",
     "bytes": 620
   },
-  "cloud_run_revision": "ari-00061-brm",
-  "source_sha": "5a5c672011f90533dd2a4268727b477c8e608165"
+  "cloud_run_revision": "ari-00067-rz2",
+  "source_sha": "dd495cae3a0407aa64a682d743eab40f9a698159"
 }
