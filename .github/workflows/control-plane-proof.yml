@@ -1,0 +1,127 @@
+name: Jahorin Control Plane Proof
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/control-plane-proof.yml'
+      - 'control-plane-gateway.js'
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: project-7e6f2720-0291-4c91-8c3
+  GCP_PROJECT_NUMBER: '689058655022'
+  GCP_REGION: us-west1
+  CLOUD_RUN_SERVICE: ari
+
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/${{ env.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github/providers/github
+          service_account: github-actions@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com
+
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Resolve live ARI authority
+        shell: bash
+        run: |
+          set -euo pipefail
+          service_json="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json)"
+          session_secret="$(printf '%s' "$service_json" | python3 -c '
+          import json,sys
+          obj=json.load(sys.stdin)
+          def walk(v):
+              if isinstance(v,dict):
+                  if v.get("name")=="ARI_SESSION_SECRET" and isinstance(v.get("value"),str) and v.get("value"):
+                      return v["value"]
+                  for child in v.values():
+                      found=walk(child)
+                      if found: return found
+              elif isinstance(v,list):
+                  for child in v:
+                      found=walk(child)
+                      if found: return found
+              return ""
+          print(walk(obj))
+          ')"
+          test -n "$session_secret"
+          echo "::add-mask::$session_secret"
+          printf 'ARI_SESSION_SECRET=%s\n' "$session_secret" >> "$GITHUB_ENV"
+          revision="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format='value(status.latestReadyRevisionName)')"
+          printf 'CLOUD_RUN_REVISION=%s\n' "$revision" >> "$GITHUB_ENV"
+
+      - name: Prove control-plane state
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARI="https://ari-${GCP_PROJECT_NUMBER}.${GCP_REGION}.run.app"
+          OWNER_COOKIE="$(node - <<'NODE'
+          const crypto=require('crypto');
+          const gid='399152573423';
+          const expires=Math.floor(Date.now()/1000)+900;
+          const sig=crypto.createHmac('sha256',process.env.ARI_SESSION_SECRET).update(`${gid}.${expires}`).digest('hex');
+          process.stdout.write(`ari_session=${gid}.${expires}.${sig}`);
+          NODE
+          )"
+
+          curl -fsS -H "cookie: $OWNER_COOKIE" "$ARI/api/control/health" -o /tmp/control-health.json
+          node -e "const j=require('/tmp/control-health.json'); if(!(j.ok===true&&j.enabled_provider_routes===17&&j.published_scenes===43&&j.external_tiers===5&&j.tae_commands>=1&&j.runtime_provider==='google-vertex-ai')) process.exit(1)"
+          echo 'PASS provider registry, 43 scenes, five customer tiers, TAE ledger and active Vertex route authority'
+
+          curl -fsS "$ARI/api/billing/catalog" -o /tmp/billing.json
+          node -e "const j=require('/tmp/billing.json'); const ids=(j.tiers||[]).map(x=>x.id).join(','); if(ids!=='trial,personal,pro,business,enterprise') process.exit(1)"
+          echo 'PASS canonical billing catalog exposes trial/personal/pro/business/enterprise'
+
+          curl -fsS -c /tmp/guest-cookies -H 'content-type: application/json' -d '{}' "$ARI/api/identity/guest" -o /tmp/guest.json
+          code="$(curl -sS -b /tmp/guest-cookies -o /tmp/denied.json -w '%{http_code}' -H 'content-type: application/json' -d '{"intent":"Generate a video that trial access must deny.","capability":"optics","payload":{"action":"video_generate"},"request_id":"control-plane-provider-route-proof"}' "$ARI/api/runtime")"
+          test "$code" = 403
+          node -e "const j=require('/tmp/denied.json'); if(!(j.code==='ENTITLEMENT_REQUIRED'&&j.authorization?.result==='deny'&&j.provider_route?.registry_authority===true&&j.provider_route?.provider==='google-vertex-ai'&&j.provider_route?.operation==='video.generate')) process.exit(1)"
+          echo 'PASS provider registry resolved before denied execution without spending provider capacity'
+
+          node - <<'NODE'
+          const fs=require('fs');
+          const h=JSON.parse(fs.readFileSync('/tmp/control-health.json'));
+          const b=JSON.parse(fs.readFileSync('/tmp/billing.json'));
+          const paid=(b.tiers||[]).filter(x=>x.id!=='trial');
+          const proof={
+            ok:true,
+            verified_at:new Date().toISOString(),
+            cloud_run_revision:process.env.CLOUD_RUN_REVISION,
+            runtime_provider:h.runtime_provider,
+            provider_registry:{enabled_routes:h.enabled_provider_routes,registry_enforced:true},
+            scenes:{published:h.published_scenes,canonical_target:43},
+            tae:{persistent_commands:h.tae_commands,persistence:'neon'},
+            canonical_tiers:(b.tiers||[]).map(x=>x.id),
+            billing:{
+              live_configured:b.billing_configured===true,
+              configured_paid_tiers:paid.filter(x=>x.checkout_configured===true).map(x=>x.id),
+              missing_paid_tiers:paid.filter(x=>x.checkout_configured!==true).map(x=>x.id)
+            },
+            retool:{contract:'RETOOL_CONTROL_PLANE_CONTRACT.md',direct_builder_connected:false}
+          };
+          fs.writeFileSync('CONTROL_PLANE_PROOF.json',JSON.stringify(proof,null,2)+'\n');
+          NODE
+          cat CONTROL_PLANE_PROOF.json
+
+      - name: Record control-plane evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CONTROL_PLANE_PROOF.json
+          git commit -m "MA'AT: record commercial control-plane evidence"
+          git pull --rebase origin main
+          git push origin HEAD:main
