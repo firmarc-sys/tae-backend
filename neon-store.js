@@ -62,6 +62,14 @@ export async function ensureNeonIdentity({ gid, authUserId = null, identityScope
      on conflict (gid) do nothing`,
     [gid],
   );
+  await db.query(
+    `insert into public.identity_access (gid, user_type, role_id, tier_id, status)
+     values ($1, $2, $3, $4, 'active')
+     on conflict (gid) do nothing`,
+    identityScope === "prime"
+      ? [gid, "internal", "prime_orchestrator", "owner"]
+      : [gid, "external", "subscriber", "trial"],
+  );
   return getNeonIdentity(gid);
 }
 
@@ -71,6 +79,103 @@ export async function getNeonIdentity(gid) {
     `select gid, auth_user_id, identity_scope, display_name, created_at, updated_at
      from public.jahorin_identities where gid=$1 limit 1`,
     [gid],
+  );
+  return result.rows[0] || null;
+}
+
+export async function resolveRuntimeAuthorization(gid, capability, operation) {
+  const db = requirePool();
+  const started = Date.now();
+  const result = await db.query(
+    `select
+       ia.gid, ia.user_type, ia.role_id, ia.tier_id, ia.status, ia.overrides,
+       ar.enabled as role_enabled, ar.permissions as role_permissions,
+       at.enabled as tier_enabled, at.limits as tier_limits,
+       cr.enabled as capability_enabled,
+       co.enabled as operation_enabled,
+       te.allowed as entitlement_allowed,
+       te.limits as entitlement_limits
+     from public.identity_access ia
+     left join public.access_roles ar on ar.id=ia.role_id
+     left join public.access_tiers at on at.id=ia.tier_id
+     left join public.capability_registry cr on cr.id=$2
+     left join public.capability_operations co on co.capability_id=$2 and co.operation=$3
+     left join public.tier_entitlements te on te.tier_id=ia.tier_id and te.capability_id=$2 and te.operation=$3
+     where ia.gid=$1
+     limit 1`,
+    [gid, capability, operation],
+  );
+  const row = result.rows[0];
+  const base = {
+    gid,
+    capability,
+    operation,
+    user_type: row?.user_type || null,
+    role_id: row?.role_id || null,
+    tier_id: row?.tier_id || null,
+    latency_ms: Date.now() - started,
+  };
+
+  if (!row) return { ...base, allowed: false, reason_code: "IDENTITY_REQUIRED" };
+  if (row.status !== "active") return { ...base, allowed: false, reason_code: "IDENTITY_DISABLED" };
+  if (row.role_enabled === false || row.tier_enabled === false) return { ...base, allowed: false, reason_code: "IDENTITY_DISABLED" };
+  if (!row.capability_enabled || !row.operation_enabled) return { ...base, allowed: false, reason_code: "CAPABILITY_UNAVAILABLE" };
+
+  const ownerWildcard = row.role_permissions?.["*"] === true;
+  const overrideAllow = row.overrides?.entitlements?.[`${capability}.${operation}`] === true;
+  const overrideDeny = row.overrides?.entitlements?.[`${capability}.${operation}`] === false;
+  if (overrideDeny) return { ...base, allowed: false, reason_code: "ENTITLEMENT_REQUIRED" };
+  if (!ownerWildcard && !overrideAllow && row.entitlement_allowed !== true) {
+    return { ...base, allowed: false, reason_code: "ENTITLEMENT_REQUIRED" };
+  }
+
+  const tierLimit = Number(row.tier_limits?.runtime_requests_day || 0);
+  const entitlementLimit = Number(row.entitlement_limits?.runtime_requests_day || 0);
+  const limits = [tierLimit, entitlementLimit].filter((value) => Number.isFinite(value) && value > 0);
+  const dailyLimit = limits.length ? Math.min(...limits) : 0;
+  if (!ownerWildcard && dailyLimit > 0) {
+    const usage = await db.query(
+      `select count(*)::int as used
+       from public.runtime_authorization_events
+       where gid=$1 and authorization_result='allow' and created_at >= date_trunc('day', now())`,
+      [gid],
+    );
+    const used = Number(usage.rows[0]?.used || 0);
+    if (used >= dailyLimit) {
+      return { ...base, allowed: false, reason_code: "USAGE_LIMIT_REACHED", limit: dailyLimit, used, latency_ms: Date.now() - started };
+    }
+  }
+
+  return {
+    ...base,
+    allowed: true,
+    reason_code: "AUTHORIZED",
+    limits: row.entitlement_limits || row.tier_limits || {},
+    latency_ms: Date.now() - started,
+  };
+}
+
+export async function recordRuntimeAuthorizationEvent(event = {}) {
+  const db = requirePool();
+  const result = await db.query(
+    `insert into public.runtime_authorization_events
+      (request_id,gid,user_type,role_id,tier_id,capability_id,operation,authorization_result,reason_code,provider,latency_ms,metadata)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb)
+     returning id, authorization_result, reason_code, created_at`,
+    [
+      event.request_id || null,
+      event.gid || null,
+      event.user_type || null,
+      event.role_id || null,
+      event.tier_id || null,
+      event.capability_id || null,
+      event.operation || null,
+      event.authorization_result || "deny",
+      event.reason_code || null,
+      event.provider || null,
+      Number.isFinite(Number(event.latency_ms)) ? Number(event.latency_ms) : null,
+      JSON.stringify(event.metadata || {}),
+    ],
   );
   return result.rows[0] || null;
 }
