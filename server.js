@@ -596,7 +596,7 @@ function normalizeInlineImage(payload = {}) {
 }
 async function generateWithGoogle({ prompt, systemInstruction, temperature = 0.7, image = null }) {
   const client = requireProvider();
-  const contents = image ? [{ inlineData: { mimeType: image.mimeType, data: image.data } }, { text: prompt }] : prompt;
+  const contents = image ? [{ role: "user", parts: [{ text: prompt }, { inlineData: { mimeType: image.mimeType, data: image.data } }] }] : prompt;
   const response = await client.models.generateContent({ model: geminiModel, contents, config: { systemInstruction, temperature: Math.max(0, Math.min(2, Number(temperature) || 0.7)), maxOutputTokens: 4096 } });
   const text = String(response.text || "").trim();
   if (!text) throw httpError(502, "Google provider returned no generated text.");
