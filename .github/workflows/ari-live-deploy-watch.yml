@@ -117,7 +117,7 @@ jobs:
             -o /tmp/optics.json -w '%{http_code}' \
             -H 'content-type: application/json' \
             -H 'x-request-id: live-optics-multimodal' \
-            -d '{"capability":"optics","intent":"Describe the supplied image briefly.","module":"mercury","payload":{"action":"analyze","image":{"mime_type":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl9ZQAAAABJRU5ErkJggg=="}},"request_id":"live-optics-multimodal"}' \
+            -d '{"capability":"optics","intent":"Describe the supplied image briefly.","module":"mercury","payload":{"action":"analyze","image":{"mime_type":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAIAAABMXPacAAABMElEQVR4nO3RAQ0AIBADMR7/nkFGQ7gq2HJz1ttmvf1g6wG/KwBWAKwAWAGwAmAFwAqAFQArAFYArABYAbACYAXACoAVACsAVgCsAFgBsAJgBcAKgBUAKwBWAKwAWAGwAmAFwAqAFQArAFYArABYAbACYAXACoAVACsAVgCsAFgBsAJgBcAKgBUAKwBWAKwAWAGwAmAFwAqAFQArAFYArABYAbACYAXACoAVACsAVgCsAFgBsAJgBcAKgBUAKwBWAKwAWAGwAmAFwAqAFQArAFYArABYAbACYAXACoAVACsAVgCsAFgBsAJgBcAKgBUAKwBWAKwAWAGwAmAFwC6YIwL/3XG91wAAAABJRU5ErkJggg=="}},"request_id":"live-optics-multimodal"}' \
             "$ARI/api/runtime")"
           test "$valid" = "200" || { echo "Expected authenticated multimodal HTTP 200, got $valid" >&2; cat /tmp/optics.json >&2 || true; exit 1; }
           python3 - <<'PY'
