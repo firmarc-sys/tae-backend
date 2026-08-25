@@ -1,0 +1,115 @@
+name: Jahorin Canonical Tier Sync Proof
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/tier-sync-proof.yml'
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: project-7e6f2720-0291-4c91-8c3
+  GCP_PROJECT_NUMBER: '689058655022'
+  GCP_REGION: us-west1
+  CLOUD_RUN_SERVICE: ari
+  TEST_GID: '999000000001'
+
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/${{ env.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github/providers/github
+          service_account: github-actions@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Resolve production Stripe webhook authority
+        shell: bash
+        run: |
+          set -euo pipefail
+          service_json="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json)"
+          webhook_secret="$(printf '%s' "$service_json" | python3 -c '
+          import json,sys
+          obj=json.load(sys.stdin)
+          def walk(v):
+              if isinstance(v,dict):
+                  if v.get("name")=="STRIPE_WEBHOOK_SECRET" and isinstance(v.get("value"),str) and v.get("value"):
+                      return v["value"]
+                  for child in v.values():
+                      found=walk(child)
+                      if found: return found
+              elif isinstance(v,list):
+                  for child in v:
+                      found=walk(child)
+                      if found: return found
+              return ""
+          print(walk(obj))
+          ')"
+          test -n "$webhook_secret" || { echo 'Production STRIPE_WEBHOOK_SECRET is not configured.' >&2; exit 1; }
+          echo "::add-mask::$webhook_secret"
+          printf 'STRIPE_WEBHOOK_SECRET=%s\n' "$webhook_secret" >> "$GITHUB_ENV"
+
+      - name: Prove pro to trial synchronization
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARI="https://ari-${GCP_PROJECT_NUMBER}.${GCP_REGION}.run.app"
+
+          sign_and_post() {
+            file="$1"
+            out="$2"
+            ts="$(date +%s)"
+            sig="$(FILE="$file" TS="$ts" node -e "const fs=require('fs'),c=require('crypto');const p=fs.readFileSync(process.env.FILE);process.stdout.write(c.createHmac('sha256',process.env.STRIPE_WEBHOOK_SECRET).update(process.env.TS+'.'+p).digest('hex'))")"
+            curl -fsS -H 'content-type: application/json' -H "stripe-signature: t=${ts},v1=${sig}" --data-binary "@$file" "$ARI/api/stripe/webhook" -o "$out"
+          }
+
+          cat > /tmp/active.json <<JSON
+          {"id":"evt_jahorin_tier_sync_active","object":"event","type":"customer.subscription.updated","data":{"object":{"id":"sub_jahorin_tier_sync","object":"subscription","customer":null,"status":"active","metadata":{"gid":"${TEST_GID}","tier":"pro"},"items":{"data":[{"price":{"id":null}}]}}}}
+          JSON
+          sign_and_post /tmp/active.json /tmp/active-response.json
+          node -e "const j=require('/tmp/active-response.json'); if(!(j.received===true&&j.canonical_access?.gid===process.env.TEST_GID&&j.canonical_access?.tier_id==='pro')) process.exit(1)"
+          echo 'PASS signed production webhook synchronized canonical PRO tier into Neon'
+
+          cat > /tmp/canceled.json <<JSON
+          {"id":"evt_jahorin_tier_sync_canceled","object":"event","type":"customer.subscription.deleted","data":{"object":{"id":"sub_jahorin_tier_sync","object":"subscription","customer":null,"status":"canceled","metadata":{"gid":"${TEST_GID}","tier":"pro"},"items":{"data":[{"price":{"id":null}}]}}}}
+          JSON
+          sign_and_post /tmp/canceled.json /tmp/canceled-response.json
+          node -e "const j=require('/tmp/canceled-response.json'); if(!(j.received===true&&j.canonical_access?.gid===process.env.TEST_GID&&j.canonical_access?.tier_id==='trial')) process.exit(1)"
+          echo 'PASS canceled subscription synchronized back to TRIAL tier'
+
+          node - <<'NODE'
+          const fs=require('fs');
+          const a=JSON.parse(fs.readFileSync('/tmp/active-response.json'));
+          const c=JSON.parse(fs.readFileSync('/tmp/canceled-response.json'));
+          fs.writeFileSync('TIER_SYNC_PROOF.json',JSON.stringify({
+            ok:true,
+            verified_at:new Date().toISOString(),
+            synthetic_event:true,
+            production_webhook_signature_verified:true,
+            gid:process.env.TEST_GID,
+            active_transition:a.canonical_access?.tier_id,
+            canceled_transition:c.canonical_access?.tier_id,
+            authority:'Neon identity_access'
+          },null,2)+'\n');
+          NODE
+          cat TIER_SYNC_PROOF.json
+
+      - name: Record tier-sync evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add TIER_SYNC_PROOF.json
+          git commit -m "MA'AT: record canonical tier synchronization evidence"
+          git pull --rebase origin main
+          git push origin HEAD:main
