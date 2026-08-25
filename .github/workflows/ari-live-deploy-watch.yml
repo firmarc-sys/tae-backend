@@ -18,35 +18,47 @@ jobs:
     env:
       ARI: https://ari-689058655022.us-west1.run.app
     steps:
-      - name: Verify gateway surface and production readiness
+      - name: Wait for authenticated production readiness
         shell: bash
         run: |
           set -euo pipefail
-          for route in health ready identity render-state iot syncori tae; do
-            code="$(curl -sS --connect-timeout 5 --max-time 15 -o "/tmp/$route.json" -w '%{http_code}' "$ARI/api/$route?maat=$GITHUB_SHA")"
-            if [ "$code" != "200" ]; then
-              echo "/api/$route returned HTTP $code" >&2
-              cat "/tmp/$route.json" >&2 || true
-              exit 1
+          ready=0
+          for attempt in $(seq 1 60); do
+            code="$(curl -sS --connect-timeout 5 --max-time 15 -o /tmp/ready.json -w '%{http_code}' "$ARI/api/ready?maat=$GITHUB_SHA-$attempt" || true)"
+            if [ "$code" = "200" ] && python3 - <<'PY'
+          import json
+          ready=json.load(open('/tmp/ready.json'))
+          ok=(
+              ready.get('ok') is True
+              and ready.get('auth_required') is True
+              and ready.get('auth_configured') is True
+              and ready.get('guest_auth_configured') is True
+              and ready.get('member_auth_configured') is True
+              and ready.get('provider_configured') is True
+              and ready.get('provider') in ('google-vertex-ai','google-gemini-api')
+              and ready.get('mercury_runtime_ready') is True
+          )
+          raise SystemExit(0 if ok else 1)
+          PY
+            then
+              ready=1
+              break
             fi
+            sleep 5
+          done
+          if [ "$ready" -ne 1 ]; then
+            echo 'ARI did not reach authenticated production readiness.' >&2
+            cat /tmp/ready.json >&2 || true
+            exit 1
+          fi
+          echo 'PASS ARI readiness + required auth + signed sessions + provider + Mercury'
+
+          for route in health identity render-state iot syncori tae; do
+            code="$(curl -sS --connect-timeout 5 --max-time 15 -o "/tmp/$route.json" -w '%{http_code}' "$ARI/api/$route?maat=$GITHUB_SHA")"
+            test "$code" = "200" || { echo "/api/$route returned HTTP $code" >&2; cat "/tmp/$route.json" >&2 || true; exit 1; }
             python3 -m json.tool "/tmp/$route.json" >/dev/null
             echo "PASS /api/$route"
           done
-
-          python3 - <<'PY'
-          import json
-          identity=json.load(open('/tmp/identity.json'))
-          ready=json.load(open('/tmp/ready.json'))
-          assert identity.get('authenticated') is False, identity
-          assert ready.get('ok') is True, ready
-          assert ready.get('auth_required') is True, ready
-          assert ready.get('auth_configured') is True, ready
-          assert ready.get('member_auth_configured') is True, ready
-          assert ready.get('provider_configured') is True, ready
-          assert ready.get('provider') in ('google-vertex-ai','google-gemini-api'), ready
-          assert ready.get('mercury_runtime_ready') is True, ready
-          print('PASS ARI readiness + enforced auth + provider + Mercury')
-          PY
 
       - name: Prove anonymous provider execution is blocked
         shell: bash
@@ -69,36 +81,60 @@ jobs:
           test "$demo_code" = "401" || { echo "Expected unauthenticated Demo Mode 401, got $demo_code" >&2; cat /tmp/demo.json >&2; exit 1; }
           echo 'PASS unauthenticated Demo Mode rejected with 401'
 
-      - name: Fingerprint live multimodal parser before auth
+      - name: Authenticate and prove live multimodal provider path
         shell: bash
         run: |
           set -euo pipefail
+
+          guest_code="$(curl -sS --connect-timeout 5 --max-time 20 \
+            -c /tmp/cookies \
+            -o /tmp/guest.json -w '%{http_code}' \
+            -H 'content-type: application/json' \
+            -d '{}' \
+            "$ARI/api/identity/guest")"
+          test "$guest_code" = "201" || { echo "Expected guest session 201, got $guest_code" >&2; cat /tmp/guest.json >&2 || true; exit 1; }
+          python3 - <<'PY'
+          import json,re
+          guest=json.load(open('/tmp/guest.json'))
+          assert guest.get('authenticated') is True, guest
+          assert re.fullmatch(r'\d{12}', str(guest.get('gid') or '')), guest
+          print('PASS signed guest session established')
+          PY
+
           unsupported="$(curl -sS --connect-timeout 5 --max-time 20 \
+            -b /tmp/cookies \
             -o /tmp/unsupported.json -w '%{http_code}' \
             -H 'content-type: application/json' \
-            -H 'x-request-id: live-optics-parser-fingerprint' \
-            -d '{"capability":"optics","intent":"fingerprint image parser","module":"mercury","payload":{"image":{"mime_type":"application/pdf","data":"QQ=="}},"request_id":"live-optics-parser-fingerprint"}' \
+            -H 'x-request-id: live-optics-parser-authenticated' \
+            -d '{"capability":"optics","intent":"fingerprint authenticated image parser","module":"mercury","payload":{"image":{"mime_type":"application/pdf","data":"QQ=="}},"request_id":"live-optics-parser-authenticated"}' \
             "$ARI/api/runtime")"
-          if [ "$unsupported" != "415" ]; then
-            echo "Expected live multimodal parser to reject unsupported MIME with 415 before auth; got $unsupported" >&2
-            cat /tmp/unsupported.json >&2 || true
-            exit 1
-          fi
+          test "$unsupported" = "415" || { echo "Expected authenticated unsupported MIME 415, got $unsupported" >&2; cat /tmp/unsupported.json >&2 || true; exit 1; }
           grep -qi 'unsupported inline image MIME type' /tmp/unsupported.json
-          echo 'PASS live normalizeInlineImage parser fingerprinted with 415'
+          echo 'PASS authenticated request reached normalizeInlineImage and returned 415'
 
-          valid="$(curl -sS --connect-timeout 5 --max-time 20 \
-            -o /tmp/valid-image.json -w '%{http_code}' \
+          valid="$(curl -sS --connect-timeout 5 --max-time 60 \
+            -b /tmp/cookies \
+            -o /tmp/optics.json -w '%{http_code}' \
             -H 'content-type: application/json' \
-            -H 'x-request-id: live-optics-auth-boundary' \
-            -d '{"capability":"optics","intent":"describe image","module":"mercury","payload":{"image":{"mime_type":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl9ZQAAAABJRU5ErkJggg=="}},"request_id":"live-optics-auth-boundary"}' \
+            -H 'x-request-id: live-optics-multimodal' \
+            -d '{"capability":"optics","intent":"Describe the supplied image briefly.","module":"mercury","payload":{"action":"analyze","image":{"mime_type":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl9ZQAAAABJRU5ErkJggg=="}},"request_id":"live-optics-multimodal"}' \
             "$ARI/api/runtime")"
-          if [ "$valid" != "401" ]; then
-            echo "Expected valid image to reach auth boundary and return 401; got $valid" >&2
-            cat /tmp/valid-image.json >&2 || true
-            exit 1
-          fi
-          echo 'PASS valid image payload accepted by parser but blocked by auth boundary'
+          test "$valid" = "200" || { echo "Expected authenticated multimodal HTTP 200, got $valid" >&2; cat /tmp/optics.json >&2 || true; exit 1; }
+          python3 - <<'PY'
+          import json
+          body=json.load(open('/tmp/optics.json'))
+          media=((body.get('result') or {}).get('media_input') or {})
+          assert str((body.get('result') or {}).get('text') or '').strip(), body
+          assert media.get('type') == 'image', media
+          assert media.get('mime_type') == 'image/png', media
+          assert int(media.get('bytes') or 0) > 0, media
+          assert ((body.get('provider') or {}).get('name') in ('google-vertex-ai','google-gemini-api')), body.get('provider')
+          print('PASS authenticated PNG reached Google multimodal provider and returned grounded media evidence')
+          PY
+
+          twin_code="$(curl -sS --connect-timeout 5 --max-time 20 -b /tmp/cookies -o /tmp/twin.json -w '%{http_code}' "$ARI/api/twin")"
+          test "$twin_code" = "200" || { echo "Expected authenticated twin HTTP 200, got $twin_code" >&2; exit 1; }
+          echo 'PASS authenticated session remains valid through Neon persistence gateway'
 
       - name: Verify member and owner authentication configuration
         shell: bash
@@ -109,8 +145,9 @@ jobs:
           import json
           ready=json.load(open('/tmp/ready-auth.json'))
           assert ready.get('member_auth_configured') is True, ready
+          assert ready.get('guest_auth_configured') is True, ready
           assert ready.get('auth_required') is True, ready
-          print('PASS member authentication configured and required')
+          print('PASS member and signed-session authentication configured and required')
           PY
 
           owner_configured="$(python3 - <<'PY'
@@ -128,8 +165,8 @@ jobs:
             test "$code" = "401" || { echo "Expected invalid owner credential 401, got $code" >&2; exit 1; }
             echo 'PASS invalid Prime Orchestrator access rejected with 401'
           else
-            echo 'INFO owner access-code session is not configured; Supabase member authentication is the active authority'
+            echo 'INFO Prime Orchestrator access-code session is not configured; member and signed consumer auth remain active'
           fi
 
       - name: MAAT live verdict
-        run: echo 'ARI LIVE AUTH + MULTIMODAL PARSER — PASS'
+        run: echo 'ARI LIVE AUTHENTICATED MULTIMODAL — PASS'
