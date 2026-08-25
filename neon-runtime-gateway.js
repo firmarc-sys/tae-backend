@@ -7,6 +7,8 @@ import {
   neonConfigured,
   neonHealth,
   ensureNeonIdentity,
+  resolveRuntimeAuthorization,
+  recordRuntimeAuthorizationEvent,
   getTwinState,
   mergeTwinState,
   setTwinPermissions,
@@ -168,6 +170,44 @@ function base(extra = {}) {
   return { ok: true, gid: null, mode: "public", timestamp: new Date().toISOString(), ...extra };
 }
 
+function canonicalCapability(value = "") {
+  const raw = String(value || "").trim().toLowerCase();
+  const aliases = {
+    wepwawet: "interweb",
+    interweb: "interweb",
+    hathor: "augment",
+    syncori: "augment",
+    augment: "augment",
+    ptah: "code",
+    code: "code",
+    thoth: "scribe",
+    chat: "scribe",
+    scribe: "scribe",
+    horus: "optics",
+    optics: "optics",
+  };
+  return aliases[raw] || raw;
+}
+
+function canonicalOperation(capability, body = {}) {
+  const raw = String(body.operation || body?.payload?.action || body?.payload?.operation || "").trim().toLowerCase();
+  const normalized = raw.replace(/-/g, "_");
+  const aliases = {
+    image_generate: "image.generate",
+    video_generate: "video.generate",
+    document_create: "document.create",
+  };
+  if (aliases[normalized]) return aliases[normalized];
+  if (raw) return raw;
+  return {
+    interweb: "search",
+    augment: "generate",
+    code: "generate",
+    scribe: "write",
+    optics: "analyze",
+  }[capability] || "execute";
+}
+
 async function handleHealth(req, res, id) {
   const { response, payload } = await innerJson(req);
   return json(res, response.status, {
@@ -305,9 +345,57 @@ async function handleRuntime(req, res, raw, id) {
   try { body = raw.length ? JSON.parse(raw.toString("utf8")) : {}; }
   catch { return json(res, 400, { ok: false, error: "Invalid JSON body", request_id: id }, id); }
 
+  const capability = canonicalCapability(body.capability || body?.payload?.capability || "");
+  if (!capability) {
+    return json(res, 400, { ok: false, error: "CAPABILITY_REQUIRED", code: "CAPABILITY_REQUIRED", request_id: body.request_id || id }, id);
+  }
+  const operation = canonicalOperation(capability, body);
+  const authorization = await resolveRuntimeAuthorization(gid, capability, operation);
+  await recordRuntimeAuthorizationEvent({
+    request_id: body.request_id || id,
+    gid,
+    user_type: authorization.user_type,
+    role_id: authorization.role_id,
+    tier_id: authorization.tier_id,
+    capability_id: capability,
+    operation,
+    authorization_result: authorization.allowed ? "allow" : "deny",
+    reason_code: authorization.reason_code,
+    latency_ms: authorization.latency_ms,
+    metadata: {
+      limits: authorization.limits || null,
+      used: authorization.used ?? null,
+      limit: authorization.limit ?? null,
+    },
+  });
+
+  if (!authorization.allowed) {
+    const status = authorization.reason_code === "IDENTITY_REQUIRED" ? 401
+      : authorization.reason_code === "IDENTITY_DISABLED" ? 403
+        : authorization.reason_code === "USAGE_LIMIT_REACHED" ? 429
+          : authorization.reason_code === "CAPABILITY_UNAVAILABLE" ? 503
+            : 403;
+    return json(res, status, {
+      ok: false,
+      error: authorization.reason_code,
+      code: authorization.reason_code,
+      request_id: body.request_id || id,
+      authorization: {
+        gid,
+        user_type: authorization.user_type,
+        role: authorization.role_id,
+        tier: authorization.tier_id,
+        capability,
+        operation,
+        result: "deny",
+      },
+    }, id);
+  }
+
   await recordTwinEvent(gid, "runtime_request", {
     intent: body.intent || body?.payload?.prompt || null,
-    requested_capability: body.capability || null,
+    requested_capability: capability,
+    requested_operation: operation,
     context: body.context || {},
     request_id: body.request_id || id,
   });
@@ -326,7 +414,7 @@ async function handleRuntime(req, res, raw, id) {
     capability: manifest.capability,
     page: manifest.page,
     request_id: body.request_id || id,
-    state: { manifest, source: body?.payload?.source || null },
+    state: { manifest, source: body?.payload?.source || null, authorization: { tier: authorization.tier_id, capability, operation } },
   });
   await recordTwinEvent(gid, "runtime_result", {
     request_id: body.request_id || id,
@@ -334,10 +422,20 @@ async function handleRuntime(req, res, raw, id) {
     page: manifest.page,
     confidence: manifest.confidence,
     provider: payload?.provider || null,
+    authorized_capability: capability,
+    authorized_operation: operation,
   });
 
   return json(res, response.status, {
     ...(payload || {}),
+    authorization: {
+      result: "allow",
+      user_type: authorization.user_type,
+      role: authorization.role_id,
+      tier: authorization.tier_id,
+      capability,
+      operation,
+    },
     persistence: "neon",
     cloud_sync: true,
   }, id, passthroughHeaders(response));
