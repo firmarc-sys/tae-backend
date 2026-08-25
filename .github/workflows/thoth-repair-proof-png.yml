@@ -1,0 +1,55 @@
+name: MAAT install verified multimodal PNG fixture
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/thoth-repair-proof-png.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Replace truncated PNG proof fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64, hashlib
+          old='iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAIAAABMXPacAAABMElEQVR4nO3RAQ0AIBADMR7/nkFGQ7gq2HJz1ttmvf1g6wG/KwBWAKwAWAGwAmAFwAqAFQArAFYArABYAbACYAXACoAVACsAVgCsAFgBsAJgBcAKgBUAKwBWAKwAWAGwAmAFwAqAFQArAFYArABYAbACYAXACoAVACsAVgCsAFgBsAJgBcAKgBUAKwBWAKwAWAGwAmAFwAqAFQArAFYArABYAbACYAXACoAVACsAVgCsAFgBsAJgBcAKgBUAKwBWAKwAWAGwAmAFwAqAFQArAFYArABYAbACYAXACoAVACsAVgCsAFgBsAJgBcAKgBUAKwBWAKwAWAGwAmAFwC6YIwL/3XG91wAAAABJRU5ErkJggg=='
+          new='iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAIAAABMXPacAAACM0lEQVR4nO3dsU0DQRBG4TGiBHIC2oDECU25MWJTBgSuBIKVjpWQEPKd9/2rey9CcrKa74ZNzvLh4+G5Zu54OtNHWNUdfYC9JwCcAHACwAkAJwCcAHACwAkAJwCcAHACwAkAJwCcAHACwAkAJwCcAHACwAkAJwCcAHACwAkAJwCcAHACwAkAJwCcAHACwAkAJwCcAHACwAkAJwCcAHD39AGu6en8vvx9qUP/0ePb1/DjrGoagH7of3R5/fGYAmMCgH+O/ncNI5whGuDq0feFM+RewptMf6n/1xRV4gZsO/qlzFWI24AbTX8pbRWyAG49/VaUQRDAmOm3cgxSAEZOvxVikAKw2yIAxj/+rYQl4AGo6bdwAx5g58EA7OPfYpfADYAjARIe/xa4BG4AnABwAsBhADkXQIu6BtwAOAHgBIATAE4AOAHgBIATAA4D+HzJ+vEg6n0hNwBOADgB4EiAnGsAfGHUDYCDARKWgH1f2g2A4wHYJcC/LsADFGeAT79CAPZcCsD4JUh4/CsHoMYahEy/ogBqlEHO9CsNoG5vEDX9qjrE/qb85i8OpY2+FbcBS9uuQub0K3kDllauQuzoWxMAtK5gCB99axqAvj8wphh635QAfcfTmT7CqnIv4Z0kAJwAcALACQAnAJwAcALACQAnAJwAcALACQAnAJwAcALACQAnAJwAcALACQAnAJwAcALACQAnAJwAcALACQAnAJwAcALACQAnAJwAcALACQAnANw3JP9sHueEaqgAAAAASUVORK5CYII='
+          raw=base64.b64decode(new, validate=True)
+          assert len(raw)==620, len(raw)
+          assert raw[:8]==b'\x89PNG\r\n\x1a\n'
+          assert hashlib.sha256(raw).hexdigest()=='4dd0769f5da0318257c3d03d800b1fe088e2093297a5db3cd7616011aea59df4'
+          paths=[Path('.github/workflows/deploy-ari-cloud-run.yml'),Path('.github/workflows/ari-live-deploy-watch.yml')]
+          for path in paths:
+              text=path.read_text()
+              count=text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected one truncated fixture, found {count}')
+              path.write_text(text.replace(old,new))
+          PY
+          grep -q '4dd0769f' <(python3 - <<'PY'
+          import base64,hashlib,re
+          text=open('.github/workflows/deploy-ari-cloud-run.yml').read()
+          m=re.search(r'"mime_type":"image/png","data":"([A-Za-z0-9+/=]+)"',text)
+          print(hashlib.sha256(base64.b64decode(m.group(1))).hexdigest())
+          PY
+          )
+      - name: Commit verified fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/thoth-repair-proof-png.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/deploy-ari-cloud-run.yml .github/workflows/ari-live-deploy-watch.yml .github/workflows/thoth-repair-proof-png.yml
+          git commit -m "MA'AT: use integrity-verified PNG for multimodal proof"
+          git pull --rebase origin main
+          git push origin HEAD:main
