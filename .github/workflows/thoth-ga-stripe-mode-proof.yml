@@ -19,7 +19,7 @@ env:
 jobs:
   prove-mode:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 6
     steps:
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
@@ -52,15 +52,43 @@ jobs:
           )"
           test -n "$secret_ref"
           echo "stripe_secret_reference=$secret_ref"
-          gcloud secrets versions access latest --secret="$secret_ref" --project="$GCP_PROJECT_ID" > /tmp/stripe-key
-          test -s /tmp/stripe-key
+          gcloud secrets versions access latest --secret="$secret_ref" --project="$GCP_PROJECT_ID" > /tmp/stripe-key.raw
+          test -s /tmp/stripe-key.raw
+          python3 - <<'PY'
+          from pathlib import Path
+          raw=Path('/tmp/stripe-key.raw').read_text().strip()
+          if (raw.startswith('"') and raw.endswith('"')) or (raw.startswith("'") and raw.endswith("'")):
+              raw=raw[1:-1].strip()
+          if raw.lower().startswith('bearer '): raw=raw[7:].strip()
+          Path('/tmp/stripe-key').write_text(raw)
+          PY
+          chmod 600 /tmp/stripe-key
+          key="$(cat /tmp/stripe-key)"
+          echo "::add-mask::$key"
           mode="$(python3 - <<'PY'
           key=open('/tmp/stripe-key').read().strip()
-          if key.startswith('sk_test_'): print('test')
-          elif key.startswith('sk_live_'): print('live')
+          if key.startswith(('sk_test_','rk_test_')): print('test')
+          elif key.startswith(('sk_live_','rk_live_')): print('live')
           else: print('unknown')
           PY
           )"
+
+          if [ "$mode" = unknown ]; then
+            code="$(curl -sS --max-time 20 -o /tmp/stripe-events.json -w '%{http_code}' -u "$key:" 'https://api.stripe.com/v1/events?limit=1' || true)"
+            echo "stripe_readonly_events_http=$code"
+            if [ "$code" = 200 ]; then
+              api_mode="$(python3 - <<'PY'
+          import json
+          j=json.load(open('/tmp/stripe-events.json'))
+          data=j.get('data') or []
+          if data and isinstance(data[0].get('livemode'), bool): print('live' if data[0]['livemode'] else 'test')
+          else: print('unknown')
+          PY
+              )"
+              [ "$api_mode" != unknown ] && mode="$api_mode"
+            fi
+          fi
+
           echo "stripe_credential_mode=$mode"
-          rm -f /tmp/stripe-key
+          rm -f /tmp/stripe-key /tmp/stripe-key.raw /tmp/stripe-events.json
           test "$mode" = test
