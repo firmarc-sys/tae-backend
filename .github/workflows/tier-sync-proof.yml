@@ -1,11 +1,10 @@
-name: Jahorin Canonical Tier Sync Proof
+name: Jahorin Stripe-to-Neon Tier Sync Proof
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/tier-sync-proof.yml'
+  workflow_run:
+    workflows: ['Deploy ARI to Cloud Run']
+    types: [completed]
 
 permissions:
   contents: write
@@ -15,50 +14,38 @@ env:
   GCP_PROJECT_ID: project-7e6f2720-0291-4c91-8c3
   GCP_PROJECT_NUMBER: '689058655022'
   GCP_REGION: us-west1
-  CLOUD_RUN_SERVICE: ari
   TEST_GID: '999000000001'
 
 jobs:
   proof:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+
       - id: auth
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: projects/${{ env.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github/providers/github
           service_account: github-actions@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com
+
       - uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ env.GCP_PROJECT_ID }}
 
-      - name: Resolve production Stripe webhook authority
+      - name: Materialize webhook authority only into an ephemeral file
         shell: bash
         run: |
           set -euo pipefail
-          service_json="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json)"
-          webhook_secret="$(printf '%s' "$service_json" | python3 -c '
-          import json,sys
-          obj=json.load(sys.stdin)
-          def walk(v):
-              if isinstance(v,dict):
-                  if v.get("name")=="STRIPE_WEBHOOK_SECRET" and isinstance(v.get("value"),str) and v.get("value"):
-                      return v["value"]
-                  for child in v.values():
-                      found=walk(child)
-                      if found: return found
-              elif isinstance(v,list):
-                  for child in v:
-                      found=walk(child)
-                      if found: return found
-              return ""
-          print(walk(obj))
-          ')"
-          test -n "$webhook_secret" || { echo 'Production STRIPE_WEBHOOK_SECRET is not configured.' >&2; exit 1; }
-          echo "::add-mask::$webhook_secret"
-          printf 'STRIPE_WEBHOOK_SECRET=%s\n' "$webhook_secret" >> "$GITHUB_ENV"
+          umask 077
+          gcloud secrets versions access latest \
+            --secret=ari-stripe-webhook-secret \
+            --project="$GCP_PROJECT_ID" > /tmp/stripe-webhook-secret
+          test -s /tmp/stripe-webhook-secret
+          echo 'Stripe webhook authority read from Secret Manager without GitHub environment export.'
 
-      - name: Prove pro to trial synchronization
+      - name: Prove signed production webhook transitions into Neon
         shell: bash
         run: |
           set -euo pipefail
@@ -68,48 +55,81 @@ jobs:
             file="$1"
             out="$2"
             ts="$(date +%s)"
-            sig="$(FILE="$file" TS="$ts" node -e "const fs=require('fs'),c=require('crypto');const p=fs.readFileSync(process.env.FILE);process.stdout.write(c.createHmac('sha256',process.env.STRIPE_WEBHOOK_SECRET).update(process.env.TS+'.'+p).digest('hex'))")"
-            curl -fsS -H 'content-type: application/json' -H "stripe-signature: t=${ts},v1=${sig}" --data-binary "@$file" "$ARI/api/stripe/webhook" -o "$out"
+            sig="$(FILE="$file" TS="$ts" node - <<'NODE'
+          const fs=require('fs'),crypto=require('crypto');
+          const payload=fs.readFileSync(process.env.FILE);
+          const secret=fs.readFileSync('/tmp/stripe-webhook-secret','utf8').trim();
+          process.stdout.write(crypto.createHmac('sha256',secret).update(process.env.TS+'.'+payload).digest('hex'));
+          NODE
+          )"
+            curl -fsS \
+              -H 'content-type: application/json' \
+              -H "stripe-signature: t=${ts},v1=${sig}" \
+              --data-binary "@$file" \
+              "$ARI/api/stripe/webhook" -o "$out"
           }
 
-          cat > /tmp/active.json <<JSON
-          {"id":"evt_jahorin_tier_sync_active","object":"event","type":"customer.subscription.updated","data":{"object":{"id":"sub_jahorin_tier_sync","object":"subscription","customer":null,"status":"active","metadata":{"gid":"${TEST_GID}","tier":"pro"},"items":{"data":[{"price":{"id":null}}]}}}}
+          transition() {
+            label="$1"
+            status="$2"
+            tier="$3"
+            expected="$4"
+            event="evt_jahorin_${label}_${GITHUB_RUN_ID}"
+            cat > "/tmp/${label}.json" <<JSON
+          {"id":"${event}","object":"event","type":"customer.subscription.updated","data":{"object":{"id":"sub_jahorin_tier_sync","object":"subscription","customer":null,"status":"${status}","metadata":{"gid":"${TEST_GID}","tier":"${tier}"},"items":{"data":[{"price":{"id":null}}]}}}}
           JSON
-          sign_and_post /tmp/active.json /tmp/active-response.json
-          node -e "const j=require('/tmp/active-response.json'); if(!(j.received===true&&j.canonical_access?.gid===process.env.TEST_GID&&j.canonical_access?.tier_id==='pro')) process.exit(1)"
-          echo 'PASS signed production webhook synchronized canonical PRO tier into Neon'
+            sign_and_post "/tmp/${label}.json" "/tmp/${label}-response.json"
+            LABEL="$label" EXPECTED="$expected" node - <<'NODE'
+          const fs=require('fs');
+          const j=JSON.parse(fs.readFileSync(`/tmp/${process.env.LABEL}-response.json`));
+          if(!(j.received===true&&j.canonical_access?.gid===process.env.TEST_GID&&j.canonical_access?.tier_id===process.env.EXPECTED)) process.exit(1);
+          NODE
+            echo "PASS ${label}: ${status}/${tier} -> ${expected}"
+          }
 
-          cat > /tmp/canceled.json <<JSON
-          {"id":"evt_jahorin_tier_sync_canceled","object":"event","type":"customer.subscription.deleted","data":{"object":{"id":"sub_jahorin_tier_sync","object":"subscription","customer":null,"status":"canceled","metadata":{"gid":"${TEST_GID}","tier":"pro"},"items":{"data":[{"price":{"id":null}}]}}}}
-          JSON
-          sign_and_post /tmp/canceled.json /tmp/canceled-response.json
-          node -e "const j=require('/tmp/canceled-response.json'); if(!(j.received===true&&j.canonical_access?.gid===process.env.TEST_GID&&j.canonical_access?.tier_id==='trial')) process.exit(1)"
-          echo 'PASS canceled subscription synchronized back to TRIAL tier'
+          transition activate_pro active pro pro
+          transition upgrade_business active business business
+          transition downgrade_personal active personal personal
+          transition payment_failure past_due personal trial
+          transition trialing trialing pro pro
+          transition trial_expired incomplete_expired pro trial
+          transition canceled canceled pro trial
+          transition reactivated active pro pro
+          transition renewal active pro pro
 
           node - <<'NODE'
           const fs=require('fs');
-          const a=JSON.parse(fs.readFileSync('/tmp/active-response.json'));
-          const c=JSON.parse(fs.readFileSync('/tmp/canceled-response.json'));
-          fs.writeFileSync('TIER_SYNC_PROOF.json',JSON.stringify({
+          const labels=['activate_pro','upgrade_business','downgrade_personal','payment_failure','trialing','trial_expired','canceled','reactivated','renewal'];
+          const transitions=Object.fromEntries(labels.map(label=>[label,JSON.parse(fs.readFileSync(`/tmp/${label}-response.json`)).canonical_access?.tier_id||null]));
+          const proof={
             ok:true,
             verified_at:new Date().toISOString(),
-            synthetic_event:true,
+            production_endpoint:true,
             production_webhook_signature_verified:true,
+            secret_manager_authority:true,
+            stripe_event_source:'synthetic-signed-contract-proof',
+            real_stripe_object_lifecycle:false,
             gid:process.env.TEST_GID,
-            active_transition:a.canonical_access?.tier_id,
-            canceled_transition:c.canonical_access?.tier_id,
-            authority:'Neon identity_access'
-          },null,2)+'\n');
+            transitions,
+            authority:'Neon identity_access',
+            ga_note:'This proves production signature verification and Stripe-event-to-Neon policy transitions. It does not claim a real Stripe Customer/Subscription lifecycle.'
+          };
+          fs.writeFileSync('STRIPE_LIFECYCLE_PROOF.json',JSON.stringify(proof,null,2)+'\n');
           NODE
-          cat TIER_SYNC_PROOF.json
+          cat STRIPE_LIFECYCLE_PROOF.json
+          shred -u /tmp/stripe-webhook-secret || rm -f /tmp/stripe-webhook-secret
 
-      - name: Record tier-sync evidence
+      - name: Record Stripe-to-Neon evidence
         shell: bash
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add TIER_SYNC_PROOF.json
-          git commit -m "MA'AT: record canonical tier synchronization evidence"
+          git add STRIPE_LIFECYCLE_PROOF.json
+          if git diff --cached --quiet; then
+            echo 'Stripe lifecycle proof unchanged.'
+            exit 0
+          fi
+          git commit -m "MA'AT: record hardened Stripe-to-Neon lifecycle contract proof"
           git pull --rebase origin main
           git push origin HEAD:main
