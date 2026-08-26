@@ -23,6 +23,7 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
+          import re
 
           path = Path('server.js')
           text = path.read_text()
@@ -107,34 +108,28 @@ jobs:
           runtime_start = text.index('api.post("/runtime"', tae_start)
           tae_block = text[tae_start:runtime_start]
 
-          old_runtime = '''    const runtime = await orchestrateWithMercury(req, {
-            capability: "tae",
-            intent: prompt,
-            requestId: req.body?.request_id || req.requestId,
-            payload: req.body || {},
-          });'''
-          new_runtime = '''    const deepSearch = String(req.body?.mode || "").toLowerCase() === "deepsearch" || deepSearchRequested(prompt);
-          const runtime = await orchestrateWithMercury(req, {
-            capability: deepSearch ? "interweb" : "tae",
-            intent: prompt,
-            requestId: req.body?.request_id || req.requestId,
-            payload: req.body || {},
-          });'''
-          if old_runtime not in tae_block:
-            raise SystemExit('TAE orchestration anchor not found')
-          tae_block = tae_block.replace(old_runtime, new_runtime, 1)
+          orchestration_pattern = re.compile(r'''(?ms)^\s*const runtime = await orchestrateWithMercury\(req, \{\s*\n\s*capability: "tae",\s*\n\s*intent: prompt,\s*\n\s*requestId: req\.body\?\.request_id \|\| req\.requestId,\s*\n\s*payload: req\.body \|\| \{\},\s*\n\s*\}\);''')
+          orchestration_replacement = '''    const deepSearch = String(req.body?.mode || "").toLowerCase() === "deepsearch" || deepSearchRequested(prompt);
+            const runtime = await orchestrateWithMercury(req, {
+              capability: deepSearch ? "interweb" : "tae",
+              intent: prompt,
+              requestId: req.body?.request_id || req.requestId,
+              payload: req.body || {},
+            });'''
+          tae_block, count = orchestration_pattern.subn(orchestration_replacement, tae_block, count=1)
+          if count != 1:
+            raise SystemExit(f'TAE orchestration regex matched {count} times')
 
-          old_call = '''      temperature: req.body?.temperature,
-          });'''
-          new_call = '''      temperature: req.body?.temperature,
-            groundWithSearch: deepSearch,
-          });'''
-          if old_call not in tae_block:
-            raise SystemExit('TAE provider call anchor not found')
-          tae_block = tae_block.replace(old_call, new_call, 1)
+          provider_pattern = re.compile(r'''temperature:\s*req\.body\?\.temperature,\s*\n\s*\}\);''')
+          provider_replacement = '''temperature: req.body?.temperature,
+              groundWithSearch: deepSearch,
+            });'''
+          tae_block, count = provider_pattern.subn(provider_replacement, tae_block, count=1)
+          if count != 1:
+            raise SystemExit(f'TAE provider regex matched {count} times')
 
-          old_reply = '        reply: { kind: "prose", text: result.text, tokens: result.tokens },'
-          new_reply = '''        reply: {
+          reply_pattern = re.compile(r'''reply:\s*\{\s*kind:\s*"prose",\s*text:\s*result\.text,\s*tokens:\s*result\.tokens\s*\},''')
+          reply_replacement = '''reply: {
               kind: "prose",
               text: result.text,
               tokens: result.tokens,
@@ -147,9 +142,9 @@ jobs:
               } : {}),
             },
             deepsearch: result.deepsearch,'''
-          if old_reply not in tae_block:
-            raise SystemExit('TAE reply anchor not found')
-          tae_block = tae_block.replace(old_reply, new_reply, 1)
+          tae_block, count = reply_pattern.subn(reply_replacement, tae_block, count=1)
+          if count != 1:
+            raise SystemExit(f'TAE reply regex matched {count} times')
 
           text = text[:tae_start] + tae_block + text[runtime_start:]
           path.write_text(text)
