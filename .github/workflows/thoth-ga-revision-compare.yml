@@ -1,0 +1,68 @@
+name: THOTH GA Revision Compare
+
+on:
+  push:
+    branches:
+      - thoth/ga-live-diagnostics
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: project-7e6f2720-0291-4c91-8c3
+  GCP_PROJECT_NUMBER: '689058655022'
+  GCP_REGION: us-west1
+  CLOUD_RUN_SERVICE: ari
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/${{ env.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github/providers/github
+          service_account: github-actions@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+      - name: Compare candidates without exposing secret values
+        shell: bash
+        run: |
+          set -euo pipefail
+          for revision in ari-00107-h8w ari-00108-pvf; do
+            gcloud run revisions describe "$revision" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json > "/tmp/$revision.json"
+            REVISION="$revision" python3 - <<'PY'
+          import json,os
+          r=os.environ['REVISION']
+          j=json.load(open('/tmp/'+r+'.json'))
+          spec=j.get('spec',{})
+          cs=spec.get('containers') or []
+          c=cs[0] if cs else {}
+          image=c.get('image')
+          envs=[]
+          secret_refs={}
+          plain_names=[]
+          for item in c.get('env') or []:
+              name=item.get('name')
+              if not name: continue
+              ref=(item.get('valueFrom') or {}).get('secretKeyRef') or (item.get('valueSource') or {}).get('secretKeyRef') or {}
+              secret=ref.get('name') or ref.get('secret') or ''
+              version=ref.get('key') or ref.get('version') or ''
+              if secret:
+                  secret_refs[name]=f'{secret}:{version or "latest"}'
+              elif item.get('value') is not None:
+                  plain_names.append(name)
+              envs.append(name)
+          required=['ARI_SESSION_SECRET','NEON_DATABASE_URL','STRIPE_SECRET_KEY','STRIPE_WEBHOOK_SECRET','GEMINI_API_KEY']
+          print('revision='+r)
+          print('image='+str(image))
+          print('required_secret_refs='+','.join(f'{k}={secret_refs.get(k,"MISSING")}' for k in required))
+          print('plain_required='+','.join(k for k in required if k in plain_names) or 'none')
+          print('node_env_present='+str('NODE_ENV' in envs))
+          print('auth_required_present='+str('ARI_REQUIRE_AUTH' in envs))
+          print('---')
+          PY
+          done
