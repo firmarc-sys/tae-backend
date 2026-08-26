@@ -20,7 +20,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
       - name: Patch ARI voice and quota boundaries
         shell: bash
         run: |
@@ -54,13 +53,13 @@ jobs:
           if old in s:
               s = s.replace(old, new, 1)
 
-          health_old = '''      billing_configured: billingConfigured,\n    }),'''
-          health_new = '''      billing_configured: billingConfigured,\n      ...thothVoiceReadiness(geminiApiKey),\n    }),'''
-          if health_old in s and 'thoth_voice_primitive' not in s[s.find('api.get("/health"'):s.find('api.get("/ready"')]:
-              start = s.find('api.get("/health"')
-              end = s.find('api.get("/ready"')
-              section = s[start:end].replace(health_old, health_new, 1)
-              s = s[:start] + section + s[end:]
+          health_start = s.find('api.get("/health"')
+          health_end = s.find('api.get("/ready"')
+          if health_start != -1 and health_end != -1:
+              section = s[health_start:health_end]
+              if 'thothVoiceReadiness' not in section:
+                  section = section.replace('      billing_configured: billingConfigured,', '      billing_configured: billingConfigured,\n      ...thothVoiceReadiness(geminiApiKey),', 1)
+                  s = s[:health_start] + section + s[health_end:]
 
           ready_start = s.find('api.get("/ready"')
           ready_end = s.find('api.get("/identity"')
