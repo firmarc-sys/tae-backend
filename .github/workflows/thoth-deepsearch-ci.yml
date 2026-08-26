@@ -1,0 +1,62 @@
+name: THOTH DeepSearch backend CI
+
+on:
+  push:
+    branches:
+      - thoth/deepsearch-backend
+
+permissions:
+  contents: read
+
+jobs:
+  gateway:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm install --omit=dev
+      - name: Validate runtime syntax and DeepSearch contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check server.js
+          grep -q 'tools: \[{ googleSearch: {} }\]' server.js
+          grep -q 'deepsearch: result.deepsearch' server.js
+          grep -q 'capability: deepSearch ? "interweb" : "tae"' server.js
+      - name: Run local ARI contract smoke
+        shell: bash
+        env:
+          PORT: '8080'
+          ARI_SESSION_SECRET: test-session-secret-for-ci-only
+          OWNER_ACCESS_CODE: test-owner-code
+          ARI_REQUIRE_AUTH: 'true'
+          VERTEX_PROJECT: '689058655022'
+          VERTEX_LOCATION: global
+        run: |
+          set -euo pipefail
+          node server.js > /tmp/ari.log 2>&1 &
+          pid=$!
+          trap 'kill $pid 2>/dev/null || true' EXIT
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8080/api/health >/tmp/health.json && break
+            sleep .25
+          done
+          curl -fsS http://127.0.0.1:8080/api/ready >/tmp/ready.json
+          bad_code="$(curl -sS -o /tmp/unauth-deep.json -w '%{http_code}' -H 'content-type: application/json' -d '{"prompt":"Research this deeply","mode":"deepsearch"}' http://127.0.0.1:8080/api/tae)"
+          test "$bad_code" = '401'
+          curl -fsS -c /tmp/cookies.txt -H 'content-type: application/json' -d '{"access_code":"test-owner-code"}' http://127.0.0.1:8080/api/identity/session >/tmp/session.json
+          curl -fsS -b /tmp/cookies.txt -H 'content-type: application/json' -d '{"prompt":"TAE, enter Demo Mode"}' http://127.0.0.1:8080/api/tae >/tmp/demo.json
+          python3 - <<'PY'
+          import json
+          health=json.load(open('/tmp/health.json'))
+          ready=json.load(open('/tmp/ready.json'))
+          demo=json.load(open('/tmp/demo.json'))
+          assert health['service']=='ARI' and health['runtime']=='Mercury'
+          assert ready['ok'] is True
+          assert demo['demo'] is True and demo['message']=='This is not an app. This is me.'
+          print('DeepSearch gateway contract: PASS')
+          PY
+      - name: Build production Docker image
+        run: docker build -t ari-deepsearch .
