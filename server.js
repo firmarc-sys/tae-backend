@@ -5,6 +5,7 @@ import cors from "cors";
 import helmet from "helmet";
 import Stripe from "stripe";
 import { GoogleGenAI } from "@google/genai";
+import { installThothVoiceRoutes, thothVoiceReadiness } from "./thoth-voice.js";
 
 const app = express();
 const port = Number(process.env.PORT || 8080);
@@ -509,6 +510,7 @@ async function stripeWebhookHandler(req, res, next) {
 
 app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), stripeWebhookHandler);
 app.post("/stripe/webhook", express.raw({ type: "application/json" }), stripeWebhookHandler);
+installThothVoiceRoutes(app, { apiKey: geminiApiKey, authorize: requireProviderAccess });
 app.use(express.json({ limit: "10mb" }));
 
 async function mercuryRequest(path, { method = "GET", body, requestId = crypto.randomUUID(), timeout = 10000 } = {}) {
@@ -633,6 +635,35 @@ function normalizeGrounding(response) {
   };
 }
 
+function providerQuotaError(error) {
+  const status = Number(error?.status || error?.response?.status || 0);
+  const code = String(error?.code || error?.error?.status || "");
+  const message = String(error?.message || error || "");
+  return status === 429 || /429|RESOURCE_EXHAUSTED|quota|rate.?limit/i.test(`${code} ${message}`);
+}
+
+function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
+
+async function withProviderRetry(operation, attempts = 3) {
+  let lastError;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try { return await operation(); }
+    catch (error) {
+      lastError = error;
+      if (!providerQuotaError(error) || attempt === attempts - 1) break;
+      const delay = Math.min(2400, 350 * (2 ** attempt)) + crypto.randomInt(50, 220);
+      await sleep(delay);
+    }
+  }
+  if (providerQuotaError(lastError)) {
+    const error = httpError(429, "Google provider quota is temporarily exhausted. Retry shortly.");
+    error.code = "PROVIDER_QUOTA_EXHAUSTED";
+    error.retryAfterMs = 2500;
+    throw error;
+  }
+  throw lastError;
+}
+
 async function generateWithGoogle({ prompt, systemInstruction, temperature = 0.7, image = null, groundWithSearch = false }) {
   const client = requireProvider();
   const contents = image ? [{ role: "user", parts: [{ text: prompt }, { inlineData: { mimeType: image.mimeType, data: image.data } }] }] : prompt;
@@ -643,7 +674,7 @@ async function generateWithGoogle({ prompt, systemInstruction, temperature = 0.7
     maxOutputTokens: 4096,
     ...(deepSearch ? { tools: [{ googleSearch: {} }] } : {}),
   };
-  const response = await client.models.generateContent({ model: geminiModel, contents, config });
+  const response = await withProviderRetry(() => client.models.generateContent({ model: geminiModel, contents, config }));
   const text = String(response.text || "").trim();
   if (!text) throw httpError(502, "Google provider returned no generated text.");
   return {
@@ -740,6 +771,7 @@ api.get("/health", (_req, res) => {
       supabase_configured: supabaseConfigured,
       stripe_configured: stripeConfigured,
       billing_configured: billingConfigured,
+      ...thothVoiceReadiness(geminiApiKey),
     }),
   );
 });
@@ -770,6 +802,7 @@ api.get("/ready", async (_req, res) => {
       supabase_configured: supabaseConfigured,
       stripe_configured: stripeConfigured,
       billing_configured: billingConfigured,
+      ...thothVoiceReadiness(geminiApiKey),
       mercury_runtime_ready: runtimeReady,
       mercury_runtime: mercuryRuntimeUrl,
     }),
@@ -1303,9 +1336,12 @@ app.use("/", api);
 app.use((error, _req, res, _next) => {
   console.error(error);
   const status = Number(error.status) || 500;
+  if (error?.retryAfterMs) res.set("retry-after", String(Math.max(1, Math.ceil(error.retryAfterMs / 1000))));
   res.status(status).json({
     ok: false,
     error: error.message || "Unexpected ARI error",
+    code: error.code || (status === 429 ? "RATE_LIMITED" : "ARI_ERROR"),
+    ...(error.retryAfterMs ? { retry_after_ms: error.retryAfterMs } : {}),
   });
 });
 
