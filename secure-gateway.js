@@ -16,6 +16,7 @@ const innerPort = Number(process.env.SECURE_GATEWAY_INNER_PORT || 8086);
 const SESSION_COOKIE = "ari_session";
 const legacyJwtSecret = process.env.JWT_SECRET || "";
 const sessionSecret = process.env.ARI_SESSION_SECRET || (legacyJwtSecret && legacyJwtSecret !== "CHANGE-ME-IN-PROD" ? legacyJwtSecret : "");
+const authRequired = !/^(0|false|no|off)$/i.test(process.env.ARI_REQUIRE_AUTH || "true");
 const connectionString = process.env.NEON_DATABASE_URL || process.env.DATABASE_URL || "";
 const pool = connectionString
   ? new Pool({ connectionString, max: Math.max(2, Number(process.env.NEON_POOL_MAX || 5)), idleTimeoutMillis: 30000, connectionTimeoutMillis: 8000 })
@@ -92,6 +93,16 @@ function sessionGid(req) {
   if (!gid || !Number.isFinite(expires) || expires <= Math.floor(Date.now() / 1000) || !signature) return null;
   const expected = crypto.createHmac("sha256", sessionSecret).update(`${gid}.${expires}`).digest("hex");
   return timingSafeEqualText(signature, expected) ? gid : null;
+}
+
+function hasExecutionAuthMaterial(req) {
+  if (sessionGid(req)) return true;
+  return /^Bearer\s+\S+/i.test(String(req.headers.authorization || ""));
+}
+
+function requiresExecutionAuth(pathname, method) {
+  if (String(method || "GET").toUpperCase() !== "POST") return false;
+  return new Set(["/api/runtime", "/runtime", "/api/tae", "/tae", "/api/generate", "/generate"]).has(pathname);
 }
 
 function originFor(req) {
@@ -240,6 +251,10 @@ async function handle(req, res) {
       };
       res.writeHead(204, headers);
       return res.end();
+    }
+
+    if (authRequired && requiresExecutionAuth(pathname, req.method) && !hasExecutionAuthMaterial(req)) {
+      return json(res, 401, { ok: false, status: "denied", code: "AUTH_REQUIRED", error: "Authenticated ARI session required", request_id: id }, id, {}, req);
     }
 
     if (!(await enforceRequestRate(req, res, pathname, id))) return;

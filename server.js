@@ -16,8 +16,10 @@ const SESSION_COOKIE = "ari_session";
 const DEMO_PHRASE = "TAE, enter Demo Mode";
 const CANONICAL_LINE = "This is not an app. This is me.";
 
-const geminiApiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "";
-const geminiModel = process.env.GEMINI_MODEL || process.env.GEMINI_DEFAULT_MODEL || "gemini-2.5-flash";
+const runtimeGeminiApiKey = process.env.GEMINI_RUNTIME_API_KEY || process.env.GOOGLE_API_KEY || "";
+const thothGeminiApiKey = process.env.THOTH_GEMINI_API_KEY || process.env.GEMINI_API_KEY || runtimeGeminiApiKey;
+const geminiApiKey = runtimeGeminiApiKey;
+const geminiModel = process.env.GEMINI_MODEL || process.env.GEMINI_DEFAULT_MODEL || (runtimeGeminiApiKey ? "gemini-3.6-flash" : "gemini-2.5-flash");
 const vertexProject = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCP_PROJECT || process.env.VERTEX_PROJECT || "689058655022";
 const vertexLocation = process.env.VERTEX_LOCATION || process.env.GOOGLE_CLOUD_LOCATION || "global";
 const mercuryRuntimeUrl = (process.env.MERCURY_RUNTIME_URL || "https://agentic-mercury-runtime-689058655022.us-west1.run.app").replace(/\/$/, "");
@@ -510,7 +512,7 @@ async function stripeWebhookHandler(req, res, next) {
 
 app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), stripeWebhookHandler);
 app.post("/stripe/webhook", express.raw({ type: "application/json" }), stripeWebhookHandler);
-installThothVoiceRoutes(app, { apiKey: geminiApiKey, authorize: requireProviderAccess });
+installThothVoiceRoutes(app, { apiKey: thothGeminiApiKey, authorize: requireProviderAccess });
 app.use(express.json({ limit: "10mb" }));
 
 async function mercuryRequest(path, { method = "GET", body, requestId = crypto.randomUUID(), timeout = 10000 } = {}) {
@@ -771,7 +773,7 @@ api.get("/health", (_req, res) => {
       supabase_configured: supabaseConfigured,
       stripe_configured: stripeConfigured,
       billing_configured: billingConfigured,
-      ...thothVoiceReadiness(geminiApiKey),
+      ...thothVoiceReadiness(thothGeminiApiKey),
     }),
   );
 });
@@ -802,7 +804,7 @@ api.get("/ready", async (_req, res) => {
       supabase_configured: supabaseConfigured,
       stripe_configured: stripeConfigured,
       billing_configured: billingConfigured,
-      ...thothVoiceReadiness(geminiApiKey),
+      ...thothVoiceReadiness(thothGeminiApiKey),
       mercury_runtime_ready: runtimeReady,
       mercury_runtime: mercuryRuntimeUrl,
     }),
