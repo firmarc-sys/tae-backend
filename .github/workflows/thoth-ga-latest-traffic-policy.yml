@@ -1,0 +1,107 @@
+name: THOTH GA Latest Traffic Policy
+
+on:
+  push:
+    branches:
+      - thoth/ga-live-diagnostics
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: project-7e6f2720-0291-4c91-8c3
+  GCP_PROJECT_NUMBER: '689058655022'
+  GCP_REGION: us-west1
+  CLOUD_RUN_SERVICE: ari
+  SOURCE_REVISION: ari-00107-h8w
+
+jobs:
+  establish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: firmarc-sys/tae-backend
+          ref: main
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/${{ env.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github/providers/github
+          service_account: github-actions@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+      - name: Create fresh latest revision from proven image
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE="$(gcloud run revisions describe "$SOURCE_REVISION" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format='value(spec.containers[0].image)')"
+          test -n "$IMAGE"
+          gcloud run services update "$CLOUD_RUN_SERVICE" \
+            --project="$GCP_PROJECT_ID" \
+            --region="$GCP_REGION" \
+            --image="$IMAGE" \
+            --no-traffic \
+            --quiet >/dev/null
+          LATEST="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format='value(status.latestCreatedRevisionName)')"
+          test -n "$LATEST"
+          printf 'LATEST_CANDIDATE=%s\n' "$LATEST" >> "$GITHUB_ENV"
+          echo "Created fresh proven latest candidate: $LATEST"
+      - name: Verify candidate is ready with required secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 30); do
+            ready="$(gcloud run revisions describe "$LATEST_CANDIDATE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format='value(status.conditions[0].status)' 2>/dev/null || true)"
+            [ "$ready" = True ] && break
+            sleep 2
+          done
+          gcloud run revisions describe "$LATEST_CANDIDATE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json > candidate.json
+          python3 - <<'PY'
+          import json
+          j=json.load(open('candidate.json'))
+          c=(j.get('spec',{}).get('containers') or [{}])[0]
+          refs={}
+          for item in c.get('env') or []:
+              ref=(item.get('valueFrom') or {}).get('secretKeyRef') or (item.get('valueSource') or {}).get('secretKeyRef') or {}
+              if ref: refs[item.get('name')]=ref.get('name') or ref.get('secret')
+          required={'ARI_SESSION_SECRET','NEON_DATABASE_URL','STRIPE_SECRET_KEY','STRIPE_WEBHOOK_SECRET','GEMINI_API_KEY'}
+          if not required.issubset(refs): raise SystemExit('Candidate missing required secret refs')
+          print('PASS fresh latest candidate is ready and vaulted')
+          PY
+      - name: Set persistent 100 percent latest-revision policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services update-traffic "$CLOUD_RUN_SERVICE" \
+            --project="$GCP_PROJECT_ID" \
+            --region="$GCP_REGION" \
+            --to-latest \
+            --quiet
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json > service.json
+          python3 - <<'PY'
+          import json
+          j=json.load(open('service.json'))
+          traffic=j.get('status',{}).get('traffic') or []
+          if not any(t.get('latestRevision') is True and int(t.get('percent') or 0)==100 for t in traffic):
+              raise SystemExit('Service is not configured for 100 percent latest revision traffic')
+          print('PASS persistent latest-revision traffic policy is active')
+          PY
+      - name: Prove public runtime after latest policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARI="https://ari-${GCP_PROJECT_NUMBER}.${GCP_REGION}.run.app"
+          code="$(curl -sS -o anon.json -w '%{http_code}' -H 'content-type: application/json' -d '{"intent":"deny anonymous execution","capability":"thoth","module":"mercury","request_id":"ga-latest-policy-anon"}' "$ARI/api/runtime")"
+          test "$code" = 401
+          code="$(curl -sS -c cookies.txt -o guest.json -w '%{http_code}' -H 'content-type: application/json' -d '{}' "$ARI/api/identity/guest")"
+          test "$code" = 201
+          code="$(curl -sS -b cookies.txt -o tae.json -w '%{http_code}' --max-time 90 -H 'content-type: application/json' -d '{"prompt":"Confirm Jahorin TAE production execution in one concise sentence.","request_id":"ga-latest-policy-tae","source_surface":"ga-release","capability":"thoth","machine":"thoth"}' "$ARI/api/tae")"
+          test "$code" = 200
+          node -e "const j=require('./tae.json'); const t=String(j?.reply?.text||j?.result?.text||j?.output||'').trim(); const p=String(j?.provider?.name||j?.result?.provider||''); if(!(t&&p==='google-vertex-ai')) process.exit(1)"
+          code="$(curl -sS -b cookies.txt -o voice.json -w '%{http_code}' --max-time 30 -H 'content-type: application/json' -d '{"mode":"live","intelligence":"THOTH"}' "$ARI/api/voice/token")"
+          test "$code" = 200
+          node -e "const j=require('./voice.json'); if(!(j.ok===true&&j.intelligence==='THOTH'&&j.model==='gemini-3.5-transcribe-live'&&typeof j.token==='string'&&j.token.length>10)) process.exit(1)"
+          echo 'PASS latest-policy public runtime: auth, Vertex and THOTH'
