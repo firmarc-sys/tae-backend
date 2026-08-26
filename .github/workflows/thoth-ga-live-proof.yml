@@ -8,12 +8,38 @@ on:
 
 permissions:
   contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: project-7e6f2720-0291-4c91-8c3
+  GCP_PROJECT_NUMBER: '689058655022'
 
 jobs:
   prove:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/${{ env.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github/providers/github
+          service_account: github-actions@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+      - name: Inspect available Gemini secret names
+        shell: bash
+        run: |
+          set -euo pipefail
+          names="$(gcloud secrets list --project="$GCP_PROJECT_ID" --format='value(name)' 2>/dev/null || true)"
+          matches="$(printf '%s\n' "$names" | grep -Ei 'gemini|google.*api|generative|ai.*key' || true)"
+          if [ -n "$matches" ]; then
+            echo 'Candidate existing Secret Manager entries:'
+            printf '%s\n' "$matches"
+          else
+            echo 'No Gemini/API-key candidate exists in Secret Manager.'
+          fi
       - name: Prove live THOTH voice token path
         shell: bash
         run: |
