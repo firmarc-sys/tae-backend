@@ -2,202 +2,91 @@ name: Jahorin GA End-to-End
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/jahorin-ga-e2e.yml'
   workflow_run:
     workflows: ['Deploy ARI to Cloud Run']
     types: [completed]
 
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 
 concurrency:
   group: jahorin-ga-e2e
   cancel-in-progress: false
 
 env:
-  GCP_PROJECT_ID: project-7e6f2720-0291-4c91-8c3
-  GCP_PROJECT_NUMBER: '689058655022'
-  GCP_REGION: us-west1
-  CLOUD_RUN_SERVICE: ari
+  ARI: https://ari-689058655022.us-west1.run.app
 
 jobs:
   ga-e2e:
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - name: Checkout canonical ARI source
+      - name: Checkout canonical backend
         uses: actions/checkout@v4
 
-      - name: Authenticate to Google Cloud
-        id: auth
-        uses: google-github-actions/auth@v2
+      - name: Set up Node
+        uses: actions/setup-node@v4
         with:
-          workload_identity_provider: projects/${{ env.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github/providers/github
-          service_account: github-actions@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com
+          node-version: 22
+          cache: npm
 
-      - name: Set up Cloud SDK
-        uses: google-github-actions/setup-gcloud@v2
-        with:
-          project_id: ${{ env.GCP_PROJECT_ID }}
+      - name: Clean install
+        run: npm ci
 
-      - name: Resolve ARI release authority
+      - name: Prove public production chain without production signing secrets
         shell: bash
         run: |
           set -euo pipefail
-          service_json="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json)"
-          session_secret="$(printf '%s' "$service_json" | python3 -c '
-          import json,sys
-          obj=json.load(sys.stdin)
-          def walk(v):
-              if isinstance(v,dict):
-                  if v.get("name")=="ARI_SESSION_SECRET" and isinstance(v.get("value"),str) and v.get("value"):
-                      return v["value"]
-                  for child in v.values():
-                      found=walk(child)
-                      if found: return found
-              elif isinstance(v,list):
-                  for child in v:
-                      found=walk(child)
-                      if found: return found
-              return ""
-          print(walk(obj))
-          ')"
-          test -n "$session_secret" || { echo 'ARI_SESSION_SECRET could not be resolved from the live service.' >&2; exit 1; }
-          echo "::add-mask::$session_secret"
-          printf 'ARI_SESSION_SECRET=%s\n' "$session_secret" >> "$GITHUB_ENV"
-          revision="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format='value(status.latestReadyRevisionName)')"
-          test -n "$revision"
-          printf 'CLOUD_RUN_REVISION=%s\n' "$revision" >> "$GITHUB_ENV"
-
-      - name: Prove GA production chain
-        shell: bash
-        run: |
-          set -euo pipefail
-          ARI="https://ari-${GCP_PROJECT_NUMBER}.${GCP_REGION}.run.app"
-
-          ready_code="$(curl -sS --connect-timeout 5 --max-time 20 -o /tmp/ready.json -w '%{http_code}' "$ARI/api/ready")"
-          test "$ready_code" = 200
-          node -e "const j=require('/tmp/ready.json'); if(!(j.ok===true&&j.provider_configured===true&&j.mercury_runtime_ready===true&&j.auth_required===true)) process.exit(1)"
+          code="$(curl -sS -o /tmp/ready.json -w '%{http_code}' --connect-timeout 5 --max-time 20 "$ARI/api/ready")"
+          test "$code" = 200
+          node -e "const j=require('/tmp/ready.json'); if(!(j.ok===true&&j.auth_required===true&&j.provider_configured===true&&j.mercury_runtime_ready===true&&j.neon_ready===true)) process.exit(1)"
           echo 'PASS readiness'
 
-          OWNER_COOKIE="$(node - <<'NODE'
-          const crypto=require('crypto');
-          const gid='399152573423';
-          const expires=Math.floor(Date.now()/1000)+900;
-          const sig=crypto.createHmac('sha256', process.env.ARI_SESSION_SECRET).update(`${gid}.${expires}`).digest('hex');
-          process.stdout.write(`ari_session=${gid}.${expires}.${sig}`);
-          NODE
-          )"
-          echo 'PASS release probe owner session signed from live ARI authority'
+          code="$(curl -sS -c /tmp/cookies -o /tmp/guest.json -w '%{http_code}' -H 'content-type: application/json' -d '{}' "$ARI/api/identity/guest")"
+          test "$code" = 201
+          node -e "const j=require('/tmp/guest.json'); if(!(j.authenticated===true&&/^\\d{12}$/.test(String(j.gid||'')))) process.exit(1)"
+          echo 'PASS signed GID session'
 
-          tae_code="$(curl -sS -o /tmp/tae.json -w '%{http_code}' --connect-timeout 5 --max-time 90 -H "cookie: $OWNER_COOKIE" -H 'content-type: application/json' -H 'x-request-id: jahorin-ga-tae' -d '{"prompt":"For production verification, confirm TAE is coordinating this request and state the immediate next action in one sentence.","request_id":"jahorin-ga-tae"}' "$ARI/api/tae")"
-          test "$tae_code" = 200 || { cat /tmp/tae.json >&2; exit 1; }
-          node -e "const j=require('/tmp/tae.json'); if(!(j.ok===true&&String(j?.reply?.text||'').trim()&&['google-vertex-ai','google-gemini-api'].includes(j?.provider?.name))) process.exit(1)"
-          echo 'PASS TAE executed through live Google provider'
+          code="$(curl -sS -b /tmp/cookies -o /tmp/identity.json -w '%{http_code}' "$ARI/api/identity")"
+          test "$code" = 200
+          GID="$(node -e "const j=require('/tmp/guest.json'); process.stdout.write(String(j.gid))")" node -e "const j=require('/tmp/identity.json'); if(String(j.gid)!==process.env.GID) process.exit(1)"
+          echo 'PASS identity continuity'
 
-          prove_capability() {
-            cap="$1"
-            action="$2"
-            intent="$3"
-            out="/tmp/${cap}.json"
-            code="$(curl -sS -o "$out" -w '%{http_code}' --connect-timeout 5 --max-time 90 -H "cookie: $OWNER_COOKIE" -H 'content-type: application/json' -H "x-request-id: jahorin-ga-${cap}" -d "{\"intent\":\"${intent}\",\"capability\":\"${cap}\",\"module\":\"mercury\",\"payload\":{\"action\":\"${action}\"},\"request_id\":\"jahorin-ga-${cap}\"}" "$ARI/api/runtime")"
-            test "$code" = 200 || { echo "${cap} returned HTTP $code" >&2; cat "$out" >&2; exit 1; }
-            CAP="$cap" node -e "const fs=require('fs'); const cap=process.env.CAP; const j=JSON.parse(fs.readFileSync('/tmp/'+cap+'.json')); const a=j?.authorization; if(!(j?.ok!==false&&a?.result==='allow'&&a?.capability===cap&&a?.tier==='owner'&&j?.result)) process.exit(1)"
-            echo "PASS ${cap} authorized and executed"
-          }
+          code="$(curl -sS -b /tmp/cookies -o /tmp/tae.json -w '%{http_code}' --connect-timeout 5 --max-time 90 -H 'content-type: application/json' -H 'x-request-id: ga-public-thoth' -d '{"prompt":"Respond with one concise sentence confirming Jahorin TAE production execution.","request_id":"ga-public-thoth","source_surface":"ga-release","capability":"thoth","machine":"thoth"}' "$ARI/api/tae")"
+          test "$code" = 200 || { cat /tmp/tae.json >&2; exit 1; }
+          node -e "const j=require('/tmp/tae.json'); const text=String(j?.reply?.text||j?.result?.text||j?.output||'').trim(); const provider=String(j?.provider?.name||j?.result?.provider||''); if(!(text&&['google-vertex-ai','google-gemini-api'].includes(provider))) process.exit(1)"
+          echo 'PASS TAE through live Google provider'
 
-          prove_capability interweb search 'Search the interweb for the current OpenAI homepage and return the execution result.'
-          prove_capability augment generate 'Create a short Syncori audio concept for a three-beat Mercury wake motif.'
-          prove_capability code generate 'Generate a tiny JavaScript function that returns the string JAHORIN READY.'
-          prove_capability scribe write 'Write one concise sentence describing Jahorin Trismegistus as System Intelligence as a Service.'
-          prove_capability optics analyze 'Analyze the visual intention of a reflective liquid Mercury interface in one sentence.'
+          code="$(curl -sS -b /tmp/cookies -o /tmp/entitlement-deny.json -w '%{http_code}' -H 'content-type: application/json' -d '{"intent":"Generate a protected video.","capability":"optics","module":"mercury","payload":{"action":"video_generate"},"request_id":"ga-public-deny"}' "$ARI/api/runtime")"
+          test "$code" = 403
+          node -e "const j=require('/tmp/entitlement-deny.json'); if(!(j.code==='ENTITLEMENT_REQUIRED'&&j?.authorization?.result==='deny')) process.exit(1)"
+          echo 'PASS entitlement denial before provider execution'
 
-          guest_code="$(curl -sS -c /tmp/guest-cookies -o /tmp/guest.json -w '%{http_code}' -H 'content-type: application/json' -d '{}' "$ARI/api/identity/guest")"
-          test "$guest_code" = 201
-          node -e "const j=require('/tmp/guest.json'); if(!(j.authenticated===true&&/^\d{12}$/.test(String(j.gid||'')))) process.exit(1)"
+          code="$(curl -sS -b /tmp/cookies -o /tmp/twin.json -w '%{http_code}' "$ARI/api/twin")"
+          test "$code" = 200
+          node -e "const j=require('/tmp/twin.json'); if(!(j.ok===true&&j.persistence==='neon'&&j.cloud_sync===true)) process.exit(1)"
+          echo 'PASS Twin / Neon continuity'
 
-          trial_code="$(curl -sS -b /tmp/guest-cookies -o /tmp/trial-scribe.json -w '%{http_code}' --connect-timeout 5 --max-time 90 -H 'content-type: application/json' -H 'x-request-id: jahorin-ga-trial-scribe' -d '{"intent":"Write the words trial subscriber verified.","capability":"scribe","module":"mercury","payload":{"action":"write"},"request_id":"jahorin-ga-trial-scribe"}' "$ARI/api/runtime")"
-          test "$trial_code" = 200 || { cat /tmp/trial-scribe.json >&2; exit 1; }
-          node -e "const j=require('/tmp/trial-scribe.json'); const a=j?.authorization; if(!(a?.result==='allow'&&a?.tier==='trial'&&a?.capability==='scribe'&&a?.operation==='write')) process.exit(1)"
-          echo 'PASS external trial subscriber allowed entitled Scribe operation'
+          ARI="$ARI" node scripts/prove-device-fabric.mjs
+          echo 'PASS cryptographic device lifecycle, GID isolation and replay protection'
 
-          deny_code="$(curl -sS -b /tmp/guest-cookies -o /tmp/trial-deny.json -w '%{http_code}' -H 'content-type: application/json' -H 'x-request-id: jahorin-ga-trial-deny' -d '{"intent":"Generate a video that a trial subscriber is not entitled to generate.","capability":"optics","module":"mercury","payload":{"action":"video_generate"},"request_id":"jahorin-ga-trial-deny"}' "$ARI/api/runtime")"
-          test "$deny_code" = 403 || { cat /tmp/trial-deny.json >&2; exit 1; }
-          node -e "const j=require('/tmp/trial-deny.json'); if(!(j?.code==='ENTITLEMENT_REQUIRED'&&j?.authorization?.result==='deny')) process.exit(1)"
-          echo 'PASS external trial subscriber denied non-entitled operation before provider'
-
-          twin_code="$(curl -sS -b /tmp/guest-cookies -o /tmp/twin.json -w '%{http_code}' "$ARI/api/twin")"
-          test "$twin_code" = 200 || { cat /tmp/twin.json >&2; exit 1; }
-          node -e "const j=require('/tmp/twin.json'); if(!(j?.ok===true&&j?.persistence==='neon'&&j?.cloud_sync===true)) process.exit(1)"
-          echo 'PASS external subscriber Twin persisted in Neon'
-
-          node - <<'NODE'
-          const fs=require('fs');
-          const read=(name)=>JSON.parse(fs.readFileSync(`/tmp/${name}.json`));
-          const summarize=(name)=>{
-            const j=read(name);
-            return {
-              authorization:j?.authorization || null,
-              manifest_capability:j?.capability || j?.manifest?.capability || null,
-              page:j?.page || j?.manifest?.page || null,
-              provider:j?.provider?.name || j?.result?.provider || null,
-              has_text:Boolean(String(j?.result?.text||j?.output||'').trim()),
-              execution:j?.result?.execution || j?.result?.accepted || null,
-              result_present:Boolean(j?.result)
-            };
-          };
-          const tae=read('tae');
-          const guest=read('guest');
-          const trial=read('trial-scribe');
-          const denied=read('trial-deny');
-          const proof={
-            ok:true,
-            verified_at:new Date().toISOString(),
-            service:'ARI',
-            runtime:'Mercury',
-            cloud_run_revision:process.env.CLOUD_RUN_REVISION,
-            tae:{
-              verified:Boolean(String(tae?.reply?.text||'').trim()),
-              provider:tae?.provider?.name || null,
-              has_orchestration:Boolean(tae?.orchestration),
-              has_render_state:Boolean(tae?.render_state)
-            },
-            capabilities:{
-              interweb:summarize('interweb'),
-              augment:summarize('augment'),
-              code:summarize('code'),
-              scribe:summarize('scribe'),
-              optics:summarize('optics')
-            },
-            external_trial_flow:{
-              gid_verified:/^\d{12}$/.test(String(guest?.gid||'')),
-              entitled_operation_allowed:trial?.authorization?.result==='allow',
-              tier:trial?.authorization?.tier || null,
-              non_entitled_operation_denied:denied?.authorization?.result==='deny',
-              denial_code:denied?.code || null,
-              twin_neon_persistence:true
-            },
-            ga_blocker_note:'Billing is not asserted by this proof. GA still requires a verified live Stripe subscription lifecycle tied to Neon tier state.'
-          };
-          fs.writeFileSync('JAHORIN_GA_E2E_PROOF.json',JSON.stringify(proof,null,2)+'\n');
-          NODE
-          cat JAHORIN_GA_E2E_PROOF.json
-
-      - name: Record GA evidence
+      - name: Enforce GA evidence gate
         shell: bash
         run: |
           set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add JAHORIN_GA_E2E_PROOF.json
-          if git diff --cached --quiet; then
-            echo 'GA evidence unchanged.'
-            exit 0
-          fi
-          git commit -m "THOTH: record Jahorin GA end-to-end evidence"
-          git pull --rebase origin main
-          git push origin HEAD:main
+          test -f GA_RELEASE_EVIDENCE.json || { echo 'GA_RELEASE_EVIDENCE.json has not been recorded by the Cloud Run release.' >&2; exit 1; }
+          node - <<'NODE'
+          const j=require('./GA_RELEASE_EVIDENCE.json');
+          const required=[
+            'backend_clean_install','secret_manager','session_auth','gid','tae_provider_execution','neon_persistence',
+            'cors_hardened','security_headers_hardened','distributed_rate_limit','device_enrollment','device_isolation',
+            'device_revocation','device_grants','replay_protection','bad_signature_rejected','stripe_lifecycle'
+          ];
+          const failed=required.filter((key)=>j?.checks?.[key]!==true);
+          if(failed.length){
+            console.error(`GA BLOCKED: ${failed.join(', ')} not verified true.`);
+            process.exit(1);
+          }
+          console.log('PASS all machine-readable GA gates are true');
+          NODE
