@@ -1,0 +1,95 @@
+name: THOTH GA Stripe Credential Inventory
+
+on:
+  push:
+    branches:
+      - thoth/ga-stripe-proof
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: project-7e6f2720-0291-4c91-8c3
+  GCP_PROJECT_NUMBER: '689058655022'
+
+jobs:
+  inventory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/${{ env.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github/providers/github
+          service_account: github-actions@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+      - name: Inventory Stripe secret candidates without exposing values
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          mapfile -t names < <(gcloud secrets list --project="$GCP_PROJECT_ID" --format='value(name)' | grep -Ei 'stripe|billing|payment' || true)
+          echo "stripe_candidate_count=${#names[@]}"
+          if [ "${#names[@]}" -eq 0 ]; then
+            echo 'No Stripe/billing/payment Secret Manager candidates exist.'
+            exit 0
+          fi
+          valid_test=''
+          valid_live=''
+          for name in "${names[@]}"; do
+            tmp="/tmp/secret-$RANDOM"
+            if ! gcloud secrets versions access latest --secret="$name" --project="$GCP_PROJECT_ID" > "$tmp" 2>/dev/null; then
+              echo "candidate=$name readable=false"
+              continue
+            fi
+            python3 - "$name" "$tmp" <<'PY'
+          import sys,json,re
+          name,path=sys.argv[1],sys.argv[2]
+          raw=open(path).read().strip()
+          candidate=raw
+          wrapper='opaque'
+          if raw.startswith('{'):
+              try:
+                  obj=json.loads(raw); wrapper='json'
+                  for k in ('STRIPE_SECRET_KEY','stripe_secret_key','secret_key','api_key','key'):
+                      if isinstance(obj.get(k),str) and obj[k].strip(): candidate=obj[k].strip(); wrapper=f'json:{k}'; break
+              except Exception: wrapper='malformed_json'
+          elif raw.startswith('STRIPE_SECRET_KEY='):
+              candidate=raw.split('=',1)[1].strip(); wrapper='env_assignment'
+          elif raw.lower().startswith('bearer '): candidate=raw[7:].strip(); wrapper='bearer'
+          elif len(raw)>1 and raw[0]==raw[-1] and raw[0] in "\"'": candidate=raw[1:-1].strip(); wrapper='quoted'
+          if candidate.startswith(('sk_test_','rk_test_')): cls='secret_test'
+          elif candidate.startswith(('sk_live_','rk_live_')): cls='secret_live'
+          elif candidate.startswith(('pk_test_','pk_live_')): cls='publishable'
+          elif candidate.startswith('whsec_'): cls='webhook_secret'
+          else: cls='unknown'
+          open(path+'.normalized','w').write(candidate)
+          print(f'candidate={name} wrapper={wrapper} class={cls} length={len(candidate)}')
+          PY
+            mv "$tmp.normalized" "$tmp.norm"
+            key="$(cat "$tmp.norm")"
+            echo "::add-mask::$key"
+            class="$(python3 - "$tmp.norm" <<'PY'
+          import sys
+          k=open(sys.argv[1]).read().strip()
+          if k.startswith(('sk_test_','rk_test_')): print('test')
+          elif k.startswith(('sk_live_','rk_live_')): print('live')
+          else: print('other')
+          PY
+            )"
+            if [ "$class" = test ] || [ "$class" = live ]; then
+              code="$(curl -sS --max-time 20 -o "$tmp.response" -w '%{http_code}' -u "$key:" 'https://api.stripe.com/v1/events?limit=1' || true)"
+              echo "candidate=$name stripe_api_http=$code"
+              if [ "$code" = 200 ]; then
+                if [ "$class" = test ]; then valid_test="$name"; else valid_live="$name"; fi
+              fi
+            fi
+            rm -f "$tmp" "$tmp.norm" "$tmp.response"
+          done
+          echo "valid_test_candidate=${valid_test:-none}"
+          echo "valid_live_candidate=${valid_live:-none}"
