@@ -1,0 +1,65 @@
+name: THOTH GA Live Diagnostics
+
+on:
+  push:
+    branches:
+      - thoth/ga-live-diagnostics
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Diagnose hardened ARI assertions without mutation
+        shell: bash
+        run: |
+          set -u
+          ARI='https://ari-689058655022.us-west1.run.app'
+          fail=0
+          check() { if "$@"; then echo "PASS $*"; else echo "FAIL $*"; fail=1; fi; }
+
+          code="$(curl -sS --connect-timeout 5 --max-time 15 -o ready.json -w '%{http_code}' "$ARI/api/ready?ga-diagnostic=$(date +%s)" || true)"
+          echo "ready_http=$code"
+          if [ "$code" = 200 ]; then
+            node - <<'NODE' || fail=1
+          const j=require('./ready.json');
+          const fields=['ok','auth_required','auth_configured','guest_auth_configured','provider_configured','mercury_runtime_ready','neon_ready','thoth_voice_configured'];
+          console.log(JSON.stringify(Object.fromEntries(fields.map(k=>[k,j[k]])),null,2));
+          for (const k of ['ok','auth_required','auth_configured','guest_auth_configured','provider_configured','mercury_runtime_ready','neon_ready']) if (j[k]!==true) process.exitCode=1;
+          NODE
+          else fail=1; fi
+
+          curl -sS -D headers.txt -o health.json "$ARI/api/health" >/dev/null || fail=1
+          for pattern in \
+            '^strict-transport-security: max-age=31536000' \
+            '^x-content-type-options: nosniff' \
+            '^permissions-policy:' \
+            "^content-security-policy: .*frame-ancestors 'none'"; do
+            if grep -qi "$pattern" headers.txt; then echo "PASS header $pattern"; else echo "FAIL header $pattern"; fail=1; fi
+          done
+
+          code="$(curl -sS -o bad-origin.json -w '%{http_code}' -H 'Origin: https://not-authorized.example' "$ARI/api/health" || true)"; echo "bad_origin_http=$code"; [ "$code" = 403 ] || fail=1
+          code="$(curl -sS -D good-origin.headers -o good-origin.json -w '%{http_code}' -H 'Origin: https://siaas.space' "$ARI/api/health" || true)"; echo "good_origin_http=$code"; [ "$code" = 200 ] || fail=1
+          grep -qi '^access-control-allow-origin: https://siaas.space' good-origin.headers && echo 'PASS good-origin CORS' || { echo 'FAIL good-origin CORS'; fail=1; }
+
+          code="$(curl -sS -o anon.json -w '%{http_code}' -H 'content-type: application/json' -d '{"intent":"deny anonymous execution","capability":"thoth","module":"mercury","request_id":"ga-diagnostic-anon"}' "$ARI/api/runtime" || true)"; echo "anonymous_runtime_http=$code"; [ "$code" = 401 ] || fail=1
+
+          code="$(curl -sS -c cookies.txt -o guest.json -w '%{http_code}' -H 'content-type: application/json' -d '{}' "$ARI/api/identity/guest" || true)"; echo "guest_http=$code"; [ "$code" = 201 ] || fail=1
+          node -e "const j=require('./guest.json'); console.log(JSON.stringify({authenticated:j.authenticated,gid_shape:/^\\d{12}$/.test(String(j.gid||''))})); if(!(j.authenticated===true&&/^\\d{12}$/.test(String(j.gid||'')))) process.exit(1)" || fail=1
+
+          code="$(curl -sS -b cookies.txt -o tae.json -w '%{http_code}' --connect-timeout 5 --max-time 90 -H 'content-type: application/json' -H 'x-request-id: ga-diagnostic-tae' -d '{"prompt":"Confirm Jahorin TAE production execution in one concise sentence.","request_id":"ga-diagnostic-tae","source_surface":"ga-release","capability":"thoth","machine":"thoth"}' "$ARI/api/tae" || true)"; echo "tae_http=$code"
+          if [ "$code" = 200 ]; then
+            node - <<'NODE' || fail=1
+          const j=require('./tae.json'); const t=String(j?.reply?.text||j?.result?.text||j?.output||'').trim(); const p=String(j?.provider?.name||j?.result?.provider||''); console.log(JSON.stringify({has_text:Boolean(t),provider:p})); if(!(t&&p==='google-vertex-ai')) process.exit(1);
+          NODE
+          else cat tae.json; fail=1; fi
+
+          code="$(curl -sS -b cookies.txt -o twin.json -w '%{http_code}' "$ARI/api/twin" || true)"; echo "twin_http=$code"
+          if [ "$code" = 200 ]; then node -e "const j=require('./twin.json'); console.log(JSON.stringify({ok:j.ok,persistence:j.persistence,cloud_sync:j.cloud_sync})); if(!(j.ok===true&&j.persistence==='neon'&&j.cloud_sync===true)) process.exit(1)" || fail=1; else cat twin.json; fail=1; fi
+
+          echo "diagnostic_fail=$fail"
+          exit "$fail"
