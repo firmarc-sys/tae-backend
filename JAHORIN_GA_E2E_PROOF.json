@@ -1,9 +1,9 @@
 {
   "ok": true,
-  "verified_at": "2026-08-25T10:26:52.400Z",
+  "verified_at": "2026-08-26T22:24:28.709Z",
   "service": "ARI",
   "runtime": "Mercury",
-  "cloud_run_revision": "ari-00079-b5x",
+  "cloud_run_revision": "ari-00096-mmn",
   "tae": {
     "verified": true,
     "provider": "google-vertex-ai",
