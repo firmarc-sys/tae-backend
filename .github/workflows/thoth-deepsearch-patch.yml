@@ -103,56 +103,55 @@ jobs:
             raise SystemExit('generateWithGoogle anchor not found')
           text = text.replace(old_generate, new_generate, 1)
 
-          old_runtime = '''    const runtime = await orchestrateWithMercury(req, {
-                capability: "tae",
-                intent: prompt,
-                requestId: req.body?.request_id || req.requestId,
-                payload: req.body || {},
-              });'''
-          new_runtime = '''    const deepSearch = String(req.body?.mode || "").toLowerCase() === "deepsearch" || deepSearchRequested(prompt);
-              const runtime = await orchestrateWithMercury(req, {
-                capability: deepSearch ? "interweb" : "tae",
-                intent: prompt,
-                requestId: req.body?.request_id || req.requestId,
-                payload: req.body || {},
-              });'''
-          if old_runtime not in text:
-            raise SystemExit('TAE orchestration anchor not found')
-          text = text.replace(old_runtime, new_runtime, 1)
-
-          old_call = '''      temperature: req.body?.temperature,
-              });'''
-          new_call = '''      temperature: req.body?.temperature,
-                groundWithSearch: deepSearch,
-              });'''
           tae_start = text.index('api.post("/tae"')
           runtime_start = text.index('api.post("/runtime"', tae_start)
           tae_block = text[tae_start:runtime_start]
+
+          old_runtime = '''    const runtime = await orchestrateWithMercury(req, {
+            capability: "tae",
+            intent: prompt,
+            requestId: req.body?.request_id || req.requestId,
+            payload: req.body || {},
+          });'''
+          new_runtime = '''    const deepSearch = String(req.body?.mode || "").toLowerCase() === "deepsearch" || deepSearchRequested(prompt);
+          const runtime = await orchestrateWithMercury(req, {
+            capability: deepSearch ? "interweb" : "tae",
+            intent: prompt,
+            requestId: req.body?.request_id || req.requestId,
+            payload: req.body || {},
+          });'''
+          if old_runtime not in tae_block:
+            raise SystemExit('TAE orchestration anchor not found')
+          tae_block = tae_block.replace(old_runtime, new_runtime, 1)
+
+          old_call = '''      temperature: req.body?.temperature,
+          });'''
+          new_call = '''      temperature: req.body?.temperature,
+            groundWithSearch: deepSearch,
+          });'''
           if old_call not in tae_block:
             raise SystemExit('TAE provider call anchor not found')
           tae_block = tae_block.replace(old_call, new_call, 1)
-          text = text[:tae_start] + tae_block + text[runtime_start:]
 
-          old_reply = '''        reply: { kind: "prose", text: result.text, tokens: result.tokens },
-                provider: { name: result.provider, model: result.model },'''
+          old_reply = '        reply: { kind: "prose", text: result.text, tokens: result.tokens },'
           new_reply = '''        reply: {
-                  kind: "prose",
-                  text: result.text,
-                  tokens: result.tokens,
-                  ...(result.deepsearch ? {
-                    sources: result.deepsearch.sources,
-                    citations: result.deepsearch.citations,
-                    research_paths: result.deepsearch.research_paths,
-                    path_count: result.deepsearch.path_count,
-                    contradictions: result.deepsearch.contradictions,
-                  } : {}),
-                },
-                deepsearch: result.deepsearch,
-                provider: { name: result.provider, model: result.model },'''
-          if old_reply not in text:
+              kind: "prose",
+              text: result.text,
+              tokens: result.tokens,
+              ...(result.deepsearch ? {
+                sources: result.deepsearch.sources,
+                citations: result.deepsearch.citations,
+                research_paths: result.deepsearch.research_paths,
+                path_count: result.deepsearch.path_count,
+                contradictions: result.deepsearch.contradictions,
+              } : {}),
+            },
+            deepsearch: result.deepsearch,'''
+          if old_reply not in tae_block:
             raise SystemExit('TAE reply anchor not found')
-          text = text.replace(old_reply, new_reply, 1)
+          tae_block = tae_block.replace(old_reply, new_reply, 1)
 
+          text = text[:tae_start] + tae_block + text[runtime_start:]
           path.write_text(text)
           PY
 
