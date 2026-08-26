@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
+import express from "express";
 import { GoogleGenAI } from "@google/genai";
 
 export const THOTH_LIVE_MODEL = process.env.THOTH_TRANSCRIBE_LIVE_MODEL || "gemini-3.5-transcribe-live";
@@ -40,7 +41,7 @@ export function thothVoiceReadiness(apiKey) {
     thoth_voice_configured: Boolean(apiKey),
     thoth_live_model: THOTH_LIVE_MODEL,
     thoth_record_model: THOTH_RECORD_MODEL,
-    thoth_voice_primitive: "VOICE>THOTH>LANGUAGE>JAHORIN>INTENTION",
+    thoth_voice_primitive: "VOICE>THOTH>LANGUAGE>JAHORIN>INTENTION"
   };
 }
 
@@ -87,7 +88,7 @@ export function installThothVoiceRoutes(app, { apiKey, authorize }) {
     }
   });
 
-  app.post("/api/voice/transcribe", async (req, res, next) => {
+  app.post("/api/voice/transcribe", express.raw({ type: "audio/*", limit: "100mb" }), async (req, res, next) => {
     let tempPath = null;
     try {
       await authorize(req);
