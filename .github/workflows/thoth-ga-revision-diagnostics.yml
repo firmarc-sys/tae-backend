@@ -1,0 +1,53 @@
+name: THOTH GA Revision Diagnostics
+
+on:
+  push:
+    branches:
+      - thoth/ga-live-diagnostics
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: project-7e6f2720-0291-4c91-8c3
+  GCP_PROJECT_NUMBER: '689058655022'
+  GCP_REGION: us-west1
+  CLOUD_RUN_SERVICE: ari
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/${{ env.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github/providers/github
+          service_account: github-actions@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+      - name: Inspect live service identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json > /tmp/service.json
+          python3 - <<'PY'
+          import json
+          j=json.load(open('/tmp/service.json'))
+          status=j.get('status',{})
+          spec=j.get('spec',{})
+          template=(spec.get('template') or {})
+          containers=((template.get('spec') or {}).get('containers') or [])
+          image=(containers[0].get('image') if containers else None)
+          print('latest_created_revision='+str(status.get('latestCreatedRevisionName')))
+          print('latest_ready_revision='+str(status.get('latestReadyRevisionName')))
+          print('template_image='+str(image))
+          for t in status.get('traffic') or []:
+              print('traffic revision=%s percent=%s latest=%s' % (t.get('revisionName'),t.get('percent'),t.get('latestRevision')))
+          PY
+          echo 'recent_revisions:'
+          gcloud run revisions list --service="$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --limit=8 --sort-by='~metadata.creationTimestamp' --format='table(metadata.name,status.conditions[0].status,spec.containers[0].image,metadata.creationTimestamp)'
