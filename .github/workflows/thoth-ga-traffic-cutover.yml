@@ -1,0 +1,100 @@
+name: THOTH GA Traffic Cutover
+
+on:
+  push:
+    branches:
+      - thoth/ga-live-diagnostics
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: project-7e6f2720-0291-4c91-8c3
+  GCP_PROJECT_NUMBER: '689058655022'
+  GCP_REGION: us-west1
+  CLOUD_RUN_SERVICE: ari
+  TARGET_REVISION: ari-00107-h8w
+
+jobs:
+  cutover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: firmarc-sys/tae-backend
+          ref: main
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/${{ env.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github/providers/github
+          service_account: github-actions@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+      - name: Verify target revision identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run revisions describe "$TARGET_REVISION" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json > target.json
+          python3 - <<'PY'
+          import json
+          j=json.load(open('target.json'))
+          image=((j.get('spec',{}).get('containers') or [{}])[0]).get('image','')
+          if 'sha256:a0f55bc620c2de84ecbef9d0cb82a1d74d3455bb67186f83f8aaaed3e968660b' not in image:
+              raise SystemExit('Unexpected target image: '+image)
+          env=(j.get('spec',{}).get('containers') or [{}])[0].get('env') or []
+          refs={}
+          for item in env:
+              ref=(item.get('valueFrom') or {}).get('secretKeyRef') or (item.get('valueSource') or {}).get('secretKeyRef') or {}
+              if ref: refs[item.get('name')]=ref.get('name') or ref.get('secret')
+          required={'ARI_SESSION_SECRET','NEON_DATABASE_URL','STRIPE_SECRET_KEY','STRIPE_WEBHOOK_SECRET','GEMINI_API_KEY'}
+          if not required.issubset(refs): raise SystemExit('Target missing required secret refs')
+          print('PASS target revision image and secret bindings verified')
+          PY
+      - name: Route 100 percent production traffic
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services update-traffic "$CLOUD_RUN_SERVICE" \
+            --project="$GCP_PROJECT_ID" \
+            --region="$GCP_REGION" \
+            --to-revisions="${TARGET_REVISION}=100" \
+            --quiet
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json > service.json
+          python3 - <<'PY'
+          import json,os
+          j=json.load(open('service.json'))
+          traffic=j.get('status',{}).get('traffic') or []
+          target=os.environ['TARGET_REVISION']
+          if not any(t.get('revisionName')==target and int(t.get('percent') or 0)==100 for t in traffic):
+              raise SystemExit('Target revision is not serving 100 percent')
+          print('PASS production traffic routed to '+target)
+          PY
+      - name: Prove public hardened runtime and THOTH voice
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARI="https://ari-${GCP_PROJECT_NUMBER}.${GCP_REGION}.run.app"
+          for attempt in $(seq 1 30); do
+            code="$(curl -sS --max-time 15 -o ready.json -w '%{http_code}' "$ARI/api/ready?cutover=$attempt" || true)"
+            if [ "$code" = 200 ] && node -e "const j=require('./ready.json'); if(!(j.ok===true&&j.auth_required===true&&j.provider_configured===true&&j.neon_ready===true&&j.thoth_voice_configured===true)) process.exit(1)"; then break; fi
+            sleep 3
+          done
+          node -e "const j=require('./ready.json'); if(!(j.ok===true&&j.auth_required===true&&j.provider_configured===true&&j.neon_ready===true&&j.thoth_voice_configured===true)) process.exit(1)"
+          code="$(curl -sS -o anon.json -w '%{http_code}' -H 'content-type: application/json' -d '{"intent":"deny anonymous execution","capability":"thoth","module":"mercury","request_id":"ga-cutover-anon"}' "$ARI/api/runtime")"
+          test "$code" = 401
+          code="$(curl -sS -c cookies.txt -o guest.json -w '%{http_code}' -H 'content-type: application/json' -d '{}' "$ARI/api/identity/guest")"
+          test "$code" = 201
+          code="$(curl -sS -b cookies.txt -o tae.json -w '%{http_code}' --max-time 90 -H 'content-type: application/json' -d '{"prompt":"Confirm Jahorin TAE production execution in one concise sentence.","request_id":"ga-cutover-tae","source_surface":"ga-release","capability":"thoth","machine":"thoth"}' "$ARI/api/tae")"
+          test "$code" = 200 || { cat tae.json; exit 1; }
+          node -e "const j=require('./tae.json'); const t=String(j?.reply?.text||j?.result?.text||j?.output||'').trim(); const p=String(j?.provider?.name||j?.result?.provider||''); if(!(t&&p==='google-vertex-ai')) process.exit(1)"
+          code="$(curl -sS -b cookies.txt -o voice.json -w '%{http_code}' --max-time 30 -H 'content-type: application/json' -d '{"mode":"live","intelligence":"THOTH"}' "$ARI/api/voice/token")"
+          test "$code" = 200
+          node -e "const j=require('./voice.json'); if(!(j.ok===true&&j.intelligence==='THOTH'&&j.model==='gemini-3.5-transcribe-live'&&typeof j.token==='string'&&j.token.length>10)) process.exit(1); console.log('PASS THOTH live token issued on cutover revision')"
+          code="$(curl -sS -b cookies.txt -o twin.json -w '%{http_code}' "$ARI/api/twin")"
+          test "$code" = 200
+          node -e "const j=require('./twin.json'); if(!(j.ok===true&&j.persistence==='neon'&&j.cloud_sync===true)) process.exit(1)"
+          ARI="$ARI" node scripts/prove-device-fabric.mjs
+          echo 'PASS production cutover: auth, Vertex, THOTH, Neon, and device fabric'
