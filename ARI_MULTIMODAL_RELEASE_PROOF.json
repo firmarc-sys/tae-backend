@@ -1,6 +1,6 @@
 {
   "ok": true,
-  "verified_at": "2026-08-25T11:46:08.645Z",
+  "verified_at": "2026-08-26T14:59:52.269Z",
   "service": "ARI",
   "runtime": "Mercury",
   "auth_required": true,
@@ -20,6 +20,6 @@
     "tier": "trial",
     "operation": "analyze"
   },
-  "cloud_run_revision": "ari-00084-d68",
-  "source_sha": "e296b40d5527e684e8bb4d8d6964092c639e6818"
+  "cloud_run_revision": "ari-00093-pvw",
+  "source_sha": "b45bfa57e11de48dcaeb63abbff4e8d92c0e1a4a"
 }
