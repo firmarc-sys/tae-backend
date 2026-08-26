@@ -1,10 +1,9 @@
-FROM node:20-slim
+FROM node:22-slim
 
-# MA'AT release marker: canonical Vertex multimodal content parts
 WORKDIR /app
 
-COPY package*.json ./
-RUN npm install --omit=dev
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 
 COPY . .
 
@@ -13,4 +12,5 @@ ENV PORT=8080
 
 EXPOSE 8080
 
+USER node
 CMD ["npm", "start"]
