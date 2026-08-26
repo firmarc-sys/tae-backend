@@ -594,13 +594,67 @@ function normalizeInlineImage(payload = {}) {
   if (bytes.length > MAX_INLINE_IMAGE_BYTES) throw httpError(413, `Inline image exceeds ${MAX_INLINE_IMAGE_BYTES} byte limit`);
   return { mimeType, data: bytes.toString("base64"), bytes: bytes.length };
 }
-async function generateWithGoogle({ prompt, systemInstruction, temperature = 0.7, image = null }) {
+function deepSearchRequested(prompt = "") {
+  return /\bDEEPSEARCH MANIFESTATION IS ACTIVE\b/i.test(String(prompt || ""));
+}
+
+function groundingSourceDomain(uri = "") {
+  try { return new URL(String(uri)).hostname.replace(/^www\./, "") || null; }
+  catch { return null; }
+}
+
+function normalizeGrounding(response) {
+  const metadata = response?.candidates?.[0]?.groundingMetadata || {};
+  const researchPaths = Array.isArray(metadata.webSearchQueries)
+    ? metadata.webSearchQueries.map((value) => String(value || "").trim()).filter(Boolean)
+    : [];
+  const chunks = Array.isArray(metadata.groundingChunks) ? metadata.groundingChunks : [];
+  const seen = new Set();
+  const sources = [];
+  for (let index = 0; index < chunks.length; index += 1) {
+    const web = chunks[index]?.web || {};
+    const url = String(web.uri || "").trim();
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    sources.push({
+      id: `source-${sources.length + 1}`,
+      title: String(web.title || groundingSourceDomain(url) || `Source ${sources.length + 1}`).trim(),
+      url,
+      domain: groundingSourceDomain(url),
+      status: "grounded",
+    });
+  }
+  return {
+    research_paths: researchPaths,
+    path_count: Math.max(researchPaths.length, sources.length),
+    sources,
+    citations: sources,
+    contradictions: [],
+  };
+}
+
+async function generateWithGoogle({ prompt, systemInstruction, temperature = 0.7, image = null, groundWithSearch = false }) {
   const client = requireProvider();
   const contents = image ? [{ role: "user", parts: [{ text: prompt }, { inlineData: { mimeType: image.mimeType, data: image.data } }] }] : prompt;
-  const response = await client.models.generateContent({ model: geminiModel, contents, config: { systemInstruction, temperature: Math.max(0, Math.min(2, Number(temperature) || 0.7)), maxOutputTokens: 4096 } });
+  const deepSearch = groundWithSearch || deepSearchRequested(prompt);
+  const config = {
+    systemInstruction,
+    temperature: Math.max(0, Math.min(2, Number(temperature) || 0.7)),
+    maxOutputTokens: 4096,
+    ...(deepSearch ? { tools: [{ googleSearch: {} }] } : {}),
+  };
+  const response = await client.models.generateContent({ model: geminiModel, contents, config });
   const text = String(response.text || "").trim();
   if (!text) throw httpError(502, "Google provider returned no generated text.");
-  return { text, model: geminiModel, provider, tokens: response.usageMetadata?.totalTokenCount ?? null, usage: response.usageMetadata || null, media_input: image ? { type: "image", mime_type: image.mimeType, bytes: image.bytes } : null };
+  return {
+    text,
+    model: geminiModel,
+    provider,
+    tokens: response.usageMetadata?.totalTokenCount ?? null,
+    usage: response.usageMetadata || null,
+    media_input: image ? { type: "image", mime_type: image.mimeType, bytes: image.bytes } : null,
+    deepsearch: deepSearch ? normalizeGrounding(response) : null,
+  };
 }
 
 function inferManifest(intent = "", requestedCapability = "", context = {}) {
@@ -1106,27 +1160,40 @@ api.post("/tae", async (req, res, next) => {
         }),
       );
     }
-
-    const runtime = await orchestrateWithMercury(req, {
-      capability: "tae",
-      intent: prompt,
-      requestId: req.body?.request_id || req.requestId,
-      payload: req.body || {},
-    });
+    const deepSearch = String(req.body?.mode || "").toLowerCase() === "deepsearch" || deepSearchRequested(prompt);
+  const runtime = await orchestrateWithMercury(req, {
+    capability: deepSearch ? "interweb" : "tae",
+    intent: prompt,
+    requestId: req.body?.request_id || req.requestId,
+    payload: req.body || {},
+  });
     await requireProviderAccess(req);
     const result = await generateWithGoogle({
       prompt,
       systemInstruction:
         "You are TAE, the Timeline Augmentation and orchestration intelligence inside Agentic Mercury Time Runner. Coordinate the user request clearly and return useful production-grade results.",
       temperature: req.body?.temperature,
-    });
+    groundWithSearch: deepSearch,
+  });
 
     res.json(
       responseBase({
         request_id: req.body?.request_id || req.requestId,
         orchestration: runtime.orchestration,
         render_state: runtime.renderState,
-        reply: { kind: "prose", text: result.text, tokens: result.tokens },
+        reply: {
+    kind: "prose",
+    text: result.text,
+    tokens: result.tokens,
+    ...(result.deepsearch ? {
+      sources: result.deepsearch.sources,
+      citations: result.deepsearch.citations,
+      research_paths: result.deepsearch.research_paths,
+      path_count: result.deepsearch.path_count,
+      contradictions: result.deepsearch.contradictions,
+    } : {}),
+  },
+  deepsearch: result.deepsearch,
         provider: { name: result.provider, model: result.model },
       }),
     );
