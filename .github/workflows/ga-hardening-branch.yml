@@ -1,0 +1,39 @@
+name: THOTH GA Backend Hardening
+
+on:
+  push:
+    branches:
+      - thoth/ga-hardening-20260826
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Reproducible install
+        run: npm ci
+      - name: Syntax and gateway verification
+        run: npm run check
+      - name: Verify hardened source laws
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'node secure-gateway.js' package.json
+          grep -q 'ensureDeviceFabricSchema' secure-gateway.js
+          grep -q 'DEVICE_SIGNATURE_INVALID' device-fabric.js
+          grep -q 'REPLAY_REJECTED' device-fabric.js
+          grep -q 'api_rate_limits' device-fabric.js
+          grep -q "frame-ancestors 'none'" secure-gateway.js
+          grep -q 'strict-transport-security' secure-gateway.js
+          echo 'PASS hardened backend source gate'
