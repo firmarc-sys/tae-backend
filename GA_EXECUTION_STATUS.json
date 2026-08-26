@@ -1,0 +1,45 @@
+{
+  "release": "blocked-before-ga",
+  "recorded_at": "2026-08-26T22:58:30Z",
+  "source": {
+    "backend_hardening_on_main": true,
+    "frontend_hardening_pr": "firmarc-sys/trismegistus#9",
+    "frontend_deployed": false
+  },
+  "current_live_service": {
+    "healthy": true,
+    "authenticated_runtime": true,
+    "signed_guest_gid": true,
+    "multimodal_google_provider": true,
+    "neon_continuity": true,
+    "hardening_revision_deployed": false
+  },
+  "hardening": {
+    "device_fabric_source_complete": true,
+    "device_fabric_live_verified": false,
+    "secret_manager_migrated": false,
+    "production_cors_hardening_deployed": false,
+    "production_security_header_hardening_deployed": false,
+    "distributed_rate_limit_deployed": false
+  },
+  "blockers": [
+    {
+      "id": "GCP_SECRET_MANAGER_IAM",
+      "status": "BLOCKED",
+      "principal": "github-actions deployment service account",
+      "observed_permissions_missing": [
+        "serviceusage.services.enable",
+        "secretmanager.secrets.list"
+      ],
+      "impact": "CI cannot migrate Cloud Run runtime secrets into Google Secret Manager, so the hardened Cloud Run revision is intentionally not deployed.",
+      "remaining_action": "Grant the deployment identity only the Secret Manager permissions required to create/read/update the named ARI secrets, ensure Secret Manager API is enabled by an authorized cloud administrator, and grant the Cloud Run service identity secretAccessor on those named secrets. Then rerun Deploy ARI to Cloud Run."
+    },
+    {
+      "id": "REAL_STRIPE_LIFECYCLE",
+      "status": "BLOCKED",
+      "impact": "The production webhook contract and server-side Stripe-to-Neon logic exist, but a real Stripe Customer/Subscription lifecycle has not been executed and verified in this hardening pass.",
+      "remaining_action": "Connect/authorize a Stripe account context that can safely create and transition a test subscription, then execute activation, upgrade, downgrade, past_due/payment failure, renewal, cancellation, trial expiration and reactivation through real Stripe objects and verify resulting Neon entitlement state."
+    }
+  ],
+  "ga_declared": false
+}
