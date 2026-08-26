@@ -13,6 +13,8 @@ permissions:
 env:
   GCP_PROJECT_ID: project-7e6f2720-0291-4c91-8c3
   GCP_PROJECT_NUMBER: '689058655022'
+  GCP_REGION: us-west1
+  CLOUD_RUN_SERVICE: ari
 
 jobs:
   prove-mode:
@@ -28,12 +30,29 @@ jobs:
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ env.GCP_PROJECT_ID }}
-      - name: Prove Stripe secret mode without exposing key
+      - name: Resolve mounted Stripe secret and prove mode without exposing key
         shell: bash
         run: |
           set -euo pipefail
           umask 077
-          gcloud secrets versions access latest --secret=ari-stripe-secret-key --project="$GCP_PROJECT_ID" > /tmp/stripe-key
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json > /tmp/service.json
+          secret_ref="$(python3 - <<'PY'
+          import json
+          obj=json.load(open('/tmp/service.json'))
+          for c in obj.get('spec',{}).get('template',{}).get('spec',{}).get('containers',[]):
+              for item in c.get('env',[]) or []:
+                  if item.get('name')!='STRIPE_SECRET_KEY': continue
+                  ref=(item.get('valueFrom') or {}).get('secretKeyRef') or (item.get('valueSource') or {}).get('secretKeyRef') or {}
+                  secret=ref.get('name') or ref.get('secret') or ''
+                  if secret:
+                      print(secret)
+                      raise SystemExit
+          print('')
+          PY
+          )"
+          test -n "$secret_ref"
+          echo "stripe_secret_reference=$secret_ref"
+          gcloud secrets versions access latest --secret="$secret_ref" --project="$GCP_PROJECT_ID" > /tmp/stripe-key
           test -s /tmp/stripe-key
           mode="$(python3 - <<'PY'
           key=open('/tmp/stripe-key').read().strip()
@@ -43,5 +62,5 @@ jobs:
           PY
           )"
           echo "stripe_credential_mode=$mode"
-          test "$mode" = test
           rm -f /tmp/stripe-key
+          test "$mode" = test
