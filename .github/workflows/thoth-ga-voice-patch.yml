@@ -1,0 +1,104 @@
+name: THOTH GA Voice Patch
+
+on:
+  push:
+    branches:
+      - thoth/ga-voice-primitive
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: thoth/ga-voice-primitive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Patch ARI voice and quota boundaries
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+
+          p = Path('server.js')
+          s = p.read_text()
+
+          old = 'import { GoogleGenAI } from "@google/genai";'
+          new = old + '\nimport { installThothVoiceRoutes, thothVoiceReadiness } from "./thoth-voice.js";'
+          if './thoth-voice.js' not in s:
+              assert old in s
+              s = s.replace(old, new, 1)
+
+          old = '''app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), stripeWebhookHandler);\napp.post("/stripe/webhook", express.raw({ type: "application/json" }), stripeWebhookHandler);\napp.use(express.json({ limit: "10mb" }));'''
+          new = '''app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), stripeWebhookHandler);\napp.post("/stripe/webhook", express.raw({ type: "application/json" }), stripeWebhookHandler);\ninstallThothVoiceRoutes(app, { apiKey: geminiApiKey, authorize: requireProviderAccess });\napp.use(express.json({ limit: "10mb" }));'''
+          if 'installThothVoiceRoutes(app' not in s:
+              assert old in s
+              s = s.replace(old, new, 1)
+
+          marker = 'async function generateWithGoogle({ prompt, systemInstruction, temperature = 0.7, image = null, groundWithSearch = false }) {'
+          helper = '''function providerQuotaError(error) {\n  const status = Number(error?.status || error?.response?.status || 0);\n  const code = String(error?.code || error?.error?.status || "");\n  const message = String(error?.message || error || "");\n  return status === 429 || /429|RESOURCE_EXHAUSTED|quota|rate.?limit/i.test(`${code} ${message}`);\n}\n\nfunction sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }\n\nasync function withProviderRetry(operation, attempts = 3) {\n  let lastError;\n  for (let attempt = 0; attempt < attempts; attempt += 1) {\n    try { return await operation(); }\n    catch (error) {\n      lastError = error;\n      if (!providerQuotaError(error) || attempt === attempts - 1) break;\n      const delay = Math.min(2400, 350 * (2 ** attempt)) + crypto.randomInt(50, 220);\n      await sleep(delay);\n    }\n  }\n  if (providerQuotaError(lastError)) {\n    const error = httpError(429, "Google provider quota is temporarily exhausted. Retry shortly.");\n    error.code = "PROVIDER_QUOTA_EXHAUSTED";\n    error.retryAfterMs = 2500;\n    throw error;\n  }\n  throw lastError;\n}\n\n'''
+          if 'function providerQuotaError(' not in s:
+              assert marker in s
+              s = s.replace(marker, helper + marker, 1)
+
+          old = 'const response = await client.models.generateContent({ model: geminiModel, contents, config });'
+          new = 'const response = await withProviderRetry(() => client.models.generateContent({ model: geminiModel, contents, config }));'
+          if old in s:
+              s = s.replace(old, new, 1)
+
+          health_old = '''      billing_configured: billingConfigured,\n    }),'''
+          health_new = '''      billing_configured: billingConfigured,\n      ...thothVoiceReadiness(geminiApiKey),\n    }),'''
+          if health_old in s and 'thoth_voice_primitive' not in s[s.find('api.get("/health"'):s.find('api.get("/ready"')]:
+              start = s.find('api.get("/health"')
+              end = s.find('api.get("/ready"')
+              section = s[start:end].replace(health_old, health_new, 1)
+              s = s[:start] + section + s[end:]
+
+          ready_start = s.find('api.get("/ready"')
+          ready_end = s.find('api.get("/identity"')
+          if ready_start != -1 and ready_end != -1:
+              section = s[ready_start:ready_end]
+              if 'thothVoiceReadiness' not in section:
+                  section = section.replace('      billing_configured: billingConfigured,', '      billing_configured: billingConfigured,\n      ...thothVoiceReadiness(geminiApiKey),', 1)
+                  s = s[:ready_start] + section + s[ready_end:]
+
+          old = '''  res.status(status).json({\n    ok: false,\n    error: error.message || "Unexpected ARI error",\n  });'''
+          new = '''  if (error?.retryAfterMs) res.set("retry-after", String(Math.max(1, Math.ceil(error.retryAfterMs / 1000))));\n  res.status(status).json({\n    ok: false,\n    error: error.message || "Unexpected ARI error",\n    code: error.code || (status === 429 ? "RATE_LIMITED" : "ARI_ERROR"),\n    ...(error.retryAfterMs ? { retry_after_ms: error.retryAfterMs } : {}),\n  });'''
+          if old in s:
+              s = s.replace(old, new, 1)
+
+          p.write_text(s)
+
+          package = Path('package.json')
+          data = json.loads(package.read_text())
+          data['dependencies']['@google/genai'] = '^2.18.0'
+          package.write_text(json.dumps(data, indent=2) + '\n')
+          PY
+      - name: Install updated Google GenAI SDK
+        run: npm install --package-lock-only
+      - name: Verify syntax and voice contracts
+        run: |
+          npm ci
+          node --check server.js
+          node --check thoth-voice.js
+          grep -q 'installThothVoiceRoutes' server.js
+          grep -q 'PROVIDER_QUOTA_EXHAUSTED' server.js
+          grep -q 'gemini-3.5-transcribe-live' thoth-voice.js
+          grep -q 'gemini-3.5-transcribe' thoth-voice.js
+      - name: Commit generated patch
+        shell: bash
+        run: |
+          if git diff --quiet; then exit 0; fi
+          git config user.name 'firmarc-sys'
+          git config user.email 'actions@users.noreply.github.com'
+          git add server.js package.json package-lock.json
+          git commit -m 'THOTH: wire universal voice and provider resilience'
+          git push origin HEAD:thoth/ga-voice-primitive
