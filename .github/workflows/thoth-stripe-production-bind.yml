@@ -1,0 +1,118 @@
+name: THOTH Stripe Production Bind
+
+on:
+  push:
+    branches: [thoth/stripe-ga-proof-20260826]
+    paths:
+      - '.github/workflows/thoth-stripe-production-bind.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: project-7e6f2720-0291-4c91-8c3
+  GCP_PROJECT_NUMBER: '689058655022'
+  GCP_REGION: us-west1
+  CLOUD_RUN_SERVICE: ari
+  PROVEN_REVISION: ari-00107-h8w
+  STRIPE_SECRET_NAME: STRIPE_SECRET_KEY
+  STRIPE_SECRET_VERSION: '2'
+
+jobs:
+  bind:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/${{ env.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github/providers/github
+          service_account: github-actions@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com
+
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Revalidate Stripe secret version 2 read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          state="$(gcloud secrets versions describe "$STRIPE_SECRET_VERSION" --secret="$STRIPE_SECRET_NAME" --project="$GCP_PROJECT_ID" --format='value(state)')"
+          test "$state" = ENABLED
+          key="$(gcloud secrets versions access "$STRIPE_SECRET_VERSION" --secret="$STRIPE_SECRET_NAME" --project="$GCP_PROJECT_ID")"
+          echo "::add-mask::$key"
+          code="$(curl -sS --max-time 20 -o /tmp/stripe-balance.json -w '%{http_code}' -u "${key}:" https://api.stripe.com/v1/balance)"
+          test "$code" = 200
+          python3 - <<'PY'
+          import json
+          j=json.load(open('/tmp/stripe-balance.json'))
+          if j.get('livemode') is not True: raise SystemExit('Expected live-mode Stripe credential')
+          print('PASS Stripe secret version 2 is valid live-mode credential')
+          PY
+
+      - name: Resolve proven production image
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="$(gcloud run revisions describe "$PROVEN_REVISION" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format='value(spec.containers[0].image)')"
+          test -n "$image"
+          echo "PROVEN_IMAGE=$image" >> "$GITHUB_ENV"
+          echo "proven_image=$image"
+
+      - name: Deploy proven image with Stripe secret version 2
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run deploy "$CLOUD_RUN_SERVICE" \
+            --project="$GCP_PROJECT_ID" \
+            --region="$GCP_REGION" \
+            --platform=managed \
+            --image="$PROVEN_IMAGE" \
+            --allow-unauthenticated \
+            --update-secrets="STRIPE_SECRET_KEY=${STRIPE_SECRET_NAME}:${STRIPE_SECRET_VERSION}" \
+            --quiet
+          revision="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format='value(status.latestReadyRevisionName)')"
+          test -n "$revision"
+          echo "NEW_REVISION=$revision" >> "$GITHUB_ENV"
+          echo "new_revision=$revision"
+
+      - name: Verify revision identity and Stripe binding
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run revisions describe "$NEW_REVISION" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json > /tmp/revision.json
+          python3 - <<'PY'
+          import json,os
+          j=json.load(open('/tmp/revision.json'))
+          c=(j.get('spec',{}).get('containers') or [{}])[0]
+          image=c.get('image','')
+          if image!=os.environ['PROVEN_IMAGE']:
+              raise SystemExit('Revision image differs from proven image')
+          found=False
+          for item in c.get('env') or []:
+              if item.get('name')!='STRIPE_SECRET_KEY': continue
+              ref=(item.get('valueFrom') or {}).get('secretKeyRef') or (item.get('valueSource') or {}).get('secretKeyRef') or {}
+              name=ref.get('name') or ref.get('secret') or ''
+              version=str(ref.get('key') or ref.get('version') or '')
+              if name=='STRIPE_SECRET_KEY' and version=='2': found=True
+          if not found: raise SystemExit('STRIPE_SECRET_KEY is not bound to version 2')
+          print('PASS new revision uses proven image and Stripe secret version 2')
+          PY
+
+      - name: Route production traffic and prove ARI readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services update-traffic "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --to-revisions="${NEW_REVISION}=100" --quiet
+          ARI="https://ari-${GCP_PROJECT_NUMBER}.${GCP_REGION}.run.app"
+          ready=0
+          for attempt in $(seq 1 30); do
+            code="$(curl -sS --max-time 15 -o /tmp/ready.json -w '%{http_code}' "$ARI/api/ready?stripe-bind=$attempt" || true)"
+            if [ "$code" = 200 ] && node -e "const j=require('/tmp/ready.json'); if(!(j.ok===true&&j.auth_required===true&&j.provider_configured===true&&j.neon_ready===true&&j.thoth_voice_configured===true)) process.exit(1)"; then ready=1; break; fi
+            sleep 3
+          done
+          test "$ready" = 1
+          code="$(curl -sS -o /tmp/anon.json -w '%{http_code}' -H 'content-type: application/json' -d '{"intent":"deny anonymous execution","capability":"thoth","module":"mercury","request_id":"stripe-bind-anon"}' "$ARI/api/runtime")"
+          test "$code" = 401
+          echo "PASS production ARI serves $NEW_REVISION with valid Stripe secret version 2 binding"
