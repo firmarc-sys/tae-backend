@@ -1,0 +1,50 @@
+name: THOTH GA Live Proof
+
+on:
+  push:
+    branches:
+      - thoth/ga-live-proof
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prove:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Prove live THOTH voice token path
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARI='https://ari-689058655022.us-west1.run.app'
+          curl -sS --fail --max-time 20 "$ARI/api/ready?thoth-ga-proof=$(date +%s)" -o ready.json
+          node - <<'NODE'
+          const j=require('./ready.json');
+          console.log(JSON.stringify({
+            ok:j.ok,
+            provider_configured:j.provider_configured,
+            thoth_voice_configured:j.thoth_voice_configured,
+            thoth_live_model:j.thoth_live_model,
+            thoth_record_model:j.thoth_record_model,
+            thoth_voice_primitive:j.thoth_voice_primitive
+          }, null, 2));
+          if (!(j.ok===true && j.thoth_voice_configured===true && j.thoth_live_model==='gemini-3.5-transcribe-live' && j.thoth_record_model==='gemini-3.5-transcribe')) process.exit(2);
+          NODE
+
+          code="$(curl -sS -c cookies.txt -o guest.json -w '%{http_code}' -H 'content-type: application/json' -d '{}' "$ARI/api/identity/guest")"
+          test "$code" = 201
+          node -e "const j=require('./guest.json'); if(!(j.authenticated===true&&/^\\d{12}$/.test(String(j.gid||'')))) process.exit(3)"
+
+          code="$(curl -sS -b cookies.txt -o voice.json -w '%{http_code}' --max-time 30 -H 'content-type: application/json' -d '{\"mode\":\"live\",\"intelligence\":\"THOTH\"}' "$ARI/api/voice/token")"
+          if [ "$code" != 200 ]; then
+            echo "THOTH voice token HTTP $code"
+            cat voice.json
+            exit 4
+          fi
+          node - <<'NODE'
+          const j=require('./voice.json');
+          if (!(j.ok===true && j.intelligence==='THOTH' && j.mode==='live' && j.model==='gemini-3.5-transcribe-live' && typeof j.token==='string' && j.token.length>10)) process.exit(5);
+          console.log(JSON.stringify({ok:true,intelligence:j.intelligence,mode:j.mode,model:j.model,token_present:true,expires_at:j.expires_at},null,2));
+          NODE
