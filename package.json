@@ -1,18 +1,20 @@
 {
   "name": "tae-backend",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "private": true,
   "type": "module",
   "engines": {
     "node": ">=20"
   },
   "scripts": {
-    "start": "node control-plane-gateway.js",
+    "start": "node secure-gateway.js",
+    "start:control": "node control-plane-gateway.js",
     "start:neon": "node neon-runtime-gateway.js",
     "start:manifest": "node manifest-runtime-gateway.js",
     "start:identity": "node identity-runtime-gateway.js",
     "start:inner": "node server.js",
-    "dev": "node --watch control-plane-gateway.js"
+    "check": "node --check secure-gateway.js && node --check device-fabric.js && node --check control-plane-gateway.js && node --check neon-runtime-gateway.js && node --check neon-store.js && node --check manifest-runtime-gateway.js && node --check identity-runtime-gateway.js && node --check server.js",
+    "dev": "node --watch secure-gateway.js"
   },
   "dependencies": {
     "@google/genai": "^2.18.0",
