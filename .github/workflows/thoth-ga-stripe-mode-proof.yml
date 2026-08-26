@@ -1,0 +1,47 @@
+name: THOTH GA Stripe Mode Proof
+
+on:
+  push:
+    branches:
+      - thoth/ga-stripe-proof
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: project-7e6f2720-0291-4c91-8c3
+  GCP_PROJECT_NUMBER: '689058655022'
+
+jobs:
+  prove-mode:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/${{ env.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github/providers/github
+          service_account: github-actions@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+      - name: Prove Stripe secret mode without exposing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          gcloud secrets versions access latest --secret=ari-stripe-secret-key --project="$GCP_PROJECT_ID" > /tmp/stripe-key
+          test -s /tmp/stripe-key
+          mode="$(python3 - <<'PY'
+          key=open('/tmp/stripe-key').read().strip()
+          if key.startswith('sk_test_'): print('test')
+          elif key.startswith('sk_live_'): print('live')
+          else: print('unknown')
+          PY
+          )"
+          echo "stripe_credential_mode=$mode"
+          test "$mode" = test
+          rm -f /tmp/stripe-key
