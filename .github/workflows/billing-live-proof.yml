@@ -13,33 +13,80 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 concurrency:
   group: billing-live-proof
   cancel-in-progress: true
 
+env:
+  GCP_PROJECT_ID: project-7e6f2720-0291-4c91-8c3
+  GCP_PROJECT_NUMBER: '689058655022'
+  GCP_REGION: us-west1
+  CLOUD_RUN_SERVICE: ari
+
 jobs:
   billing-live:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Checkout canonical backend
         uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/${{ env.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github/providers/github
+          service_account: github-actions@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Promote billing gateway to Cloud Run edge
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services update "$CLOUD_RUN_SERVICE" \
+            --project="$GCP_PROJECT_ID" \
+            --region="$GCP_REGION" \
+            --platform=managed \
+            --command=node \
+            --args=billing-gateway.js \
+            --quiet
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json > /tmp/service.json
+          python3 - <<'PY'
+          import json
+          obj=json.load(open('/tmp/service.json'))
+          c=(obj.get('spec',{}).get('template',{}).get('spec',{}).get('containers') or [{}])[0]
+          command=c.get('command') or []
+          args=c.get('args') or []
+          if command != ['node'] or args != ['billing-gateway.js']:
+              raise SystemExit(f'Cloud Run command mismatch command={command} args={args}')
+          print('IMAGE=', c.get('image'))
+          print('COMMAND=', command)
+          print('ARGS=', args)
+          print('REVISION=', obj.get('status',{}).get('latestReadyRevisionName'))
+          PY
 
       - name: Prove live billing catalog authority
         shell: bash
         run: |
           set -euo pipefail
-          ARI='https://ari-689058655022.us-west1.run.app'
-          code="$(curl -sS --connect-timeout 5 --max-time 30 -D /tmp/billing.headers -o /tmp/billing-catalog.json -w '%{http_code}' -H 'Origin: https://siaas.space' "$ARI/api/billing/catalog")"
-          test "$code" = 200 || { echo "Billing catalog HTTP $code" >&2; cat /tmp/billing-catalog.json >&2 || true; exit 1; }
-          grep -qi '^x-billing-authority: stripe-neon-v1' /tmp/billing.headers
+          ARI="https://ari-${GCP_PROJECT_NUMBER}.${GCP_REGION}.run.app"
+          ready=0
+          for attempt in $(seq 1 40); do
+            code="$(curl -sS --connect-timeout 5 --max-time 30 -D /tmp/billing.headers -o /tmp/billing-catalog.json -w '%{http_code}' -H 'Origin: https://siaas.space' "$ARI/api/billing/catalog?proof=$GITHUB_SHA-$attempt" || true)"
+            if [ "$code" = 200 ] && grep -qi '^x-billing-authority: stripe-neon-v1' /tmp/billing.headers; then
+              if node -e "const j=require('/tmp/billing-catalog.json'); if(!(j.ok===true&&j.authority==='Stripe + Neon'&&j.pricing_source==='stripe')) process.exit(1)"; then ready=1; break; fi
+            fi
+            sleep 5
+          done
+          test "$ready" = 1 || { echo 'Live billing authority did not become ready.' >&2; cat /tmp/billing.headers >&2 || true; cat /tmp/billing-catalog.json >&2 || true; exit 1; }
           node - <<'NODE'
           const fs = require('fs');
           const catalog = JSON.parse(fs.readFileSync('/tmp/billing-catalog.json', 'utf8'));
-          if (catalog.ok !== true) throw new Error('billing catalog ok flag is not true');
-          if (catalog.authority !== 'Stripe + Neon') throw new Error(`unexpected billing authority: ${catalog.authority}`);
-          if (catalog.pricing_source !== 'stripe') throw new Error(`unexpected pricing source: ${catalog.pricing_source}`);
           const required = ['free','personal','pro','business','enterprise'];
           const ids = Array.isArray(catalog.tiers) ? catalog.tiers.map((tier) => tier.id) : [];
           for (const tier of required) if (!ids.includes(tier)) throw new Error(`missing canonical billing tier: ${tier}`);
@@ -82,5 +129,3 @@ jobs:
           git commit -m 'THOTH: record live Stripe billing catalog proof'
           git pull --rebase origin main
           git push origin HEAD:main
-
-# proof trigger: billing authority v1
