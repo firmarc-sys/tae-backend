@@ -1,0 +1,17 @@
+{
+  "ok": true,
+  "verified_at": "2026-08-27T17:18:12.671Z",
+  "endpoint": "https://ari-689058655022.us-west1.run.app",
+  "checks": {
+    "gid_isolation": true,
+    "cryptographic_enrollment": true,
+    "enrollment_replay_rejected": true,
+    "default_deny_grants": true,
+    "explicit_grant": true,
+    "signed_device_proof": true,
+    "request_replay_rejected": true,
+    "bad_signature_rejected": true,
+    "revocation": true,
+    "revoked_device_rejected": true
+  }
+}

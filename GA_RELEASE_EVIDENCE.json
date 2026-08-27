@@ -1,0 +1,25 @@
+{
+  "release": "ga-candidate",
+  "backend_commit": "3cf50ac11b967fff9392f70bdba4913585c06ff9",
+  "cloud_run_revision": "ari-00111-csc",
+  "verified_at": "2026-08-27T17:18:12.720Z",
+  "checks": {
+    "backend_clean_install": true,
+    "secret_manager": true,
+    "session_auth": true,
+    "gid": true,
+    "tae_provider_execution": true,
+    "vertex": true,
+    "neon_persistence": true,
+    "cors_hardened": true,
+    "security_headers_hardened": true,
+    "distributed_rate_limit": true,
+    "device_enrollment": true,
+    "device_isolation": true,
+    "device_revocation": true,
+    "device_grants": true,
+    "replay_protection": true,
+    "bad_signature_rejected": true,
+    "stripe_lifecycle": false
+  }
+}
