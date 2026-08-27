@@ -1,0 +1,84 @@
+name: Jahorin Billing Live Proof
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'billing-gateway.js'
+      - 'subscription-entitlement-gateway.js'
+      - 'control-plane-gateway.js'
+      - 'package.json'
+      - '.github/workflows/billing-live-proof.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: billing-live-proof
+  cancel-in-progress: true
+
+jobs:
+  billing-live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout canonical backend
+        uses: actions/checkout@v4
+
+      - name: Prove live billing catalog authority
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARI='https://ari-689058655022.us-west1.run.app'
+          code="$(curl -sS --connect-timeout 5 --max-time 30 -D /tmp/billing.headers -o /tmp/billing-catalog.json -w '%{http_code}' -H 'Origin: https://siaas.space' "$ARI/api/billing/catalog")"
+          test "$code" = 200 || { echo "Billing catalog HTTP $code" >&2; cat /tmp/billing-catalog.json >&2 || true; exit 1; }
+          grep -qi '^x-billing-authority: stripe-neon-v1' /tmp/billing.headers
+          node - <<'NODE'
+          const fs = require('fs');
+          const catalog = JSON.parse(fs.readFileSync('/tmp/billing-catalog.json', 'utf8'));
+          if (catalog.ok !== true) throw new Error('billing catalog ok flag is not true');
+          if (catalog.authority !== 'Stripe + Neon') throw new Error(`unexpected billing authority: ${catalog.authority}`);
+          if (catalog.pricing_source !== 'stripe') throw new Error(`unexpected pricing source: ${catalog.pricing_source}`);
+          const required = ['free','personal','pro','business','enterprise'];
+          const ids = Array.isArray(catalog.tiers) ? catalog.tiers.map((tier) => tier.id) : [];
+          for (const tier of required) if (!ids.includes(tier)) throw new Error(`missing canonical billing tier: ${tier}`);
+          const paid = catalog.tiers.filter((tier) => tier.id !== 'free');
+          const configured = paid.filter((tier) => tier.checkout_configured === true && tier.price?.id).length;
+          const proof = {
+            ok: true,
+            verified_at: new Date().toISOString(),
+            endpoint: 'https://ari-689058655022.us-west1.run.app',
+            authority: catalog.authority,
+            pricing_source: catalog.pricing_source,
+            billing_configured: catalog.billing_configured === true,
+            paid_tiers_configured: configured,
+            paid_tiers_expected: paid.length,
+            tiers: catalog.tiers.map((tier) => ({
+              id: tier.id,
+              checkout_configured: tier.checkout_configured === true,
+              price: tier.price ? {
+                id: tier.price.id,
+                currency: tier.price.currency,
+                unit_amount: tier.price.unit_amount,
+                recurring: tier.price.recurring,
+                lookup_key: tier.price.lookup_key,
+                product: tier.price.product,
+              } : null,
+            })),
+          };
+          fs.writeFileSync('BILLING_LIVE_PROOF.json', JSON.stringify(proof, null, 2) + '\n');
+          console.log(JSON.stringify(proof, null, 2));
+          NODE
+
+      - name: Commit honest billing proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add BILLING_LIVE_PROOF.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'THOTH: record live Stripe billing catalog proof'
+          git pull --rebase origin main
+          git push origin HEAD:main
