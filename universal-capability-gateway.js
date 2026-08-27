@@ -135,7 +135,7 @@ function json(res, status, body, id, req, extraHeaders = {}) {
   res.end(data);
 }
 
-function readBody(req, limit = 256 * 1024) {
+function readBody(req, limit = 512 * 1024) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
@@ -227,6 +227,33 @@ function proxyStream(req, res) {
   req.pipe(upstream);
 }
 
+function proxyBuffered(req, res, raw) {
+  const headers = {
+    ...req.headers,
+    host: `127.0.0.1:${innerPort}`,
+    "content-length": String(raw.length),
+  };
+  const upstream = http.request(
+    {
+      hostname: "127.0.0.1",
+      port: innerPort,
+      path: req.url,
+      method: req.method,
+      headers,
+    },
+    (upstreamRes) => {
+      res.writeHead(upstreamRes.statusCode || 502, proxyResponseHeaders(req, upstreamRes.headers));
+      upstreamRes.pipe(res);
+    },
+  );
+  upstream.on("error", (error) => {
+    const id = requestId(req);
+    json(res, 503, { ok: false, code: "RUNTIME_UNAVAILABLE", error: "ARI secure runtime unavailable", request_id: id }, id, req);
+    console.error("Universal capability buffered proxy error", error);
+  });
+  upstream.end(raw);
+}
+
 async function requireExecutionIdentity(req) {
   const gid = sessionGid(req);
   if (gid || hasBearer(req)) return gid;
@@ -237,6 +264,46 @@ async function requireOwner(req) {
   const gid = sessionGid(req);
   if (gid !== OWNER_GID) throw Object.assign(new Error("Prime Orchestrator session required"), { status: gid ? 403 : 401, code: "OWNER_REQUIRED" });
   return gid;
+}
+
+function compactCapabilityContext(catalog) {
+  return {
+    authority: "ARI",
+    schema_version: catalog.schema_version,
+    open_ended: true,
+    dynamic_discovery: true,
+    rule: "Capabilities are execution primitives, not UI navigation. Compose them to satisfy the human goal. If a capability is unavailable, explain the missing authority/connector/device instead of pretending execution succeeded.",
+    available: (catalog.capabilities || [])
+      .filter((capability) => capability.available)
+      .map((capability) => ({
+        id: capability.id,
+        domain: capability.domain,
+        operations: capability.operations,
+        side_effect: Boolean(capability.side_effect),
+        sources: capability.sources,
+        manifestation: capability.manifestation,
+      })),
+    discoverable_unavailable: (catalog.capabilities || [])
+      .filter((capability) => !capability.available)
+      .map((capability) => ({ id: capability.id, domain: capability.domain, connectors_required: capability.connectors_required || [] })),
+  };
+}
+
+async function handleTaeWithCapabilityContext(req, res) {
+  const raw = await readBody(req);
+  const body = parseJson(raw);
+  const gid = sessionGid(req);
+  const catalog = await getCapabilityCatalog(db, { gid });
+  const capabilityContext = compactCapabilityContext(catalog);
+  const enriched = {
+    ...body,
+    context: {
+      ...(body.context && typeof body.context === "object" && !Array.isArray(body.context) ? body.context : {}),
+      capability_fabric: capabilityContext,
+    },
+    capability_fabric: capabilityContext,
+  };
+  return proxyBuffered(req, res, Buffer.from(JSON.stringify(enriched)));
 }
 
 async function handleCapabilityRoute(req, res, pathname, id) {
@@ -313,6 +380,10 @@ async function handle(req, res) {
 
     if (pathname.startsWith("/api/capabilities") || pathname === "/api/control/capabilities") {
       return await handleCapabilityRoute(req, res, pathname, id);
+    }
+
+    if (req.method === "POST" && pathname === "/api/tae") {
+      return await handleTaeWithCapabilityContext(req, res);
     }
 
     return proxyStream(req, res);
