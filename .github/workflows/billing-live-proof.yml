@@ -28,7 +28,7 @@ env:
 jobs:
   billing-live:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 8
     steps:
       - name: Checkout canonical backend
         uses: actions/checkout@v4
@@ -76,14 +76,19 @@ jobs:
           set -euo pipefail
           ARI="https://ari-${GCP_PROJECT_NUMBER}.${GCP_REGION}.run.app"
           ready=0
-          for attempt in $(seq 1 40); do
-            code="$(curl -sS --connect-timeout 5 --max-time 30 -D /tmp/billing.headers -o /tmp/billing-catalog.json -w '%{http_code}' -H 'Origin: https://siaas.space' "$ARI/api/billing/catalog?proof=$GITHUB_SHA-$attempt" || true)"
+          : > /tmp/billing.headers
+          : > /tmp/billing-catalog.json
+          for attempt in 1 2 3; do
+            code="$(curl -sS --connect-timeout 5 --max-time 10 -D /tmp/billing.headers -o /tmp/billing-catalog.json -w '%{http_code}' -H 'Origin: https://siaas.space' "$ARI/api/billing/catalog?proof=$GITHUB_SHA-$attempt" || true)"
+            echo "ATTEMPT=$attempt HTTP=$code"
+            cat /tmp/billing.headers || true
+            cat /tmp/billing-catalog.json || true
             if [ "$code" = 200 ] && grep -qi '^x-billing-authority: stripe-neon-v1' /tmp/billing.headers; then
               if node -e "const j=require('/tmp/billing-catalog.json'); if(!(j.ok===true&&j.authority==='Stripe + Neon'&&j.pricing_source==='stripe')) process.exit(1)"; then ready=1; break; fi
             fi
-            sleep 5
+            sleep 2
           done
-          test "$ready" = 1 || { echo 'Live billing authority did not become ready.' >&2; cat /tmp/billing.headers >&2 || true; cat /tmp/billing-catalog.json >&2 || true; exit 1; }
+          test "$ready" = 1 || { echo 'Live billing authority failed exact contract proof.' >&2; exit 1; }
           node - <<'NODE'
           const fs = require('fs');
           const catalog = JSON.parse(fs.readFileSync('/tmp/billing-catalog.json', 'utf8'));
