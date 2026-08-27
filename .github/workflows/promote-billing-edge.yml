@@ -96,3 +96,5 @@ jobs:
           done
           test "$ready" = 1 || { echo 'Billing edge failed live proof.' >&2; cat /tmp/billing.headers >&2 || true; cat /tmp/billing.json >&2 || true; exit 1; }
           echo 'PASS Cloud Run is executing billing-gateway.js as the outer ARI authority.'
+
+# execution trigger: promote billing gateway v1
