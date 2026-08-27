@@ -7,14 +7,16 @@
     "node": ">=20"
   },
   "scripts": {
-    "start": "node secure-gateway.js",
+    "start": "node universal-capability-gateway.js",
+    "start:universal": "node universal-capability-gateway.js",
+    "start:secure": "node secure-gateway.js",
     "start:control": "node control-plane-gateway.js",
     "start:neon": "node neon-runtime-gateway.js",
     "start:manifest": "node manifest-runtime-gateway.js",
     "start:identity": "node identity-runtime-gateway.js",
     "start:inner": "node server.js",
-    "check": "node --check secure-gateway.js && node --check device-fabric.js && node --check control-plane-gateway.js && node --check neon-runtime-gateway.js && node --check neon-store.js && node --check manifest-runtime-gateway.js && node --check identity-runtime-gateway.js && node --check server.js && node --check thoth-voice.js",
-    "dev": "node --watch secure-gateway.js"
+    "check": "node --check universal-capability-gateway.js && node --check capability-fabric.js && node --check secure-gateway.js && node --check device-fabric.js && node --check control-plane-gateway.js && node --check neon-runtime-gateway.js && node --check neon-store.js && node --check manifest-runtime-gateway.js && node --check identity-runtime-gateway.js && node --check server.js && node --check thoth-voice.js",
+    "dev": "node --watch universal-capability-gateway.js"
   },
   "dependencies": {
     "@google/genai": "^2.18.0",
