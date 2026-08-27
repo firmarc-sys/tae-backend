@@ -1,8 +1,8 @@
 {
   "release": "ga-candidate",
-  "backend_commit": "3cf50ac11b967fff9392f70bdba4913585c06ff9",
+  "backend_commit": "befa231bff4521a7ee83650e8a05365fa9f2045e",
   "cloud_run_revision": "ari-00111-csc",
-  "verified_at": "2026-08-27T17:18:12.720Z",
+  "verified_at": "2026-08-27T23:01:21.733Z",
   "checks": {
     "backend_clean_install": true,
     "secret_manager": true,
