@@ -1,6 +1,6 @@
 {
   "ok": true,
-  "verified_at": "2026-08-27T23:01:21.681Z",
+  "verified_at": "2026-08-27T23:18:46.725Z",
   "endpoint": "https://ari-689058655022.us-west1.run.app",
   "checks": {
     "gid_isolation": true,
