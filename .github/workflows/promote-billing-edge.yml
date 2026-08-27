@@ -1,0 +1,98 @@
+name: Promote ARI Billing Edge
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/promote-billing-edge.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: promote-ari-billing-edge
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: project-7e6f2720-0291-4c91-8c3
+  GCP_PROJECT_NUMBER: '689058655022'
+  GCP_REGION: us-west1
+  CLOUD_RUN_SERVICE: ari
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout canonical backend
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/${{ env.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github/providers/github
+          service_account: github-actions@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Inspect current Cloud Run command
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json > /tmp/before.json
+          python3 - <<'PY'
+          import json
+          obj=json.load(open('/tmp/before.json'))
+          c=(obj.get('spec',{}).get('template',{}).get('spec',{}).get('containers') or [{}])[0]
+          print('BEFORE_IMAGE=', c.get('image'))
+          print('BEFORE_COMMAND=', c.get('command'))
+          print('BEFORE_ARGS=', c.get('args'))
+          print('BEFORE_REVISION=', obj.get('status',{}).get('latestReadyRevisionName'))
+          PY
+
+      - name: Promote billing gateway as Cloud Run entry command
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services update "$CLOUD_RUN_SERVICE" \
+            --project="$GCP_PROJECT_ID" \
+            --region="$GCP_REGION" \
+            --platform=managed \
+            --command=node \
+            --args=billing-gateway.js \
+            --quiet
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json > /tmp/after.json
+          python3 - <<'PY'
+          import json
+          obj=json.load(open('/tmp/after.json'))
+          c=(obj.get('spec',{}).get('template',{}).get('spec',{}).get('containers') or [{}])[0]
+          command=c.get('command') or []
+          args=c.get('args') or []
+          if command != ['node'] or args != ['billing-gateway.js']:
+              raise SystemExit(f'Cloud Run command mismatch command={command} args={args}')
+          print('AFTER_IMAGE=', c.get('image'))
+          print('AFTER_COMMAND=', command)
+          print('AFTER_ARGS=', args)
+          print('AFTER_REVISION=', obj.get('status',{}).get('latestReadyRevisionName'))
+          PY
+
+      - name: Prove billing edge is live
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARI="https://ari-${GCP_PROJECT_NUMBER}.${GCP_REGION}.run.app"
+          ready=0
+          for attempt in $(seq 1 40); do
+            code="$(curl -sS --connect-timeout 5 --max-time 20 -D /tmp/billing.headers -o /tmp/billing.json -w '%{http_code}' -H 'Origin: https://siaas.space' "$ARI/api/billing/catalog?promotion=$GITHUB_SHA-$attempt" || true)"
+            if [ "$code" = 200 ] && grep -qi '^x-billing-authority: stripe-neon-v1' /tmp/billing.headers; then
+              if node -e "const j=require('/tmp/billing.json'); if(!(j.ok===true&&j.authority==='Stripe + Neon'&&j.pricing_source==='stripe')) process.exit(1)"; then ready=1; break; fi
+            fi
+            sleep 5
+          done
+          test "$ready" = 1 || { echo 'Billing edge failed live proof.' >&2; cat /tmp/billing.headers >&2 || true; cat /tmp/billing.json >&2 || true; exit 1; }
+          echo 'PASS Cloud Run is executing billing-gateway.js as the outer ARI authority.'
