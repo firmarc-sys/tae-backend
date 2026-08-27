@@ -82,3 +82,5 @@ jobs:
           git commit -m 'THOTH: record live Stripe billing catalog proof'
           git pull --rebase origin main
           git push origin HEAD:main
+
+# proof trigger: billing authority v1
