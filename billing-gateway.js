@@ -444,6 +444,28 @@ async function handleCheckout(req, res, raw, id) {
   const customer = await stripeCustomerForPrincipal(actor, { create: true });
   if (!customer?.id) return json(res, 503, { ok: false, code: "CUSTOMER_UNAVAILABLE", error: "Stripe customer could not be resolved" }, id, req);
 
+  const existingSubscription = await activeSubscription(customer.id);
+  const existingStatus = normalizedStripeStatus(existingSubscription?.status);
+  if (existingSubscription && ["active", "trialing"].includes(existingStatus)) {
+    const current = await canonicalSubscription(existingSubscription);
+    await syncIdentityTier({
+      gid: actor.gid,
+      userId: actor.user_id,
+      tier: current.tier,
+      status: current.status,
+      metadata: { stripe_customer_id: customer.id, stripe_subscription_id: existingSubscription.id, source: "checkout-duplicate-guard" },
+    });
+    return json(res, 409, {
+      ok: false,
+      code: "ACTIVE_SUBSCRIPTION_EXISTS",
+      error: "An active paid subscription already exists; use billing management to change plans",
+      gid: actor.gid,
+      current_tier: current.tier,
+      subscription_status: current.status,
+      portal_available: true,
+    }, id, req);
+  }
+
   const metadata = { gid: actor.gid, tier };
   if (actor.user_id) metadata.user_id = actor.user_id;
   const checkout = await stripe.checkout.sessions.create({
