@@ -1,8 +1,8 @@
 {
-  "rotation_id": "20260828-final-sk-live-2",
+  "rotation_id": "20260828-final-internal-tier-proof",
   "proof_gid": "990828000001",
   "customer_id": "cus_V9nN0dgCGsD8OJ",
-  "subscription_id": "sub_1U9Y1sPJM0SZC6VXaYYFANYM",
+  "subscription_id": "sub_1U9YAcPJM0SZC6VXCwcuuiXx",
   "old_webhook_endpoint_id": "we_1U552SPJM0SZC6VXMhCAqabT",
   "webhook_url": "https://ari-689058655022.us-west1.run.app/api/stripe/webhook",
   "expected_active_tier": "personal",
