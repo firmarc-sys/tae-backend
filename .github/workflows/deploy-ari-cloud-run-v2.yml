@@ -127,12 +127,40 @@ jobs:
             --platform=managed \
             --image="$IMAGE" \
             --allow-unauthenticated \
+            --command=node \
+            --args=authorization-gateway.js \
             --update-env-vars="NODE_ENV=production,ARI_REQUIRE_AUTH=true,JAHORIN_FREE_ACCESS=false" \
             --quiet
+
+          CREATED="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format='value(status.latestCreatedRevisionName)')"
+          test -n "$CREATED"
+          echo "Created Cloud Run revision: $CREATED"
+
+          gcloud run services update-traffic "$CLOUD_RUN_SERVICE" \
+            --project="$GCP_PROJECT_ID" \
+            --region="$GCP_REGION" \
+            --platform=managed \
+            --to-latest \
+            --quiet
+
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json > /tmp/traffic.json
+          python3 - <<'PY'
+          import json
+          obj=json.load(open('/tmp/traffic.json'))
+          created=obj.get('status',{}).get('latestCreatedRevisionName')
+          ready=obj.get('status',{}).get('latestReadyRevisionName')
+          traffic=obj.get('status',{}).get('traffic') or []
+          if not created or created != ready:
+              raise SystemExit(f'latest revision is not ready: created={created} ready={ready}')
+          live=sum(int(x.get('percent') or 0) for x in traffic if x.get('revisionName') == ready or x.get('latestRevision') is True)
+          if live != 100:
+              raise SystemExit(f'latest revision does not have 100% traffic: ready={ready} traffic={traffic}')
+          print('PASS latest ARI revision is ready and serving 100% traffic')
+          print('REVISION=', ready)
+          PY
+
           REVISION="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format='value(status.latestReadyRevisionName)')"
-          test -n "$REVISION"
           echo "CLOUD_RUN_REVISION=$REVISION" >> "$GITHUB_ENV"
-          echo "Cloud Run revision: $REVISION"
 
       - name: Verify Cloud Run secret references
         shell: bash
