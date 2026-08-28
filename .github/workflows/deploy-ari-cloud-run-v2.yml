@@ -23,6 +23,7 @@ on:
       - 'package.json'
       - 'package-lock.json'
       - 'Dockerfile'
+      - '.env.example'
       - '.github/workflows/deploy-ari-cloud-run-v2.yml'
   workflow_dispatch:
 
@@ -42,6 +43,7 @@ env:
   ARTIFACT_REPOSITORY: cloud-run-source-deploy
   IMAGE_NAME: ari
   OWNER_ACCESS_CODE_SECRET: ari-owner-access-code
+  SUPABASE_URL: https://zrkkilsynurpgwrijicq.supabase.co
 
 jobs:
   deploy:
@@ -70,6 +72,9 @@ jobs:
           grep -q 'row.status !== "active"' credential-gateway.js
           grep -q 'ensureDeviceFabricSchema' secure-gateway.js
           grep -q 'REPLAY_REJECTED' device-fabric.js
+          grep -Fq "SUPABASE_URL=$SUPABASE_URL" .env.example
+          [[ "$SUPABASE_URL" == https://*.supabase.co ]]
+          echo 'PASS canonical Supabase compatibility URL is source-controlled and non-secret.'
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
@@ -111,10 +116,7 @@ jobs:
                       break
               if not found:
                   raise SystemExit(f'Missing Secret Manager binding for {label}: one of {names}')
-          supabase_url=(env.get('SUPABASE_URL') or {}).get('value')
-          if not supabase_url:
-              raise SystemExit('SUPABASE_URL is required for the credential authority')
-          print('PASS existing session, identity, Supabase, and Stripe authorities remain Secret Manager backed')
+          print('PASS existing session, identity, Supabase credential, and Stripe authorities remain Secret Manager backed')
           PY
 
           gcloud secrets describe "$OWNER_ACCESS_CODE_SECRET" --project="$GCP_PROJECT_ID" >/dev/null
@@ -149,7 +151,7 @@ jobs:
             --allow-unauthenticated \
             --command=node \
             --args=credential-gateway.js \
-            --update-env-vars="NODE_ENV=production,ARI_REQUIRE_AUTH=true,JAHORIN_FREE_ACCESS=false" \
+            --update-env-vars="NODE_ENV=production,ARI_REQUIRE_AUTH=true,JAHORIN_FREE_ACCESS=false,SUPABASE_URL=${SUPABASE_URL}" \
             --update-secrets="OWNER_ACCESS_CODE=${OWNER_ACCESS_CODE_SECRET}:latest" \
             --quiet
 
@@ -181,8 +183,12 @@ jobs:
           ref=(owner.get('valueFrom') or {}).get('secretKeyRef') or (owner.get('valueSource') or {}).get('secretKeyRef')
           if not ref:
               raise SystemExit('OWNER_ACCESS_CODE is not a Secret Manager reference after deployment')
+          supabase_url=(env.get('SUPABASE_URL') or {}).get('value')
+          if supabase_url != os.environ['SUPABASE_URL']:
+              raise SystemExit(f'SUPABASE_URL drift after deployment: {supabase_url!r}')
           print('PASS credential-gateway.js is the sole public ARI edge with 100% traffic')
           print('PASS OWNER_ACCESS_CODE is Secret Manager backed')
+          print('PASS canonical Supabase compatibility URL is present on the live revision')
           print('REVISION', ready)
           with open(os.environ['GITHUB_ENV'],'a') as f:
               f.write(f'CLOUD_RUN_REVISION={ready}\n')
