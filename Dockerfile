@@ -13,4 +13,5 @@ ENV PORT=8080
 EXPOSE 8080
 
 USER node
+# Vedic runtime dependencies are locked by package-lock.json.
 CMD ["npm", "start"]
