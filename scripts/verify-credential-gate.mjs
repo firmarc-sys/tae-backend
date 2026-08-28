@@ -14,6 +14,7 @@ assert(edge.includes('CREDENTIAL_REQUIRED'), 'credential requirement is missing'
 assert(edge.includes('OWNER_ACCESS_CODE'), 'Prime Orchestrator proof is not wired');
 assert(edge.includes('/api/auth/login'), 'subscriber password proof is not delegated to Supabase auth');
 assert(edge.includes('auth_user_id'), 'GID is not bound to the registered auth user');
+assert(edge.includes('row.status !== "active"'), 'GID access must fail closed unless identity status is active');
 assert(edge.includes('user_metadata?.gid'), 'authenticated Supabase user GID continuity is not verified');
 assert(edge.includes('timingSafeEqualText'), 'owner credential comparison is not timing-safe');
 assert(!edge.includes('console.log(password)'), 'credential material must never be logged');
