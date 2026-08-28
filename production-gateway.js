@@ -4,6 +4,7 @@ import net from "node:net";
 import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { Pool } from "pg";
+import { getVedicProfile, saveVedicProfile, validateVedicProfile } from "./vedic-profile.js";
 
 const outerPort = Number(process.env.PORT || 8080);
 const innerPort = Number(process.env.PRODUCTION_GATEWAY_INNER_PORT || 8090);
@@ -337,6 +338,26 @@ async function handleProjects(req, res) {
   return json(req, res, 201, { ok: true, project: result.rows[0] });
 }
 
+async function handleVedicProfile(req, res) {
+  const session = readSession(req);
+  if (!session) return json(req, res, 401, { ok: false, code: "AUTH_REQUIRED", error: "Authenticated GID required" });
+  if (req.method === "GET") {
+    const profile = await getVedicProfile(db(), session.gid);
+    return json(req, res, 200, { ok: true, profile });
+  }
+  if (req.method === "POST") {
+    const input = await readBody(req);
+    const profile = await saveVedicProfile(db(), session.gid, input);
+    return json(req, res, 201, { ok: true, profile });
+  }
+  if (req.method === "PATCH") {
+    const input = await readBody(req);
+    const profile = await validateVedicProfile(db(), session.gid, input);
+    return json(req, res, 200, { ok: true, profile });
+  }
+  return json(req, res, 405, { ok: false, error: "Method not allowed" });
+}
+
 function proxy(req, res) {
   const options = {
     hostname: "127.0.0.1",
@@ -368,6 +389,7 @@ const gateway = http.createServer(async (req, res) => {
     if (pathname === "/api/identity/preferences" && ["GET", "PATCH", "POST"].includes(req.method)) return await handlePreferences(req, res);
     if (pathname === "/api/identity/timeline" && req.method === "GET") return await handleTimeline(req, res);
     if (pathname === "/api/identity/projects" && ["GET", "POST"].includes(req.method)) return await handleProjects(req, res);
+    if (pathname === "/api/identity/vedic-profile" && ["GET", "POST", "PATCH"].includes(req.method)) return await handleVedicProfile(req, res);
     return proxy(req, res);
   } catch (error) {
     console.error("ARI production gateway error", error);
