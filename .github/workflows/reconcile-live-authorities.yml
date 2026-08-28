@@ -15,7 +15,6 @@ env:
   GCP_PROJECT_ID: project-7e6f2720-0291-4c91-8c3
   GCP_PROJECT_NUMBER: '689058655022'
   GCP_REGION: us-west1
-  CLOUD_RUN_SERVICE: ari
 
 jobs:
   reconcile:
@@ -78,7 +77,7 @@ jobs:
           NODE
           unset NEON_DATABASE_URL
 
-      - name: Canonicalize existing Stripe Cloud Run authority without exposing value
+      - name: Canonicalize existing Stripe Secret Manager authority without exposing value
         shell: bash
         run: |
           set -euo pipefail
@@ -92,54 +91,19 @@ jobs:
             gcloud secrets versions access latest --secret="$SOURCE" --project="$GCP_PROJECT_ID" \
               | gcloud secrets versions add "$TARGET" --project="$GCP_PROJECT_ID" --data-file=- >/dev/null
           fi
-          echo 'PASS canonical Stripe server authority present'
+          echo 'PASS canonical Stripe Secret Manager authority present'
 
-      - name: Bind active Gemini secret to inner ARI runtime
-        shell: bash
-        run: |
-          set -euo pipefail
-          gcloud run services describe "$CLOUD_RUN_SERVICE" \
-            --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json > /tmp/ari-service.json
-          read -r GEMINI_SECRET GEMINI_VERSION < <(python3 - <<'PY'
-          import json
-          service=json.load(open('/tmp/ari-service.json'))
-          container=(service.get('spec',{}).get('template',{}).get('spec',{}).get('containers') or [{}])[0]
-          for item in container.get('env',[]) or []:
-              if item.get('name') != 'GEMINI_API_KEY':
-                  continue
-              ref=(item.get('valueFrom') or {}).get('secretKeyRef') or (item.get('valueSource') or {}).get('secretKeyRef') or {}
-              name=ref.get('name') or ''
-              version=ref.get('key') or ref.get('version') or 'latest'
-              if name:
-                  print(name, version)
-                  raise SystemExit(0)
-          raise SystemExit('GEMINI_API_KEY secret reference is missing from ARI')
-          PY
-          )
-          gcloud run services update "$CLOUD_RUN_SERVICE" \
-            --project="$GCP_PROJECT_ID" --region="$GCP_REGION" \
-            --update-secrets="GEMINI_RUNTIME_API_KEY=${GEMINI_SECRET}:${GEMINI_VERSION},STRIPE_SECRET_KEY=ari-stripe-secret-key:latest" \
-            --quiet >/dev/null
-          echo 'PASS inner ARI runtime now shares the active Gemini and canonical Stripe authorities'
-
-      - name: Verify reconciled live readiness
+      - name: Verify reconciled live readiness read-only
         shell: bash
         run: |
           set -euo pipefail
           ARI="https://ari-${GCP_PROJECT_NUMBER}.${GCP_REGION}.run.app"
-          for attempt in $(seq 1 48); do
-            code="$(curl -sS --connect-timeout 5 --max-time 20 -o /tmp/ready.json -w '%{http_code}' "$ARI/api/ready?reconcile=${GITHUB_SHA}-${attempt}" || true)"
-            if [ "$code" = '200' ] && python3 - <<'PY'
+          code="$(curl -sS --connect-timeout 5 --max-time 20 -o /tmp/ready.json -w '%{http_code}' "$ARI/api/ready?reconcile=${GITHUB_SHA}" || true)"
+          test "$code" = '200' || { cat /tmp/ready.json >&2 || true; exit 1; }
+          python3 - <<'PY'
           import json
           body=json.load(open('/tmp/ready.json'))
           ok=(body.get('ok') is True and body.get('provider') == 'google-gemini-api' and body.get('provider_configured') is True and body.get('mercury_runtime_ready') is True)
           raise SystemExit(0 if ok else 1)
           PY
-            then
-              echo 'PASS ARI reconciled on google-gemini-api'
-              exit 0
-            fi
-            sleep 5
-          done
-          cat /tmp/ready.json >&2 || true
-          exit 1
+          echo 'PASS live ARI remains reconciled on google-gemini-api'
