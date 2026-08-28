@@ -1,0 +1,23 @@
+{
+  "ok": true,
+  "verified_at": "2026-08-28T09:17:29.965Z",
+  "production_endpoint": true,
+  "production_webhook_signature_verified": true,
+  "secret_manager_authority": true,
+  "stripe_event_source": "synthetic-signed-contract-proof",
+  "real_stripe_object_lifecycle": false,
+  "gid": "999000000001",
+  "transitions": {
+    "activate_pro": "pro",
+    "upgrade_business": "business",
+    "downgrade_personal": "personal",
+    "payment_failure": "trial",
+    "trialing": "pro",
+    "trial_expired": "trial",
+    "canceled": "trial",
+    "reactivated": "pro",
+    "renewal": "pro"
+  },
+  "authority": "Neon identity_access",
+  "ga_note": "This proves production signature verification and Stripe-event-to-Neon policy transitions. It does not claim a real Stripe Customer/Subscription lifecycle."
+}
