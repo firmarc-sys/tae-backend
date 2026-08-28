@@ -1,9 +1,9 @@
 {
   "release": "ga-candidate",
   "ga_status": "BLOCKED",
-  "backend_commit": "0363106709c238e4e0ae2dcdea27846dff31cc7a",
-  "cloud_run_revision": "ari-00239-hff",
-  "verified_at": "2026-08-28T21:04:53.261Z",
+  "backend_commit": "df27b8361d00c0b0e70261d223366f3e7e0c73d5",
+  "cloud_run_revision": "ari-00243-n8t",
+  "verified_at": "2026-08-28T21:09:42.327Z",
   "checks": {
     "backend_clean_install": true,
     "secret_manager": true,
