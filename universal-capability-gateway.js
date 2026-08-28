@@ -175,8 +175,8 @@ function proxyStream(req, res) {
 
 async function handleCatalog(req, res) {
   const id = requestId(req);
-  await ensureCapabilityFabricSchema(db());
-  const catalog = await getCapabilityCatalog(db());
+  await ensureCapabilityFabricSchema(db);
+  const catalog = await getCapabilityCatalog(db);
   return json(req, res, 200, { ok: true, catalog }, id);
 }
 
@@ -188,8 +188,8 @@ async function handleRegister(req, res) {
   const raw = await readBody(req);
   let body = {};
   try { body = raw.length ? JSON.parse(raw.toString("utf8")) : {}; } catch { return json(req, res, 400, { ok: false, code: "INVALID_JSON", error: "Invalid JSON body" }, id); }
-  await ensureCapabilityFabricSchema(db());
-  const capability = await registerCapability(db(), body);
+  await ensureCapabilityFabricSchema(db);
+  const capability = await registerCapability(db, body);
   return json(req, res, 201, { ok: true, capability }, id);
 }
 
@@ -197,10 +197,10 @@ async function handleGraph(req, res, pathname) {
   const id = requestId(req);
   const gid = sessionGid(req);
   if (!gid) return json(req, res, 401, { ok: false, code: "AUTH_REQUIRED", error: "Authenticated GID required" }, id);
-  await ensureCapabilityFabricSchema(db());
+  await ensureCapabilityFabricSchema(db);
   if (req.method === "GET") {
     const graphId = decodeURIComponent(pathname.split("/").pop() || "");
-    const graph = await getExecutionGraph(db(), gid, graphId);
+    const graph = await getExecutionGraph(db, gid, graphId);
     if (!graph) return json(req, res, 404, { ok: false, code: "GRAPH_NOT_FOUND", error: "Execution graph not found" }, id);
     return json(req, res, 200, { ok: true, graph }, id);
   }
@@ -208,7 +208,7 @@ async function handleGraph(req, res, pathname) {
   let body = {};
   try { body = raw.length ? JSON.parse(raw.toString("utf8")) : {}; } catch { return json(req, res, 400, { ok: false, code: "INVALID_JSON", error: "Invalid JSON body" }, id); }
   const graph = compileExecutionGraph({ gid, intent: body.intent, capabilities: body.capabilities, context: body.context });
-  await persistExecutionGraph(db(), graph);
+  await persistExecutionGraph(db, graph);
   return json(req, res, 201, { ok: true, graph }, id);
 }
 
@@ -229,13 +229,13 @@ async function handle(req, res) {
 
     if (req.method === "POST" && (pathname === "/api/runtime" || pathname === "/runtime")) {
       const gid = sessionGid(req);
-      const limit = await enforceDistributedRateLimit(db(), {
-        scope: "runtime",
-        key: gid || String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "anonymous").split(",")[0].trim(),
+      const limit = await enforceDistributedRateLimit(db, {
+        bucketKey: gid || String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "anonymous").split(",")[0].trim(),
+        routeClass: "runtime",
         limit: Math.max(10, Number(process.env.RUNTIME_RATE_LIMIT_PER_MINUTE || 60)),
         windowSeconds: 60,
       });
-      if (!limit.allowed) return json(req, res, 429, { ok: false, code: "RATE_LIMITED", error: "Runtime rate limit exceeded", retry_after: limit.retry_after }, id, { "retry-after": String(limit.retry_after) });
+      if (!limit.allowed) return json(req, res, 429, { ok: false, code: "RATE_LIMITED", error: "Runtime rate limit exceeded", retry_after: limit.retryAfter }, id, { "retry-after": String(limit.retryAfter) });
       const raw = await readBody(req);
       return proxyBuffered(req, res, raw);
     }
