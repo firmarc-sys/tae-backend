@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 
 const files = [
+  'authorization-gateway.js',
   'production-gateway.js',
   'billing-gateway.js',
   'subscription-entitlement-gateway.js',
