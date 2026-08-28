@@ -42,7 +42,12 @@ env:
   CLOUD_RUN_SERVICE: ari
   ARTIFACT_REPOSITORY: cloud-run-source-deploy
   IMAGE_NAME: ari
+  SESSION_SECRET: ari-session-secret
   OWNER_ACCESS_CODE_SECRET: ari-owner-access-code
+  NEON_DATABASE_SECRET: ari-neon-database-url
+  SUPABASE_SERVER_SECRET: ari-supabase-secret-key
+  STRIPE_SECRET: ari-stripe-secret-key
+  STRIPE_WEBHOOK_SECRET: ari-stripe-webhook-secret
   SUPABASE_URL: https://zrkkilsynurpgwrijicq.supabase.co
 
 jobs:
@@ -74,7 +79,13 @@ jobs:
           grep -q 'REPLAY_REJECTED' device-fabric.js
           grep -Fq "SUPABASE_URL=$SUPABASE_URL" .env.example
           [[ "$SUPABASE_URL" == https://*.supabase.co ]]
-          echo 'PASS canonical Supabase compatibility URL is source-controlled and non-secret.'
+          grep -Fq "ARI_SESSION_SECRET=secret_manager:$SESSION_SECRET" .env.example
+          grep -Fq "OWNER_ACCESS_CODE=secret_manager:$OWNER_ACCESS_CODE_SECRET" .env.example
+          grep -Fq "NEON_DATABASE_URL=secret_manager:$NEON_DATABASE_SECRET" .env.example
+          grep -Fq "SUPABASE_SECRET_KEY=secret_manager:$SUPABASE_SERVER_SECRET" .env.example
+          grep -Fq "STRIPE_SECRET_KEY=secret_manager:$STRIPE_SECRET" .env.example
+          grep -Fq "STRIPE_WEBHOOK_SECRET=secret_manager:$STRIPE_WEBHOOK_SECRET" .env.example
+          echo 'PASS canonical production authority names are source-controlled without secret values.'
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
@@ -87,42 +98,25 @@ jobs:
         with:
           project_id: ${{ env.GCP_PROJECT_ID }}
 
-      - name: Verify production authorities and canonical Prime secret
+      - name: Verify canonical Secret Manager authorities
         shell: bash
         run: |
           set -euo pipefail
-          gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json > /tmp/current.json
-          python3 - <<'PY'
-          import json
-          obj=json.load(open('/tmp/current.json'))
-          env={}
-          for c in obj.get('spec',{}).get('template',{}).get('spec',{}).get('containers',[]):
-              for item in c.get('env',[]) or []:
-                  env[item.get('name')]=item
-          required_secret_groups=[
-              ('ARI session', ['ARI_SESSION_SECRET']),
-              ('Neon identity', ['NEON_DATABASE_URL','DATABASE_URL']),
-              ('Supabase credential', ['SUPABASE_SECRET_KEY','SUPABASE_SERVICE_ROLE_KEY']),
-              ('Stripe secret', ['STRIPE_SECRET_KEY']),
-              ('Stripe webhook', ['STRIPE_WEBHOOK_SECRET']),
-          ]
-          for label,names in required_secret_groups:
-              found=False
-              for name in names:
-                  item=env.get(name) or {}
-                  ref=(item.get('valueFrom') or {}).get('secretKeyRef') or (item.get('valueSource') or {}).get('secretKeyRef')
-                  if ref:
-                      found=True
-                      break
-              if not found:
-                  raise SystemExit(f'Missing Secret Manager binding for {label}: one of {names}')
-          print('PASS existing session, identity, Supabase credential, and Stripe authorities remain Secret Manager backed')
-          PY
-
-          gcloud secrets describe "$OWNER_ACCESS_CODE_SECRET" --project="$GCP_PROJECT_ID" >/dev/null
-          OWNER_VERSION="$(gcloud secrets versions list "$OWNER_ACCESS_CODE_SECRET" --project="$GCP_PROJECT_ID" --filter='state=ENABLED' --limit=1 --sort-by='~createTime' --format='value(name)')"
-          test -n "$OWNER_VERSION" || { echo "No enabled version exists for $OWNER_ACCESS_CODE_SECRET" >&2; exit 1; }
-          echo "PASS canonical Prime credential secret exists with an enabled version: $OWNER_ACCESS_CODE_SECRET"
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" >/dev/null
+          for item in \
+            "ARI session|$SESSION_SECRET" \
+            "Prime credential|$OWNER_ACCESS_CODE_SECRET" \
+            "Neon identity|$NEON_DATABASE_SECRET" \
+            "Supabase credential|$SUPABASE_SERVER_SECRET" \
+            "Stripe secret|$STRIPE_SECRET" \
+            "Stripe webhook|$STRIPE_WEBHOOK_SECRET"; do
+            label="${item%%|*}"
+            secret="${item#*|}"
+            gcloud secrets describe "$secret" --project="$GCP_PROJECT_ID" >/dev/null || { echo "Missing canonical Secret Manager secret for $label: $secret" >&2; exit 1; }
+            version="$(gcloud secrets versions list "$secret" --project="$GCP_PROJECT_ID" --filter='state=ENABLED' --limit=1 --sort-by='~createTime' --format='value(name)')"
+            test -n "$version" || { echo "No enabled Secret Manager version for $label: $secret" >&2; exit 1; }
+            echo "PASS $label authority has an enabled Secret Manager version: $secret"
+          done
 
       - name: Configure Artifact Registry
         run: |
@@ -152,7 +146,7 @@ jobs:
             --command=node \
             --args=credential-gateway.js \
             --update-env-vars="NODE_ENV=production,ARI_REQUIRE_AUTH=true,JAHORIN_FREE_ACCESS=false,SUPABASE_URL=${SUPABASE_URL}" \
-            --update-secrets="OWNER_ACCESS_CODE=${OWNER_ACCESS_CODE_SECRET}:latest" \
+            --update-secrets="ARI_SESSION_SECRET=${SESSION_SECRET}:latest,OWNER_ACCESS_CODE=${OWNER_ACCESS_CODE_SECRET}:latest,NEON_DATABASE_URL=${NEON_DATABASE_SECRET}:latest,SUPABASE_SECRET_KEY=${SUPABASE_SERVER_SECRET}:latest,STRIPE_SECRET_KEY=${STRIPE_SECRET}:latest,STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}:latest" \
             --quiet
 
           gcloud run services update-traffic "$CLOUD_RUN_SERVICE" \
@@ -179,15 +173,16 @@ jobs:
           if (c.get('command') or []) != ['node'] or (c.get('args') or []) != ['credential-gateway.js']:
               raise SystemExit(f'wrong public edge command: {c.get("command")} {c.get("args")}')
           env={item.get('name'):item for item in c.get('env',[]) or []}
-          owner=env.get('OWNER_ACCESS_CODE') or {}
-          ref=(owner.get('valueFrom') or {}).get('secretKeyRef') or (owner.get('valueSource') or {}).get('secretKeyRef')
-          if not ref:
-              raise SystemExit('OWNER_ACCESS_CODE is not a Secret Manager reference after deployment')
+          for name in ['ARI_SESSION_SECRET','OWNER_ACCESS_CODE','NEON_DATABASE_URL','SUPABASE_SECRET_KEY','STRIPE_SECRET_KEY','STRIPE_WEBHOOK_SECRET']:
+              item=env.get(name) or {}
+              ref=(item.get('valueFrom') or {}).get('secretKeyRef') or (item.get('valueSource') or {}).get('secretKeyRef')
+              if not ref:
+                  raise SystemExit(f'{name} is not a Secret Manager reference after deployment')
           supabase_url=(env.get('SUPABASE_URL') or {}).get('value')
           if supabase_url != os.environ['SUPABASE_URL']:
               raise SystemExit(f'SUPABASE_URL drift after deployment: {supabase_url!r}')
           print('PASS credential-gateway.js is the sole public ARI edge with 100% traffic')
-          print('PASS OWNER_ACCESS_CODE is Secret Manager backed')
+          print('PASS all session, identity, Supabase and Stripe authorities are Secret Manager backed')
           print('PASS canonical Supabase compatibility URL is present on the live revision')
           print('REVISION', ready)
           with open(os.environ['GITHUB_ENV'],'a') as f:
