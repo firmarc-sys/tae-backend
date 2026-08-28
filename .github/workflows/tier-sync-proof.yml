@@ -24,17 +24,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Preserve stronger real Stripe lifecycle evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          if node -e "const fs=require('fs'); if(!fs.existsSync('STRIPE_LIFECYCLE_PROOF.json')) process.exit(1); const p=JSON.parse(fs.readFileSync('STRIPE_LIFECYCLE_PROOF.json')); if(!(p.ok===true&&p.real_stripe_object_lifecycle===true)) process.exit(1)"; then
+            echo 'PRESERVE_REAL_STRIPE_PROOF=true' >> "$GITHUB_ENV"
+            echo 'PASS real Stripe lifecycle evidence already exists; synthetic contract proof will not downgrade it.'
+          else
+            echo 'PRESERVE_REAL_STRIPE_PROOF=false' >> "$GITHUB_ENV"
+          fi
+
       - id: auth
+        if: ${{ env.PRESERVE_REAL_STRIPE_PROOF != 'true' }}
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: projects/${{ env.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github/providers/github
           service_account: github-actions@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com
 
-      - uses: google-github-actions/setup-gcloud@v2
+      - if: ${{ env.PRESERVE_REAL_STRIPE_PROOF != 'true' }}
+        uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ env.GCP_PROJECT_ID }}
 
       - name: Materialize webhook authority only into an ephemeral file
+        if: ${{ env.PRESERVE_REAL_STRIPE_PROOF != 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -46,6 +60,7 @@ jobs:
           echo 'Stripe webhook authority read from Secret Manager without GitHub environment export.'
 
       - name: Prove signed production webhook transitions into Neon
+        if: ${{ env.PRESERVE_REAL_STRIPE_PROOF != 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -120,6 +135,7 @@ jobs:
           shred -u /tmp/stripe-webhook-secret || rm -f /tmp/stripe-webhook-secret
 
       - name: Record Stripe-to-Neon evidence
+        if: ${{ env.PRESERVE_REAL_STRIPE_PROOF != 'true' }}
         shell: bash
         run: |
           set -euo pipefail
