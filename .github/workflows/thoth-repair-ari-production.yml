@@ -94,7 +94,7 @@ jobs:
             --region="$REGION" \
             --command=node \
             --args=credential-gateway.js \
-            --update-env-vars='NODE_ENV=production,ARI_REQUIRE_AUTH=true,JAHORIN_FREE_ACCESS=false,NEON_POOL_MAX=5,PRODUCTION_ALLOWED_ORIGINS=https://jahorin.space\,https://www.jahorin.space\,https://jahorin-ga.vercel.app\,https://siaas.space\,https://www.siaas.space\,https://siaas.netlify.app\,https://main--siaas.netlify.app,SUPABASE_URL=https://zrkkilsynurpgwrijicq.supabase.co' \
+            --update-env-vars='NODE_ENV=production,ARI_REQUIRE_AUTH=true,JAHORIN_FREE_ACCESS=false,NEON_POOL_MAX=5,SUPABASE_URL=https://zrkkilsynurpgwrijicq.supabase.co' \
             --update-secrets='ARI_SESSION_SECRET=ari-session-secret:latest,OWNER_ACCESS_CODE=OWNER_ACCESS_CODE:latest,NEON_DATABASE_URL=ari-neon-database-url:latest,SUPABASE_SECRET_KEY=SUPABASE_SECRET_KEY:latest,STRIPE_SECRET_KEY=STRIPE_SECRET_KEYy:latest,STRIPE_WEBHOOK_SECRET=ari-stripe-webhook-secret:latest' \
             --quiet
           gcloud run services update-traffic "$SERVICE" --project="$PROJECT" --region="$REGION" --to-latest --quiet
