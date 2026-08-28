@@ -1,0 +1,56 @@
+name: Final ARI Chain Diagnostic
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/final-ari-chain-diagnostic.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: project-7e6f2720-0291-4c91-8c3
+  GCP_PROJECT_NUMBER: '689058655022'
+  GCP_REGION: us-west1
+  CLOUD_RUN_SERVICE: ari
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/${{ env.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github/providers/github
+          service_account: github-actions@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+      - name: Read live revision and full safe edge diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" \
+            --format='yaml(status.latestCreatedRevisionName,status.latestReadyRevisionName,status.traffic,spec.template.spec.containers[0].image,spec.template.spec.containers[0].command,spec.template.spec.containers[0].args)'
+          ARI="https://ari-${GCP_PROJECT_NUMBER}.${GCP_REGION}.run.app"
+          curl -sS --connect-timeout 5 --max-time 30 "$ARI/api/edge-diagnostics?final=${GITHUB_SHA}" > /tmp/edge.json || true
+          python3 - <<'PY'
+          import json
+          try:
+              body=json.load(open('/tmp/edge.json'))
+          except Exception:
+              print(open('/tmp/edge.json').read()[:12000])
+              raise SystemExit(0)
+          safe={k:v for k,v in body.items() if k not in ('token','secret','authorization','cookie')}
+          output=[]
+          for item in safe.get('child_output') or []:
+              s=str(item)
+              if any(x in s.lower() for x in ('sk_live_','rk_live_','whsec_','authorization:','cookie:')):
+                  continue
+              output.append(s)
+          safe['child_output']=output
+          print(json.dumps(safe,indent=2)[:30000])
+          PY
