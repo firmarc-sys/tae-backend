@@ -1,6 +1,6 @@
 {
   "ok": true,
-  "verified_at": "2026-08-28T09:17:29.965Z",
+  "verified_at": "2026-08-28T14:13:13.506Z",
   "production_endpoint": true,
   "production_webhook_signature_verified": true,
   "secret_manager_authority": true,
