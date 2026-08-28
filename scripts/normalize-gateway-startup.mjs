@@ -47,7 +47,9 @@ refreshInnerReadiness();
 const readinessMonitor = setInterval(refreshInnerReadiness, 1000);
 readinessMonitor.unref();`;
 
+const writeChanges = process.env.CI !== 'true' || process.env.NORMALIZE_GATEWAY_WRITE === 'true';
 let filesChanged = 0;
+let filesWouldChange = 0;
 let startupBudgetChanges = 0;
 let neonTimeoutChanges = 0;
 let readinessMonitorChanges = 0;
@@ -73,9 +75,14 @@ for (const file of files) {
   neonTimeoutChanges += neonMatches.length;
 
   if (after !== before) {
-    fs.writeFileSync(file, after);
-    filesChanged += 1;
-    console.log(`normalized startup/connectivity budget: ${file}`);
+    filesWouldChange += 1;
+    if (writeChanges) {
+      fs.writeFileSync(file, after);
+      filesChanged += 1;
+      console.log(`normalized startup/connectivity budget: ${file}`);
+    } else {
+      console.log(`verified pending Docker normalization: ${file}`);
+    }
   }
 
   const normalized = after;
@@ -100,6 +107,6 @@ if (!verified.length) {
 }
 
 console.log(`ARI startup normalization verified across ${verified.length} gateway files`);
-console.log(`changed ${filesChanged} files; normalized ${startupBudgetChanges} startup budgets to 120s and ${neonTimeoutChanges} Neon connection budgets to 30s`);
+console.log(`write_changes=${writeChanges}; changed=${filesChanged}; would_change=${filesWouldChange}; startup_budgets=${startupBudgetChanges}; neon_budgets=${neonTimeoutChanges}`);
 console.log(`authorization readiness monitor replacements this invocation: ${readinessMonitorChanges}`);
 console.log('self-healing authorization child readiness monitor verified');
