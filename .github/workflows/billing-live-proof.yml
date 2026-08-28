@@ -7,6 +7,7 @@ on:
       - 'billing-gateway.js'
       - 'subscription-entitlement-gateway.js'
       - 'control-plane-gateway.js'
+      - 'credential-gateway.js'
       - 'package.json'
       - '.github/workflows/billing-live-proof.yml'
   workflow_dispatch:
@@ -28,7 +29,7 @@ env:
 jobs:
   billing-live:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 10
     steps:
       - name: Checkout canonical backend
         uses: actions/checkout@v4
@@ -44,24 +45,42 @@ jobs:
         with:
           project_id: ${{ env.GCP_PROJECT_ID }}
 
-      - name: Verify canonical ARI edge without mutating production
+      - name: Wait for canonical credential-gated ARI edge without mutating production
         shell: bash
         run: |
           set -euo pipefail
-          gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json > /tmp/service.json
-          python3 - <<'PY'
+          ready=0
+          for attempt in $(seq 1 60); do
+            gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json > /tmp/service.json
+            if python3 - <<'PY'
           import json
           obj=json.load(open('/tmp/service.json'))
           c=(obj.get('spec',{}).get('template',{}).get('spec',{}).get('containers') or [{}])[0]
           command=c.get('command') or []
           args=c.get('args') or []
-          if command != ['node'] or args != ['authorization-gateway.js']:
-              raise SystemExit(f'Cloud Run edge is not canonical: command={command} args={args}')
+          status=obj.get('status',{})
+          created=status.get('latestCreatedRevisionName')
+          ready=status.get('latestReadyRevisionName')
+          ok=command == ['node'] and args == ['credential-gateway.js'] and bool(ready) and created == ready
+          raise SystemExit(0 if ok else 1)
+          PY
+            then
+              ready=1
+              break
+            fi
+            sleep 5
+          done
+          test "$ready" = 1 || { echo 'Credential-gated ARI edge did not become canonical.' >&2; cat /tmp/service.json >&2 || true; exit 1; }
+          python3 - <<'PY'
+          import json
+          obj=json.load(open('/tmp/service.json'))
+          c=(obj.get('spec',{}).get('template',{}).get('spec',{}).get('containers') or [{}])[0]
           print('IMAGE=', c.get('image'))
-          print('COMMAND=', command)
-          print('ARGS=', args)
+          print('COMMAND=', c.get('command') or [])
+          print('ARGS=', c.get('args') or [])
           print('LATEST_CREATED=', obj.get('status',{}).get('latestCreatedRevisionName'))
           print('LATEST_READY=', obj.get('status',{}).get('latestReadyRevisionName'))
+          print('PASS credential-gateway.js is the canonical ARI edge for billing proof')
           PY
 
       - name: Prove live billing catalog authority
@@ -72,17 +91,15 @@ jobs:
           ready=0
           : > /tmp/billing.headers
           : > /tmp/billing-catalog.json
-          for attempt in 1 2 3; do
+          for attempt in $(seq 1 12); do
             code="$(curl -sS --connect-timeout 5 --max-time 10 -D /tmp/billing.headers -o /tmp/billing-catalog.json -w '%{http_code}' -H 'Origin: https://siaas.space' "$ARI/api/billing/catalog?proof=$GITHUB_SHA-$attempt" || true)"
             echo "ATTEMPT=$attempt HTTP=$code"
-            cat /tmp/billing.headers || true
-            cat /tmp/billing-catalog.json || true
             if [ "$code" = 200 ] && grep -qi '^x-billing-authority: stripe-neon-v1' /tmp/billing.headers; then
               if node -e "const j=require('/tmp/billing-catalog.json'); if(!(j.ok===true&&j.authority==='Stripe + Neon'&&j.pricing_source==='stripe')) process.exit(1)"; then ready=1; break; fi
             fi
-            sleep 2
+            sleep 3
           done
-          test "$ready" = 1 || { echo 'Live billing authority failed exact contract proof.' >&2; exit 1; }
+          test "$ready" = 1 || { echo 'Live billing authority failed exact catalog contract proof.' >&2; cat /tmp/billing.headers >&2 || true; cat /tmp/billing-catalog.json >&2 || true; exit 1; }
           node - <<'NODE'
           const fs = require('fs');
           const catalog = JSON.parse(fs.readFileSync('/tmp/billing-catalog.json', 'utf8'));
@@ -93,6 +110,8 @@ jobs:
           const configured = paid.filter((tier) => tier.checkout_configured === true && tier.price?.id).length;
           const proof = {
             ok: true,
+            scope: 'billing-catalog-only',
+            real_stripe_lifecycle_verified: false,
             verified_at: new Date().toISOString(),
             endpoint: 'https://ari-689058655022.us-west1.run.app',
             authority: catalog.authority,
@@ -115,9 +134,10 @@ jobs:
           };
           fs.writeFileSync('BILLING_LIVE_PROOF.json', JSON.stringify(proof, null, 2) + '\n');
           console.log(JSON.stringify(proof, null, 2));
+          console.log('MA\'AT: catalog proof does not certify a real Stripe Customer/Subscription lifecycle.');
           NODE
 
-      - name: Commit honest billing proof
+      - name: Commit honest billing catalog proof
         shell: bash
         run: |
           set -euo pipefail
