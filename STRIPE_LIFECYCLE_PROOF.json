@@ -1,23 +1,23 @@
 {
   "ok": true,
-  "verified_at": "2026-08-28T21:10:26.549Z",
+  "verified_at": "2026-08-28T22:26:59.061Z",
   "production_endpoint": true,
   "production_webhook_signature_verified": true,
   "secret_manager_authority": true,
-  "stripe_event_source": "synthetic-signed-contract-proof",
-  "real_stripe_object_lifecycle": false,
-  "gid": "999000000001",
+  "stripe_event_source": "real-live-stripe-object-lifecycle",
+  "real_stripe_object_lifecycle": true,
+  "live_mode_objects": true,
+  "no_payment_capture": true,
+  "customer_id": "cus_V9nN0dgCGsD8OJ",
+  "subscription_id": "sub_1U9YAcPJM0SZC6VXCwcuuiXx",
+  "webhook_endpoint_id": "we_1U9YCHPJM0SZC6VXPTRpiR4L",
+  "superseded_webhook_endpoint_id": "we_1U9Y35PJM0SZC6VXqVoyPO6r",
+  "gid": "990828000001",
   "transitions": {
-    "activate_pro": "pro",
-    "upgrade_business": "business",
-    "downgrade_personal": "personal",
-    "payment_failure": "trial",
-    "trialing": "pro",
-    "trial_expired": "trial",
-    "canceled": "trial",
-    "reactivated": "pro",
-    "renewal": "pro"
+    "trialing_subscription_to_neon": "personal",
+    "canceled_subscription_to_neon": "trial"
   },
-  "authority": "Neon identity_access",
-  "ga_note": "This proves production signature verification and Stripe-event-to-Neon policy transitions. It does not claim a real Stripe Customer/Subscription lifecycle."
+  "stripe_status_after_cancel": "canceled",
+  "authority": "Stripe live objects -> signed ARI webhook -> Neon identity_access",
+  "ga_note": "Verified with a live Stripe Customer and live trialing Subscription using no payment method and zero captured payment, followed by immediate cancellation and Neon entitlement demotion."
 }
