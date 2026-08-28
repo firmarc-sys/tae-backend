@@ -81,6 +81,9 @@ async function verify() {
   try {
     const rotatedEndpointId = fs.readFileSync('/tmp/new-stripe-webhook-endpoint-id', 'utf8').trim();
     if (!rotatedEndpointId) throw new Error('rotated webhook endpoint id is unavailable');
+    const rotatedEndpoint = await stripe.webhookEndpoints.retrieve(rotatedEndpointId);
+    if (rotatedEndpoint.url !== request.webhook_url) throw new Error(`canonical webhook URL mismatch: ${rotatedEndpoint.url}`);
+    if (rotatedEndpoint.status !== 'enabled') throw new Error(`canonical webhook is not enabled: ${rotatedEndpoint.status}`);
 
     const customer = await stripe.customers.retrieve(request.customer_id);
     if (!customer || customer.deleted) throw new Error('proof customer is unavailable');
