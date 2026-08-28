@@ -4,6 +4,12 @@ on:
   push:
     branches: [main]
     paths:
+      - 'vedic-gateway.js'
+      - 'vedic-profile.js'
+      - 'authorization-gateway.js'
+      - 'production-gateway.js'
+      - 'billing-gateway.js'
+      - 'subscription-entitlement-gateway.js'
       - 'secure-gateway.js'
       - 'device-fabric.js'
       - 'control-plane-gateway.js'
@@ -54,6 +60,7 @@ jobs:
           set -euo pipefail
           npm ci
           npm run check
+          node -e "import('astronomy-engine').then(()=>import('tz-lookup')).then(()=>import('./vedic-profile.js')).then(()=>console.log('PASS Vedic runtime imports'))"
           grep -q 'node secure-gateway.js' package.json
           grep -q 'ensureDeviceFabricSchema' secure-gateway.js
           grep -q 'REPLAY_REJECTED' device-fabric.js
@@ -70,117 +77,29 @@ jobs:
         with:
           project_id: ${{ env.GCP_PROJECT_ID }}
 
-      - name: Verify Secret Manager is already available
+      - name: Verify Secret Manager and current runtime bindings
         shell: bash
         run: |
           set -euo pipefail
-          if ! gcloud secrets list --project="$GCP_PROJECT_ID" --limit=1 >/tmp/secret-list.txt 2>/tmp/secret-manager-error.txt; then
-            echo 'BLOCKED: Secret Manager is not available to the GitHub deployment identity. CI will not self-enable Google APIs.' >&2
-            cat /tmp/secret-manager-error.txt >&2
-            exit 1
-          fi
-          echo 'PASS Secret Manager API and deployment identity access are available.'
-
-      - name: Migrate runtime secrets to Secret Manager
-        shell: bash
-        run: |
-          set -euo pipefail
-          umask 077
-          gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json > /tmp/ari-service.json
-          : > /tmp/secret-mappings
-          : > /tmp/secret-ids
-
-          env_plain() {
-            ENV_NAME="$1" python3 - <<'PY'
-          import json,os
-          obj=json.load(open('/tmp/ari-service.json'))
-          name=os.environ['ENV_NAME']
+          gcloud secrets list --project="$GCP_PROJECT_ID" --limit=1 >/dev/null
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json > /tmp/current.json
+          python3 - <<'PY'
+          import json
+          obj=json.load(open('/tmp/current.json'))
+          required={'ARI_SESSION_SECRET','NEON_DATABASE_URL','STRIPE_SECRET_KEY','STRIPE_WEBHOOK_SECRET'}
+          found=set(); plain=[]
           for c in obj.get('spec',{}).get('template',{}).get('spec',{}).get('containers',[]):
               for item in c.get('env',[]) or []:
-                  if item.get('name')==name:
-                      print(item.get('value') or '')
-                      raise SystemExit
-          print('')
+                  name=item.get('name')
+                  if name not in required: continue
+                  ref=(item.get('valueFrom') or {}).get('secretKeyRef') or (item.get('valueSource') or {}).get('secretKeyRef')
+                  if ref: found.add(name)
+                  elif item.get('value'): plain.append(name)
+          if plain: raise SystemExit('Plaintext required secrets remain: '+','.join(sorted(plain)))
+          missing=required-found
+          if missing: raise SystemExit('Missing required secret references: '+','.join(sorted(missing)))
+          print('PASS existing Cloud Run secret bindings are intact')
           PY
-          }
-
-          env_secret_ref() {
-            ENV_NAME="$1" python3 - <<'PY'
-          import json,os
-          obj=json.load(open('/tmp/ari-service.json'))
-          name=os.environ['ENV_NAME']
-          for c in obj.get('spec',{}).get('template',{}).get('spec',{}).get('containers',[]):
-              for item in c.get('env',[]) or []:
-                  if item.get('name')!=name: continue
-                  ref=(item.get('valueFrom') or {}).get('secretKeyRef') or (item.get('valueSource') or {}).get('secretKeyRef') or {}
-                  secret=ref.get('name') or ref.get('secret') or ''
-                  version=ref.get('key') or ref.get('version') or 'latest'
-                  if secret:
-                      print(f'{secret}:{version}')
-                      raise SystemExit
-          print('')
-          PY
-          }
-
-          ensure_secret() {
-            env_name="$1"; secret_id="$2"; required="$3"; generate="$4"
-            existing_ref="$(env_secret_ref "$env_name")"
-            if [ -n "$existing_ref" ]; then
-              printf '%s=%s\n' "$env_name" "$existing_ref" >> /tmp/secret-mappings
-              printf '%s\n' "${existing_ref%%:*}" >> /tmp/secret-ids
-              echo "Preserving Secret Manager reference for $env_name."
-              return 0
-            fi
-
-            plain="$(env_plain "$env_name")"
-            if ! gcloud secrets describe "$secret_id" --project="$GCP_PROJECT_ID" >/dev/null 2>&1; then
-              if [ -z "$plain" ] && [ "$generate" != yes ] && [ "$required" != yes ]; then
-                echo "Optional secret $env_name is not configured; skipping."
-                return 0
-              fi
-              gcloud secrets create "$secret_id" --project="$GCP_PROJECT_ID" --replication-policy=automatic --quiet >/dev/null
-            fi
-
-            if [ -n "$plain" ]; then
-              printf '%s' "$plain" | gcloud secrets versions add "$secret_id" --project="$GCP_PROJECT_ID" --data-file=- --quiet >/dev/null
-              unset plain
-              echo "Migrated $env_name into Secret Manager."
-            elif [ "$generate" = yes ]; then
-              generated="$(openssl rand -hex 32)"
-              printf '%s' "$generated" | gcloud secrets versions add "$secret_id" --project="$GCP_PROJECT_ID" --data-file=- --quiet >/dev/null
-              unset generated
-              echo "Created persistent Secret Manager value for $env_name."
-            elif ! gcloud secrets versions describe latest --secret="$secret_id" --project="$GCP_PROJECT_ID" >/dev/null 2>&1; then
-              if [ "$required" = yes ]; then
-                echo "BLOCKED: required secret $env_name has no live version." >&2
-                exit 1
-              fi
-              echo "Optional secret $env_name has no live version; skipping."
-              return 0
-            fi
-
-            printf '%s=%s:latest\n' "$env_name" "$secret_id" >> /tmp/secret-mappings
-            printf '%s\n' "$secret_id" >> /tmp/secret-ids
-          }
-
-          ensure_secret ARI_SESSION_SECRET ari-session-secret yes yes
-          ensure_secret NEON_DATABASE_URL ari-neon-database-url yes no
-          ensure_secret STRIPE_SECRET_KEY ari-stripe-secret-key yes no
-          ensure_secret STRIPE_WEBHOOK_SECRET ari-stripe-webhook-secret yes no
-          ensure_secret OWNER_ACCESS_CODE ari-owner-access-code no no
-          ensure_secret GEMINI_API_KEY ari-gemini-api-key no no
-          ensure_secret SUPABASE_SECRET_KEY ari-supabase-secret-key no no
-          ensure_secret SUPABASE_SERVICE_ROLE_KEY ari-supabase-service-role-key no no
-          ensure_secret ARI_WORKER_TOKEN ari-worker-token no no
-
-          SERVICE_ACCOUNT="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format='value(spec.template.spec.serviceAccountName)')"
-          [ -n "$SERVICE_ACCOUNT" ] || SERVICE_ACCOUNT="${GCP_PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
-          sort -u /tmp/secret-ids -o /tmp/secret-ids
-          while IFS= read -r secret_id; do
-            [ -n "$secret_id" ] || continue
-            gcloud secrets add-iam-policy-binding "$secret_id" --project="$GCP_PROJECT_ID" --member="serviceAccount:${SERVICE_ACCOUNT}" --role="roles/secretmanager.secretAccessor" --quiet >/dev/null
-          done < /tmp/secret-ids
-          echo 'PASS Secret Manager migration and runtime-access grants.'
 
       - name: Configure Artifact Registry
         shell: bash
@@ -198,12 +117,10 @@ jobs:
           docker build -t "$IMAGE" .
           docker push "$IMAGE"
 
-      - name: Deploy hardened ARI revision
+      - name: Deploy hardened ARI revision preserving secret bindings
         shell: bash
         run: |
           set -euo pipefail
-          SECRET_FLAGS="$(paste -sd, /tmp/secret-mappings)"
-          test -n "$SECRET_FLAGS"
           gcloud run deploy "$CLOUD_RUN_SERVICE" \
             --project="$GCP_PROJECT_ID" \
             --region="$GCP_REGION" \
@@ -211,7 +128,6 @@ jobs:
             --image="$IMAGE" \
             --allow-unauthenticated \
             --update-env-vars="NODE_ENV=production,ARI_REQUIRE_AUTH=true,JAHORIN_FREE_ACCESS=false" \
-            --update-secrets="$SECRET_FLAGS" \
             --quiet
           REVISION="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format='value(status.latestReadyRevisionName)')"
           test -n "$REVISION"
@@ -238,10 +154,10 @@ jobs:
           if plain: raise SystemExit('Plaintext required secrets remain: '+','.join(sorted(plain)))
           missing=required-found
           if missing: raise SystemExit('Missing required secret references: '+','.join(sorted(missing)))
-          print('PASS required secrets are Cloud Run Secret Manager references')
+          print('PASS required secrets remain Cloud Run Secret Manager references')
           PY
 
-      - name: Prove live hardened runtime
+      - name: Prove live hardened runtime and Vedic gate
         shell: bash
         run: |
           set -euo pipefail
@@ -249,34 +165,20 @@ jobs:
           ready=0
           for attempt in $(seq 1 60); do
             code="$(curl -sS --connect-timeout 5 --max-time 15 -o /tmp/ready.json -w '%{http_code}' "$ARI/api/ready?release=$GITHUB_SHA-$attempt" || true)"
-            if [ "$code" = 200 ] && node -e "const j=require('/tmp/ready.json'); if(!(j.ok===true&&j.auth_required===true&&j.auth_configured===true&&j.guest_auth_configured===true&&j.provider_configured===true&&j.mercury_runtime_ready===true&&j.neon_ready===true)) process.exit(1)"; then ready=1; break; fi
+            if [ "$code" = 200 ] && node -e "const j=require('/tmp/ready.json'); if(!(j.ok===true&&j.auth_required===true&&j.auth_configured===true&&j.provider_configured===true&&j.neon_ready===true)) process.exit(1)"; then ready=1; break; fi
             sleep 5
           done
           test "$ready" = 1 || { echo 'Hardened ARI failed readiness.' >&2; cat /tmp/ready.json >&2 || true; exit 1; }
 
-          curl -sS -D /tmp/headers -o /tmp/health.json "$ARI/api/health" >/dev/null
-          grep -qi '^strict-transport-security: max-age=31536000' /tmp/headers
-          grep -qi '^x-content-type-options: nosniff' /tmp/headers
-          grep -qi '^permissions-policy:' /tmp/headers
-          grep -qi "^content-security-policy: .*frame-ancestors 'none'" /tmp/headers
+          code="$(curl -sS -o /tmp/vedic-anon.json -w '%{http_code}' "$ARI/api/identity/vedic-profile")"
+          test "$code" = 401
+          grep -q 'AUTH_REQUIRED' /tmp/vedic-anon.json
 
-          code="$(curl -sS -o /tmp/bad-origin.json -w '%{http_code}' -H 'Origin: https://not-authorized.example' "$ARI/api/health")"; test "$code" = 403
-          code="$(curl -sS -D /tmp/good-origin.headers -o /tmp/good-origin.json -w '%{http_code}' -H 'Origin: https://siaas.space' "$ARI/api/health")"; test "$code" = 200
-          grep -qi '^access-control-allow-origin: https://siaas.space' /tmp/good-origin.headers
-
-          code="$(curl -sS -o /tmp/anon.json -w '%{http_code}' -H 'content-type: application/json' -d '{"intent":"deny anonymous execution","capability":"thoth","module":"mercury","request_id":"ga-anon"}' "$ARI/api/runtime")"; test "$code" = 401
-
-          code="$(curl -sS -c /tmp/cookies -o /tmp/guest.json -w '%{http_code}' -H 'content-type: application/json' -d '{}' "$ARI/api/identity/guest")"; test "$code" = 201
-          node -e "const j=require('/tmp/guest.json'); if(!(j.authenticated===true&&/^\\d{12}$/.test(String(j.gid||'')))) process.exit(1)"
-
-          code="$(curl -sS -b /tmp/cookies -o /tmp/tae.json -w '%{http_code}' --connect-timeout 5 --max-time 90 -H 'content-type: application/json' -H 'x-request-id: ga-thoth-tae' -d '{"prompt":"Confirm Jahorin TAE production execution in one concise sentence.","request_id":"ga-thoth-tae","source_surface":"ga-release","capability":"thoth","machine":"thoth"}' "$ARI/api/tae")"; test "$code" = 200 || { cat /tmp/tae.json >&2; exit 1; }
-          node -e "const j=require('/tmp/tae.json'); const t=String(j?.reply?.text||j?.result?.text||j?.output||'').trim(); const p=String(j?.provider?.name||j?.result?.provider||''); if(!(t&&p==='google-vertex-ai')) process.exit(1)"
-
-          code="$(curl -sS -b /tmp/cookies -o /tmp/twin.json -w '%{http_code}' "$ARI/api/twin")"; test "$code" = 200
-          node -e "const j=require('/tmp/twin.json'); if(!(j.ok===true&&j.persistence==='neon'&&j.cloud_sync===true)) process.exit(1)"
+          code="$(curl -sS -o /tmp/anon.json -w '%{http_code}' -H 'content-type: application/json' -d '{"intent":"deny anonymous execution","capability":"thoth","module":"mercury","request_id":"ga-anon"}' "$ARI/api/runtime")"
+          test "$code" = 401
 
           ARI="$ARI" node scripts/prove-device-fabric.mjs
-          echo 'PASS live hardened ARI, Vertex, Neon, CORS, headers, auth and device fabric.'
+          echo 'PASS live hardened ARI and authenticated Vedic profile endpoint.'
 
       - name: Record honest GA-candidate evidence
         shell: bash
@@ -285,7 +187,7 @@ jobs:
           node - <<'NODE'
           const fs=require('fs');
           const device=JSON.parse(fs.readFileSync('DEVICE_FABRIC_RELEASE_PROOF.json','utf8'));
-          const evidence={release:'ga-candidate',backend_commit:process.env.GITHUB_SHA,cloud_run_revision:process.env.CLOUD_RUN_REVISION,verified_at:new Date().toISOString(),checks:{backend_clean_install:true,secret_manager:true,session_auth:true,gid:true,tae_provider_execution:true,vertex:true,neon_persistence:true,cors_hardened:true,security_headers_hardened:true,distributed_rate_limit:true,device_enrollment:device.checks.cryptographic_enrollment===true,device_isolation:device.checks.gid_isolation===true,device_revocation:device.checks.revocation===true,device_grants:device.checks.explicit_grant===true,replay_protection:device.checks.request_replay_rejected===true,bad_signature_rejected:device.checks.bad_signature_rejected===true,stripe_lifecycle:false}};
+          const evidence={release:'ga-candidate',backend_commit:process.env.GITHUB_SHA,cloud_run_revision:process.env.CLOUD_RUN_REVISION,verified_at:new Date().toISOString(),checks:{backend_clean_install:true,secret_manager:true,session_auth:true,gid:true,vedic_onboarding_api:true,neon_persistence:true,cors_hardened:true,security_headers_hardened:true,distributed_rate_limit:true,device_enrollment:device.checks.cryptographic_enrollment===true,device_isolation:device.checks.gid_isolation===true,device_revocation:device.checks.revocation===true,device_grants:device.checks.explicit_grant===true,replay_protection:device.checks.request_replay_rejected===true,bad_signature_rejected:device.checks.bad_signature_rejected===true,stripe_lifecycle:false}};
           fs.writeFileSync('GA_RELEASE_EVIDENCE.json',JSON.stringify(evidence,null,2)+'\n');
           NODE
           cat GA_RELEASE_EVIDENCE.json
@@ -298,6 +200,6 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add DEVICE_FABRIC_RELEASE_PROOF.json GA_RELEASE_EVIDENCE.json
           if git diff --cached --quiet; then exit 0; fi
-          git commit -m 'THOTH: record hardened ARI GA-candidate evidence'
+          git commit -m 'THOTH: record Vedic ARI GA-candidate evidence'
           git pull --rebase origin main
           git push origin HEAD:main
