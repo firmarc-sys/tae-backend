@@ -36,7 +36,7 @@ jobs:
         with:
           project_id: ${{ env.GCP_PROJECT_ID }}
 
-      - name: Capture current revision and runtime errors
+      - name: Capture created vs ready revision state
         shell: bash
         run: |
           set -euo pipefail
@@ -44,19 +44,24 @@ jobs:
           gcloud run services describe "$CLOUD_RUN_SERVICE" \
             --project="$GCP_PROJECT_ID" \
             --region="$GCP_REGION" \
-            --format='yaml(status.latestReadyRevisionName,status.traffic,spec.template.spec.containers[0].image,spec.template.spec.containers[0].command,spec.template.spec.containers[0].args)'
+            --format='yaml(status.latestCreatedRevisionName,status.latestReadyRevisionName,status.conditions,status.traffic,spec.template.spec.containers[0].image,spec.template.spec.containers[0].command,spec.template.spec.containers[0].args)'
 
-          REVISION="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format='value(status.latestReadyRevisionName)')"
-          echo "=== REVISION: $REVISION ==="
-          echo '=== RECENT LOGS ==='
-          gcloud logging read \
-            "resource.type=cloud_run_revision AND resource.labels.service_name=$CLOUD_RUN_SERVICE AND resource.labels.revision_name=$REVISION" \
-            --project="$GCP_PROJECT_ID" \
-            --freshness=30m \
-            --limit=250 \
-            --order=asc \
-            --format='value(timestamp,severity,textPayload,jsonPayload.message)' || true
+          CREATED="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format='value(status.latestCreatedRevisionName)')"
+          READY="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format='value(status.latestReadyRevisionName)')"
+          echo "LATEST_CREATED=$CREATED"
+          echo "LATEST_READY=$READY"
+
+          if [ -n "$CREATED" ]; then
+            echo '=== LATEST CREATED REVISION CONDITIONS ==='
+            gcloud run revisions describe "$CREATED" \
+              --project="$GCP_PROJECT_ID" \
+              --region="$GCP_REGION" \
+              --format='yaml(metadata.name,status.conditions,status.containerStatuses,spec.containers[0].image,spec.containers[0].command,spec.containers[0].args)'
+          fi
 
           echo '=== READY PROBE ==='
           ARI="https://ari-${GCP_PROJECT_NUMBER}.${GCP_REGION}.run.app"
           curl -sS -D - --connect-timeout 5 --max-time 20 "$ARI/api/ready?diagnostic=${GITHUB_SHA}" || true
+
+          echo '=== EDGE DIAGNOSTICS PROBE ==='
+          curl -sS -D - --connect-timeout 5 --max-time 20 "$ARI/api/edge-diagnostics?diagnostic=${GITHUB_SHA}" || true
