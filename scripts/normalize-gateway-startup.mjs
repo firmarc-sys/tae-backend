@@ -16,10 +16,41 @@ const files = [
 
 const unsafeStartupBudget = /timeout\s*=\s*(?:20_?000|30_?000)/g;
 const unsafeNeonBudget = /connectionTimeoutMillis:\s*8_?000/g;
+const authorizationOneShot = `waitForPort(innerPort)
+  .then(() => {
+    childReady = true;
+    console.log(\`ARI production inner chain ready on \${innerPort}\`);
+  })
+  .catch((error) => {
+    childReady = false;
+    rememberChildOutput("readiness", \`production child failed readiness: \${error.message}\`);
+  });`;
+const authorizationMonitor = `let readinessProbeInFlight = false;
+function refreshInnerReadiness() {
+  if (readinessProbeInFlight || childExit) return;
+  readinessProbeInFlight = true;
+  const socket = net.createConnection({ host: "127.0.0.1", port: innerPort });
+  socket.once("connect", () => {
+    socket.destroy();
+    if (!childReady) console.log(\`ARI production inner chain ready on \${innerPort}\`);
+    childReady = true;
+    readinessProbeInFlight = false;
+  });
+  socket.once("error", (error) => {
+    socket.destroy();
+    if (childReady) rememberChildOutput("readiness", \`production child became unreachable: \${error.message}\`);
+    childReady = false;
+    readinessProbeInFlight = false;
+  });
+}
+refreshInnerReadiness();
+const readinessMonitor = setInterval(refreshInnerReadiness, 1000);
+readinessMonitor.unref();`;
 
 let filesChanged = 0;
 let startupBudgetChanges = 0;
 let neonTimeoutChanges = 0;
+let readinessMonitorChanges = 0;
 const verified = [];
 
 for (const file of files) {
@@ -29,9 +60,14 @@ for (const file of files) {
   const startupMatches = before.match(unsafeStartupBudget) || [];
   const neonMatches = before.match(unsafeNeonBudget) || [];
 
-  const after = before
+  let after = before
     .replace(unsafeStartupBudget, 'timeout = 120000')
     .replace(unsafeNeonBudget, 'connectionTimeoutMillis: 30000');
+
+  if (file === 'authorization-gateway.js' && after.includes(authorizationOneShot)) {
+    after = after.replace(authorizationOneShot, authorizationMonitor);
+    readinessMonitorChanges += 1;
+  }
 
   startupBudgetChanges += startupMatches.length;
   neonTimeoutChanges += neonMatches.length;
@@ -53,12 +89,19 @@ for (const file of files) {
     throw new Error(`unsafe Neon connection timeout remains in ${file}`);
   }
   unsafeNeonBudget.lastIndex = 0;
+  if (file === 'authorization-gateway.js' && !normalized.includes('const readinessMonitor = setInterval(refreshInnerReadiness, 1000);')) {
+    throw new Error('authorization readiness monitor was not installed');
+  }
   verified.push(file);
 }
 
 if (!verified.length) {
   throw new Error('no ARI gateway source files were available to verify');
 }
+if (readinessMonitorChanges !== 1) {
+  throw new Error(`expected exactly one authorization readiness monitor replacement; got ${readinessMonitorChanges}`);
+}
 
 console.log(`ARI startup normalization verified across ${verified.length} gateway files`);
 console.log(`changed ${filesChanged} files; normalized ${startupBudgetChanges} startup budgets to 120s and ${neonTimeoutChanges} Neon connection budgets to 30s`);
+console.log('installed self-healing authorization child readiness monitor');
