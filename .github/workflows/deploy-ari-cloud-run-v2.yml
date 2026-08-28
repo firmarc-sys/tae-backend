@@ -49,10 +49,10 @@ env:
   ARTIFACT_REPOSITORY: cloud-run-source-deploy
   IMAGE_NAME: ari
   SESSION_SECRET: ari-session-secret
-  OWNER_ACCESS_CODE_SECRET: OWNER_ACCESS_CODE
+  OWNER_ACCESS_CODE_SECRET: ari-owner-access-code
   NEON_DATABASE_SECRET: ari-neon-database-url
-  SUPABASE_SERVER_SECRET: SUPABASE_SECRET_KEY
-  STRIPE_SECRET: STRIPE_SECRET_KEYy
+  SUPABASE_SERVER_SECRET: ari-supabase-secret-key
+  STRIPE_SECRET: ari-stripe-secret-key
   STRIPE_WEBHOOK_SECRET: ari-stripe-webhook-secret
   SUPABASE_URL: https://zrkkilsynurpgwrijicq.supabase.co
 
