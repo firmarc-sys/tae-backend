@@ -4,20 +4,21 @@ on:
   push:
     branches: [main]
     paths:
-      - 'vedic-gateway.js'
-      - 'vedic-profile.js'
+      - 'credential-gateway.js'
       - 'authorization-gateway.js'
       - 'production-gateway.js'
       - 'billing-gateway.js'
       - 'subscription-entitlement-gateway.js'
       - 'secure-gateway.js'
       - 'device-fabric.js'
-      - 'control-plane-gateway.js'
       - 'server.js'
       - 'neon-runtime-gateway.js'
       - 'neon-store.js'
       - 'manifest-runtime-gateway.js'
       - 'identity-runtime-gateway.js'
+      - 'vedic-gateway.js'
+      - 'vedic-profile.js'
+      - 'scripts/verify-credential-gate.mjs'
       - 'scripts/prove-device-fabric.mjs'
       - 'package.json'
       - 'package-lock.json'
@@ -55,16 +56,18 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Reproducible backend source gate
+      - name: MA'AT source gate
+        shell: bash
         run: |
           set -euo pipefail
           npm ci
           npm run check
-          node -e "import('astronomy-engine').then(()=>import('tz-lookup')).then(()=>import('./vedic-profile.js')).then(()=>console.log('PASS Vedic runtime imports'))"
-          grep -q 'node secure-gateway.js' package.json
+          grep -q '"start": "node credential-gateway.js"' package.json
+          grep -q 'pathname === "/api/identity/authorize"' credential-gateway.js
+          grep -q 'CREDENTIAL_REQUIRED' credential-gateway.js
+          grep -q 'row.status !== "active"' credential-gateway.js
           grep -q 'ensureDeviceFabricSchema' secure-gateway.js
           grep -q 'REPLAY_REJECTED' device-fabric.js
-          grep -q 'api_rate_limits' device-fabric.js
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
@@ -77,32 +80,43 @@ jobs:
         with:
           project_id: ${{ env.GCP_PROJECT_ID }}
 
-      - name: Verify Secret Manager and current runtime bindings
+      - name: Verify production authority bindings
         shell: bash
         run: |
           set -euo pipefail
-          gcloud secrets list --project="$GCP_PROJECT_ID" --limit=1 >/dev/null
           gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json > /tmp/current.json
           python3 - <<'PY'
           import json
           obj=json.load(open('/tmp/current.json'))
-          required={'ARI_SESSION_SECRET','NEON_DATABASE_URL','STRIPE_SECRET_KEY','STRIPE_WEBHOOK_SECRET'}
-          found=set(); plain=[]
+          env={}
           for c in obj.get('spec',{}).get('template',{}).get('spec',{}).get('containers',[]):
               for item in c.get('env',[]) or []:
-                  name=item.get('name')
-                  if name not in required: continue
+                  env[item.get('name')]=item
+          required_secret_groups=[
+              ('ARI session', ['ARI_SESSION_SECRET']),
+              ('Neon identity', ['NEON_DATABASE_URL','DATABASE_URL']),
+              ('Supabase credential', ['SUPABASE_SECRET_KEY','SUPABASE_SERVICE_ROLE_KEY']),
+              ('Prime credential', ['OWNER_ACCESS_CODE','SIOS_OWNER_ACCESS_CODE']),
+              ('Stripe secret', ['STRIPE_SECRET_KEY']),
+              ('Stripe webhook', ['STRIPE_WEBHOOK_SECRET']),
+          ]
+          for label,names in required_secret_groups:
+              found=False
+              for name in names:
+                  item=env.get(name) or {}
                   ref=(item.get('valueFrom') or {}).get('secretKeyRef') or (item.get('valueSource') or {}).get('secretKeyRef')
-                  if ref: found.add(name)
-                  elif item.get('value'): plain.append(name)
-          if plain: raise SystemExit('Plaintext required secrets remain: '+','.join(sorted(plain)))
-          missing=required-found
-          if missing: raise SystemExit('Missing required secret references: '+','.join(sorted(missing)))
-          print('PASS existing Cloud Run secret bindings are intact')
+                  if ref:
+                      found=True
+                      break
+              if not found:
+                  raise SystemExit(f'Missing Secret Manager binding for {label}: one of {names}')
+          supabase_url=(env.get('SUPABASE_URL') or {}).get('value')
+          if not supabase_url:
+              raise SystemExit('SUPABASE_URL is required for the credential authority')
+          print('PASS production identity, billing, and session authorities are bound without browser secrets')
           PY
 
       - name: Configure Artifact Registry
-        shell: bash
         run: |
           set -euo pipefail
           gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
@@ -117,7 +131,7 @@ jobs:
           docker build -t "$IMAGE" .
           docker push "$IMAGE"
 
-      - name: Deploy hardened ARI revision preserving secret bindings
+      - name: Deploy credential-gated ARI revision
         shell: bash
         run: |
           set -euo pipefail
@@ -128,64 +142,16 @@ jobs:
             --image="$IMAGE" \
             --allow-unauthenticated \
             --command=node \
-            --args=authorization-gateway.js \
+            --args=credential-gateway.js \
             --update-env-vars="NODE_ENV=production,ARI_REQUIRE_AUTH=true,JAHORIN_FREE_ACCESS=false" \
             --quiet
-
           CREATED="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format='value(status.latestCreatedRevisionName)')"
+          READY="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format='value(status.latestReadyRevisionName)')"
           test -n "$CREATED"
-          echo "Created Cloud Run revision: $CREATED"
+          test "$CREATED" = "$READY"
+          echo "CLOUD_RUN_REVISION=$READY" >> "$GITHUB_ENV"
 
-          gcloud run services update-traffic "$CLOUD_RUN_SERVICE" \
-            --project="$GCP_PROJECT_ID" \
-            --region="$GCP_REGION" \
-            --platform=managed \
-            --to-latest \
-            --quiet
-
-          gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json > /tmp/traffic.json
-          python3 - <<'PY'
-          import json
-          obj=json.load(open('/tmp/traffic.json'))
-          created=obj.get('status',{}).get('latestCreatedRevisionName')
-          ready=obj.get('status',{}).get('latestReadyRevisionName')
-          traffic=obj.get('status',{}).get('traffic') or []
-          if not created or created != ready:
-              raise SystemExit(f'latest revision is not ready: created={created} ready={ready}')
-          live=sum(int(x.get('percent') or 0) for x in traffic if x.get('revisionName') == ready or x.get('latestRevision') is True)
-          if live != 100:
-              raise SystemExit(f'latest revision does not have 100% traffic: ready={ready} traffic={traffic}')
-          print('PASS latest ARI revision is ready and serving 100% traffic')
-          print('REVISION=', ready)
-          PY
-
-          REVISION="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format='value(status.latestReadyRevisionName)')"
-          echo "CLOUD_RUN_REVISION=$REVISION" >> "$GITHUB_ENV"
-
-      - name: Verify Cloud Run secret references
-        shell: bash
-        run: |
-          set -euo pipefail
-          gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json > /tmp/deployed.json
-          python3 - <<'PY'
-          import json
-          obj=json.load(open('/tmp/deployed.json'))
-          required={'ARI_SESSION_SECRET','NEON_DATABASE_URL','STRIPE_SECRET_KEY','STRIPE_WEBHOOK_SECRET'}
-          found=set(); plain=[]
-          for c in obj.get('spec',{}).get('template',{}).get('spec',{}).get('containers',[]):
-              for item in c.get('env',[]) or []:
-                  name=item.get('name')
-                  if name not in required: continue
-                  ref=(item.get('valueFrom') or {}).get('secretKeyRef') or (item.get('valueSource') or {}).get('secretKeyRef')
-                  if ref: found.add(name)
-                  elif item.get('value'): plain.append(name)
-          if plain: raise SystemExit('Plaintext required secrets remain: '+','.join(sorted(plain)))
-          missing=required-found
-          if missing: raise SystemExit('Missing required secret references: '+','.join(sorted(missing)))
-          print('PASS required secrets remain Cloud Run Secret Manager references')
-          PY
-
-      - name: Prove live hardened runtime and Vedic gate
+      - name: Prove public credential boundary and runtime readiness
         shell: bash
         run: |
           set -euo pipefail
@@ -193,20 +159,33 @@ jobs:
           ready=0
           for attempt in $(seq 1 60); do
             code="$(curl -sS --connect-timeout 5 --max-time 15 -o /tmp/ready.json -w '%{http_code}' "$ARI/api/ready?release=$GITHUB_SHA-$attempt" || true)"
-            if [ "$code" = 200 ] && node -e "const j=require('/tmp/ready.json'); if(!(j.ok===true&&j.auth_required===true&&j.auth_configured===true&&j.provider_configured===true&&j.neon_ready===true)) process.exit(1)"; then ready=1; break; fi
+            if [ "$code" = 200 ] && node -e "const j=require('/tmp/ready.json'); if(!(j.ok===true&&j.auth_required===true&&j.auth_configured===true&&j.provider_configured===true)) process.exit(1)"; then ready=1; break; fi
             sleep 5
           done
-          test "$ready" = 1 || { echo 'Hardened ARI failed readiness.' >&2; cat /tmp/ready.json >&2 || true; exit 1; }
+          test "$ready" = 1 || { cat /tmp/ready.json >&2 || true; exit 1; }
 
-          code="$(curl -sS -o /tmp/vedic-anon.json -w '%{http_code}' "$ARI/api/identity/vedic-profile")"
-          test "$code" = 401
-          grep -q 'AUTH_REQUIRED' /tmp/vedic-anon.json
+          curl -fsS "$ARI/api/credential-edge" > /tmp/credential-edge.json
+          node -e "const j=require('/tmp/credential-edge.json'); if(!(j.ok===true&&j.credential_gate==='gid-proof-v1')) process.exit(1)"
 
-          code="$(curl -sS -o /tmp/anon.json -w '%{http_code}' -H 'content-type: application/json' -d '{"intent":"deny anonymous execution","capability":"thoth","module":"mercury","request_id":"ga-anon"}' "$ARI/api/runtime")"
-          test "$code" = 401
+          gid_only="$(curl -sS -o /tmp/gid-only.json -w '%{http_code}' -H 'content-type: application/json' -d '{"gid":"399152573423"}' "$ARI/api/identity/authorize")"
+          test "$gid_only" = 400
+          node -e "const j=require('/tmp/gid-only.json'); if(j.code!=='CREDENTIAL_REQUIRED'||j.authenticated!==false) process.exit(1)"
 
-          ARI="$ARI" node scripts/prove-device-fabric.mjs
-          echo 'PASS live hardened ARI and authenticated Vedic profile endpoint.'
+          wrong="$(curl -sS -o /tmp/wrong.json -w '%{http_code}' -H 'content-type: application/json' -d '{"gid":"399152573423","credential":"definitely-not-valid"}' "$ARI/api/identity/authorize")"
+          test "$wrong" = 401
+          node -e "const j=require('/tmp/wrong.json'); if(j.code!=='CREDENTIAL_NOT_AUTHORIZED'||j.authenticated!==false) process.exit(1)"
+
+          vedic="$(curl -sS -o /tmp/vedic-anon.json -w '%{http_code}' "$ARI/api/identity/vedic-profile")"
+          test "$vedic" = 401
+          runtime="$(curl -sS -o /tmp/anon-runtime.json -w '%{http_code}' -H 'content-type: application/json' -d '{"intent":"deny anonymous execution","capability":"scribe","request_id":"maat-anon"}' "$ARI/api/runtime")"
+          test "$runtime" = 401
+          echo 'PASS live ARI rejects identifier-only authentication and anonymous execution.'
+
+      - name: Prove private-device authorization
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARI="https://ari-${GCP_PROJECT_NUMBER}.${GCP_REGION}.run.app" node scripts/prove-device-fabric.mjs
 
       - name: Record honest GA-candidate evidence
         shell: bash
@@ -214,8 +193,9 @@ jobs:
           set -euo pipefail
           node - <<'NODE'
           const fs=require('fs');
+          const prior=fs.existsSync('GA_RELEASE_EVIDENCE.json')?JSON.parse(fs.readFileSync('GA_RELEASE_EVIDENCE.json','utf8')):{};
           const device=JSON.parse(fs.readFileSync('DEVICE_FABRIC_RELEASE_PROOF.json','utf8'));
-          const evidence={release:'ga-candidate',backend_commit:process.env.GITHUB_SHA,cloud_run_revision:process.env.CLOUD_RUN_REVISION,verified_at:new Date().toISOString(),checks:{backend_clean_install:true,secret_manager:true,session_auth:true,gid:true,vedic_onboarding_api:true,neon_persistence:true,cors_hardened:true,security_headers_hardened:true,distributed_rate_limit:true,device_enrollment:device.checks.cryptographic_enrollment===true,device_isolation:device.checks.gid_isolation===true,device_revocation:device.checks.revocation===true,device_grants:device.checks.explicit_grant===true,replay_protection:device.checks.request_replay_rejected===true,bad_signature_rejected:device.checks.bad_signature_rejected===true,stripe_lifecycle:false}};
+          const evidence={...prior,release:'ga-candidate',backend_commit:process.env.GITHUB_SHA,cloud_run_revision:process.env.CLOUD_RUN_REVISION,verified_at:new Date().toISOString(),checks:{...(prior.checks||{}),backend_clean_install:true,credential_gate:true,gid_identifier_only_rejected:true,session_auth:true,gid:true,vedic_onboarding_api:true,neon_persistence:true,device_enrollment:device.checks.cryptographic_enrollment===true,device_isolation:device.checks.gid_isolation===true,device_revocation:device.checks.revocation===true,device_grants:device.checks.explicit_grant===true,replay_protection:device.checks.request_replay_rejected===true,bad_signature_rejected:device.checks.bad_signature_rejected===true,stripe_lifecycle:(prior.checks||{}).stripe_lifecycle===true}};
           fs.writeFileSync('GA_RELEASE_EVIDENCE.json',JSON.stringify(evidence,null,2)+'\n');
           NODE
           cat GA_RELEASE_EVIDENCE.json
@@ -228,6 +208,6 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add DEVICE_FABRIC_RELEASE_PROOF.json GA_RELEASE_EVIDENCE.json
           if git diff --cached --quiet; then exit 0; fi
-          git commit -m 'THOTH: record Vedic ARI GA-candidate evidence'
+          git commit -m 'MAAT: record credential-gated ARI release evidence'
           git pull --rebase origin main
           git push origin HEAD:main

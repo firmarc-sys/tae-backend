@@ -7,7 +7,8 @@
     "node": ">=20"
   },
   "scripts": {
-    "start": "node authorization-gateway.js",
+    "start": "node credential-gateway.js",
+    "start:credential": "node credential-gateway.js",
     "start:vedic": "node vedic-gateway.js",
     "start:authorization": "node authorization-gateway.js",
     "start:production": "node production-gateway.js",
@@ -20,8 +21,9 @@
     "start:manifest": "node manifest-runtime-gateway.js",
     "start:identity": "node identity-runtime-gateway.js",
     "start:inner": "node server.js",
-    "check": "node --check vedic-gateway.js && node --check authorization-gateway.js && node --check production-gateway.js && node --check vedic-profile.js && node --check billing-gateway.js && node --check subscription-entitlement-gateway.js && node --check universal-capability-gateway.js && node --check capability-fabric.js && node --check secure-gateway.js && node --check device-fabric.js && node --check control-plane-gateway.js && node --check neon-runtime-gateway.js && node --check neon-store.js && node --check manifest-runtime-gateway.js && node --check identity-runtime-gateway.js && node --check server.js && node --check thoth-voice.js",
-    "dev": "node --watch authorization-gateway.js"
+    "verify:credential": "node scripts/verify-credential-gate.mjs",
+    "check": "node --check credential-gateway.js && node --check vedic-gateway.js && node --check authorization-gateway.js && node --check production-gateway.js && node --check vedic-profile.js && node --check billing-gateway.js && node --check subscription-entitlement-gateway.js && node --check universal-capability-gateway.js && node --check capability-fabric.js && node --check secure-gateway.js && node --check device-fabric.js && node --check control-plane-gateway.js && node --check neon-runtime-gateway.js && node --check neon-store.js && node --check manifest-runtime-gateway.js && node --check identity-runtime-gateway.js && node --check server.js && node --check thoth-voice.js && node scripts/verify-credential-gate.mjs",
+    "dev": "node --watch credential-gateway.js"
   },
   "dependencies": {
     "@google/genai": "^2.18.0",
