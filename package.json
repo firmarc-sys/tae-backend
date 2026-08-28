@@ -8,7 +8,7 @@
   },
   "scripts": {
     "postinstall": "node scripts/normalize-gateway-startup.mjs",
-    "start": "node scripts/normalize-gateway-startup.mjs && node credential-gateway.js",
+    "start": "node credential-gateway.js",
     "start:credential": "node credential-gateway.js",
     "start:vedic": "node vedic-gateway.js",
     "start:authorization": "node authorization-gateway.js",
