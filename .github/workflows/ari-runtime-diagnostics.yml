@@ -69,6 +69,7 @@ jobs:
           echo '=== RECENT CLOUD RUN RUNTIME LOGS ==='
           # Read only recent ARI runtime output. Do not print environment variables,
           # revision specs with secret refs, or Secret Manager payloads.
+          # Final-pass trigger: inspect persistent nested-chain readiness only.
           gcloud logging read \
             'resource.type="cloud_run_revision" AND resource.labels.service_name="ari"' \
             --project="$GCP_PROJECT_ID" \
