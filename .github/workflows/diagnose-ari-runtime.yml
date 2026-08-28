@@ -39,14 +39,21 @@ jobs:
           import json
           obj=json.load(open('/tmp/service.json'))
           status=obj.get('status',{})
-          spec=obj.get('spec',{}).get('template',{}).get('spec',{})
+          template=obj.get('spec',{}).get('template',{})
+          spec=template.get('spec',{})
           c=(spec.get('containers') or [{}])[0]
           print('latestCreatedRevisionName=',status.get('latestCreatedRevisionName'))
           print('latestReadyRevisionName=',status.get('latestReadyRevisionName'))
           print('traffic=',status.get('traffic'))
+          print('image=',c.get('image'))
           print('command=',c.get('command'))
           print('args=',c.get('args'))
           print('containerPort=',((c.get('ports') or [{}])[0]).get('containerPort'))
+          metadata=template.get('metadata',{}) or {}
+          annotations=metadata.get('annotations',{}) or {}
+          for key in sorted(annotations):
+            if any(token in key.lower() for token in ('client-name','client-version','operation-id','startup','cpu-throttling')):
+              print(f'ANNOTATION {key}={annotations[key]}')
           safe_values={
             'NODE_ENV','ARI_REQUIRE_AUTH','JAHORIN_FREE_ACCESS','SIOS_OWNER_GID',
             'CREDENTIAL_GATEWAY_INNER_PORT','AUTHORIZATION_GATEWAY_INNER_PORT',
