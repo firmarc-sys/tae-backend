@@ -14,4 +14,5 @@ EXPOSE 8080
 
 USER node
 # Vedic runtime dependencies are locked by package-lock.json.
+# Canonical ARI deploy trigger after removing billing-edge mutation race.
 CMD ["npm", "start"]
