@@ -25,6 +25,7 @@ on:
       - 'scripts/verify-credential-gate.mjs'
       - 'scripts/verify-deploy-authority.mjs'
       - 'scripts/prove-device-fabric.mjs'
+      - 'scripts/prove-real-stripe-lifecycle.mjs'
       - 'package.json'
       - 'package-lock.json'
       - 'Dockerfile'
@@ -75,6 +76,7 @@ jobs:
           set -euo pipefail
           npm ci
           npm run check
+          node --check scripts/prove-real-stripe-lifecycle.mjs
           node -e "import('astronomy-engine').then(()=>import('tz-lookup')).then(()=>import('./vedic-profile.js')).then(()=>console.log('PASS Vedic runtime imports'))"
           grep -q '"start": "node credential-gateway.js"' package.json
           grep -q 'pathname === "/api/identity/authorize"' credential-gateway.js
@@ -122,6 +124,27 @@ jobs:
             test -n "$version" || { echo "No enabled Secret Manager version for $label: $secret" >&2; exit 1; }
             echo "PASS $label authority has an enabled Secret Manager version: $secret"
           done
+
+      - name: Rotate live Stripe webhook authority for requested real lifecycle proof
+        if: ${{ hashFiles('MAAT_REAL_STRIPE_LIFECYCLE_REQUEST.json') != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          gcloud secrets versions access latest --secret="$STRIPE_SECRET" --project="$GCP_PROJECT_ID" > /tmp/stripe-secret-key
+          gcloud secrets versions access latest --secret="$NEON_DATABASE_SECRET" --project="$GCP_PROJECT_ID" > /tmp/neon-database-url
+          test -s /tmp/stripe-secret-key
+          test -s /tmp/neon-database-url
+          STRIPE_SECRET_KEY_FILE=/tmp/stripe-secret-key \
+          NEON_DATABASE_URL_FILE=/tmp/neon-database-url \
+            node scripts/prove-real-stripe-lifecycle.mjs rotate
+          test -s /tmp/new-stripe-webhook-secret
+          gcloud secrets versions add "$STRIPE_WEBHOOK_SECRET" \
+            --project="$GCP_PROJECT_ID" \
+            --data-file=/tmp/new-stripe-webhook-secret \
+            --quiet >/dev/null
+          echo 'REAL_STRIPE_LIFECYCLE_REQUESTED=true' >> "$GITHUB_ENV"
+          echo 'PASS rotated Stripe signing authority directly into Secret Manager without exposing it.'
 
       - name: Configure Artifact Registry
         run: |
@@ -230,7 +253,31 @@ jobs:
           set -euo pipefail
           ARI="https://ari-${GCP_PROJECT_NUMBER}.${GCP_REGION}.run.app" node scripts/prove-device-fabric.mjs
 
-      - name: Record honest GA-candidate evidence
+      - name: Prove real Stripe Customer and Subscription lifecycle into Neon
+        if: ${{ env.REAL_STRIPE_LIFECYCLE_REQUESTED == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          STRIPE_SECRET_KEY_FILE=/tmp/stripe-secret-key \
+          NEON_DATABASE_URL_FILE=/tmp/neon-database-url \
+            node scripts/prove-real-stripe-lifecycle.mjs verify
+          node -e "const p=require('./STRIPE_LIFECYCLE_PROOF.json'); if(!(p.ok===true&&p.real_stripe_object_lifecycle===true&&p.no_payment_capture===true&&p.stripe_status_after_cancel==='canceled')) process.exit(1)"
+          echo 'STRIPE_LIFECYCLE_VERIFIED=true' >> "$GITHUB_ENV"
+          echo 'PASS real live Stripe Customer -> Subscription -> signed webhook -> Neon -> cancellation lifecycle.'
+
+      - name: Remove ephemeral billing authorities from runner
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set +e
+          for file in /tmp/stripe-secret-key /tmp/neon-database-url /tmp/new-stripe-webhook-secret /tmp/new-stripe-webhook-endpoint-id /tmp/real-stripe-rotation.json; do
+            if [ -f "$file" ]; then
+              if command -v shred >/dev/null 2>&1; then shred -u "$file"; else rm -f "$file"; fi
+            fi
+          done
+          exit 0
+
+      - name: Record honest GA evidence
         shell: bash
         run: |
           set -euo pipefail
@@ -238,7 +285,11 @@ jobs:
           const fs=require('fs');
           const prior=fs.existsSync('GA_RELEASE_EVIDENCE.json')?JSON.parse(fs.readFileSync('GA_RELEASE_EVIDENCE.json','utf8')):{};
           const device=JSON.parse(fs.readFileSync('DEVICE_FABRIC_RELEASE_PROOF.json','utf8'));
-          const evidence={...prior,release:'ga-candidate',backend_commit:process.env.GITHUB_SHA,cloud_run_revision:process.env.CLOUD_RUN_REVISION,verified_at:new Date().toISOString(),checks:{...(prior.checks||{}),backend_clean_install:true,credential_gate:true,gid_identifier_only_rejected:true,session_auth:true,gid:true,vedic_onboarding_api:true,neon_persistence:true,device_enrollment:device.checks.cryptographic_enrollment===true,device_isolation:device.checks.gid_isolation===true,device_revocation:device.checks.revocation===true,device_grants:device.checks.explicit_grant===true,replay_protection:device.checks.request_replay_rejected===true,bad_signature_rejected:device.checks.bad_signature_rejected===true,stripe_lifecycle:(prior.checks||{}).stripe_lifecycle===true}};
+          const stripeLifecycle=process.env.STRIPE_LIFECYCLE_VERIFIED==='true'||(prior.checks||{}).stripe_lifecycle===true;
+          const checks={...(prior.checks||{}),backend_clean_install:true,credential_gate:true,gid_identifier_only_rejected:true,session_auth:true,gid:true,vedic_onboarding_api:true,neon_persistence:true,device_enrollment:device.checks.cryptographic_enrollment===true,device_isolation:device.checks.gid_isolation===true,device_revocation:device.checks.revocation===true,device_grants:device.checks.explicit_grant===true,replay_protection:device.checks.request_replay_rejected===true,bad_signature_rejected:device.checks.bad_signature_rejected===true,stripe_lifecycle:stripeLifecycle};
+          const required=['backend_clean_install','credential_gate','gid_identifier_only_rejected','session_auth','gid','vedic_onboarding_api','neon_persistence','device_enrollment','device_isolation','device_revocation','device_grants','replay_protection','bad_signature_rejected','stripe_lifecycle'];
+          const gaReady=required.every((key)=>checks[key]===true);
+          const evidence={...prior,release:gaReady?'ga':'ga-candidate',ga_status:gaReady?'VERIFIED':'BLOCKED',backend_commit:process.env.GITHUB_SHA,cloud_run_revision:process.env.CLOUD_RUN_REVISION,verified_at:new Date().toISOString(),checks};
           fs.writeFileSync('GA_RELEASE_EVIDENCE.json',JSON.stringify(evidence,null,2)+'\n');
           NODE
           cat GA_RELEASE_EVIDENCE.json
@@ -250,7 +301,11 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add DEVICE_FABRIC_RELEASE_PROOF.json GA_RELEASE_EVIDENCE.json
+          if [ "${STRIPE_LIFECYCLE_VERIFIED:-false}" = "true" ]; then
+            git add STRIPE_LIFECYCLE_PROOF.json
+            git rm -f MAAT_REAL_STRIPE_LIFECYCLE_REQUEST.json
+          fi
           if git diff --cached --quiet; then exit 0; fi
-          git commit -m 'MAAT: record credential-gated ARI release evidence'
+          git commit -m 'MAAT: record verified ARI GA release evidence'
           git pull --rebase origin main
           git push origin HEAD:main
