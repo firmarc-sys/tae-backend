@@ -41,6 +41,7 @@ env:
   CLOUD_RUN_SERVICE: ari
   ARTIFACT_REPOSITORY: cloud-run-source-deploy
   IMAGE_NAME: ari
+  OWNER_ACCESS_CODE_SECRET: ari-owner-access-code
 
 jobs:
   deploy:
@@ -62,6 +63,7 @@ jobs:
           set -euo pipefail
           npm ci
           npm run check
+          node -e "import('astronomy-engine').then(()=>import('tz-lookup')).then(()=>import('./vedic-profile.js')).then(()=>console.log('PASS Vedic runtime imports'))"
           grep -q '"start": "node credential-gateway.js"' package.json
           grep -q 'pathname === "/api/identity/authorize"' credential-gateway.js
           grep -q 'CREDENTIAL_REQUIRED' credential-gateway.js
@@ -80,7 +82,7 @@ jobs:
         with:
           project_id: ${{ env.GCP_PROJECT_ID }}
 
-      - name: Verify production authority bindings
+      - name: Verify production authorities and canonical Prime secret
         shell: bash
         run: |
           set -euo pipefail
@@ -96,7 +98,6 @@ jobs:
               ('ARI session', ['ARI_SESSION_SECRET']),
               ('Neon identity', ['NEON_DATABASE_URL','DATABASE_URL']),
               ('Supabase credential', ['SUPABASE_SECRET_KEY','SUPABASE_SERVICE_ROLE_KEY']),
-              ('Prime credential', ['OWNER_ACCESS_CODE','SIOS_OWNER_ACCESS_CODE']),
               ('Stripe secret', ['STRIPE_SECRET_KEY']),
               ('Stripe webhook', ['STRIPE_WEBHOOK_SECRET']),
           ]
@@ -113,8 +114,13 @@ jobs:
           supabase_url=(env.get('SUPABASE_URL') or {}).get('value')
           if not supabase_url:
               raise SystemExit('SUPABASE_URL is required for the credential authority')
-          print('PASS production identity, billing, and session authorities are bound without browser secrets')
+          print('PASS existing session, identity, Supabase, and Stripe authorities remain Secret Manager backed')
           PY
+
+          gcloud secrets describe "$OWNER_ACCESS_CODE_SECRET" --project="$GCP_PROJECT_ID" >/dev/null
+          OWNER_VERSION="$(gcloud secrets versions list "$OWNER_ACCESS_CODE_SECRET" --project="$GCP_PROJECT_ID" --filter='state=ENABLED' --limit=1 --sort-by='~createTime' --format='value(name)')"
+          test -n "$OWNER_VERSION" || { echo "No enabled version exists for $OWNER_ACCESS_CODE_SECRET" >&2; exit 1; }
+          echo "PASS canonical Prime credential secret exists with an enabled version: $OWNER_ACCESS_CODE_SECRET"
 
       - name: Configure Artifact Registry
         run: |
@@ -144,12 +150,43 @@ jobs:
             --command=node \
             --args=credential-gateway.js \
             --update-env-vars="NODE_ENV=production,ARI_REQUIRE_AUTH=true,JAHORIN_FREE_ACCESS=false" \
+            --update-secrets="OWNER_ACCESS_CODE=${OWNER_ACCESS_CODE_SECRET}:latest" \
             --quiet
-          CREATED="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format='value(status.latestCreatedRevisionName)')"
-          READY="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format='value(status.latestReadyRevisionName)')"
-          test -n "$CREATED"
-          test "$CREATED" = "$READY"
-          echo "CLOUD_RUN_REVISION=$READY" >> "$GITHUB_ENV"
+
+          gcloud run services update-traffic "$CLOUD_RUN_SERVICE" \
+            --project="$GCP_PROJECT_ID" \
+            --region="$GCP_REGION" \
+            --platform=managed \
+            --to-latest \
+            --quiet
+
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json > /tmp/deployed.json
+          python3 - <<'PY'
+          import json, os
+          obj=json.load(open('/tmp/deployed.json'))
+          status=obj.get('status',{})
+          created=status.get('latestCreatedRevisionName')
+          ready=status.get('latestReadyRevisionName')
+          if not created or created != ready:
+              raise SystemExit(f'latest revision is not ready: created={created} ready={ready}')
+          traffic=status.get('traffic') or []
+          live=sum(int(x.get('percent') or 0) for x in traffic if x.get('revisionName') == ready or x.get('latestRevision') is True)
+          if live != 100:
+              raise SystemExit(f'latest revision does not have 100% traffic: ready={ready} traffic={traffic}')
+          c=(obj.get('spec',{}).get('template',{}).get('spec',{}).get('containers') or [{}])[0]
+          if (c.get('command') or []) != ['node'] or (c.get('args') or []) != ['credential-gateway.js']:
+              raise SystemExit(f'wrong public edge command: {c.get("command")} {c.get("args")}')
+          env={item.get('name'):item for item in c.get('env',[]) or []}
+          owner=env.get('OWNER_ACCESS_CODE') or {}
+          ref=(owner.get('valueFrom') or {}).get('secretKeyRef') or (owner.get('valueSource') or {}).get('secretKeyRef')
+          if not ref:
+              raise SystemExit('OWNER_ACCESS_CODE is not a Secret Manager reference after deployment')
+          print('PASS credential-gateway.js is the sole public ARI edge with 100% traffic')
+          print('PASS OWNER_ACCESS_CODE is Secret Manager backed')
+          print('REVISION', ready)
+          with open(os.environ['GITHUB_ENV'],'a') as f:
+              f.write(f'CLOUD_RUN_REVISION={ready}\n')
+          PY
 
       - name: Prove public credential boundary and runtime readiness
         shell: bash
@@ -159,7 +196,7 @@ jobs:
           ready=0
           for attempt in $(seq 1 60); do
             code="$(curl -sS --connect-timeout 5 --max-time 15 -o /tmp/ready.json -w '%{http_code}' "$ARI/api/ready?release=$GITHUB_SHA-$attempt" || true)"
-            if [ "$code" = 200 ] && node -e "const j=require('/tmp/ready.json'); if(!(j.ok===true&&j.auth_required===true&&j.auth_configured===true&&j.provider_configured===true)) process.exit(1)"; then ready=1; break; fi
+            if [ "$code" = 200 ] && node -e "const j=require('/tmp/ready.json'); if(!(j.ok===true&&j.auth_required===true&&j.auth_configured===true&&j.provider_configured===true&&j.neon_ready===true)) process.exit(1)"; then ready=1; break; fi
             sleep 5
           done
           test "$ready" = 1 || { cat /tmp/ready.json >&2 || true; exit 1; }
