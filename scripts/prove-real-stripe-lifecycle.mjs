@@ -82,7 +82,12 @@ async function verify() {
     const rotatedEndpointId = fs.readFileSync('/tmp/new-stripe-webhook-endpoint-id', 'utf8').trim();
     if (!rotatedEndpointId) throw new Error('rotated webhook endpoint id is unavailable');
 
+    const customer = await stripe.customers.retrieve(request.customer_id);
+    if (!customer || customer.deleted) throw new Error('proof customer is unavailable');
+    if (customer.livemode !== true) throw new Error('proof customer is not a live-mode Stripe object');
+
     const before = await stripe.subscriptions.retrieve(request.subscription_id, { expand: ['latest_invoice'] });
+    if (before.livemode !== true) throw new Error('proof subscription is not a live-mode Stripe object');
     if (before.customer !== request.customer_id) throw new Error('proof subscription customer mismatch');
     if (before.metadata?.gid !== request.proof_gid) throw new Error('proof subscription GID mismatch');
     if (before.status !== 'trialing') throw new Error(`proof subscription must be trialing before verification, got ${before.status}`);
@@ -135,6 +140,7 @@ async function verify() {
       secret_manager_authority: true,
       stripe_event_source: 'real-live-stripe-object-lifecycle',
       real_stripe_object_lifecycle: true,
+      live_mode_objects: true,
       no_payment_capture: amountPaidBefore === 0,
       customer_id: request.customer_id,
       subscription_id: request.subscription_id,
