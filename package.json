@@ -1,13 +1,14 @@
 {
   "name": "tae-backend",
-  "version": "1.8.0",
+  "version": "1.8.1",
   "private": true,
   "type": "module",
   "engines": {
     "node": ">=20"
   },
   "scripts": {
-    "start": "node production-gateway.js",
+    "start": "node authorization-gateway.js",
+    "start:authorization": "node authorization-gateway.js",
     "start:production": "node production-gateway.js",
     "start:billing": "node billing-gateway.js",
     "start:entitlements": "node subscription-entitlement-gateway.js",
@@ -18,8 +19,8 @@
     "start:manifest": "node manifest-runtime-gateway.js",
     "start:identity": "node identity-runtime-gateway.js",
     "start:inner": "node server.js",
-    "check": "node --check production-gateway.js && node --check billing-gateway.js && node --check subscription-entitlement-gateway.js && node --check universal-capability-gateway.js && node --check capability-fabric.js && node --check secure-gateway.js && node --check device-fabric.js && node --check control-plane-gateway.js && node --check neon-runtime-gateway.js && node --check neon-store.js && node --check manifest-runtime-gateway.js && node --check identity-runtime-gateway.js && node --check server.js && node --check thoth-voice.js",
-    "dev": "node --watch production-gateway.js"
+    "check": "node --check authorization-gateway.js && node --check production-gateway.js && node --check billing-gateway.js && node --check subscription-entitlement-gateway.js && node --check universal-capability-gateway.js && node --check capability-fabric.js && node --check secure-gateway.js && node --check device-fabric.js && node --check control-plane-gateway.js && node --check neon-runtime-gateway.js && node --check neon-store.js && node --check manifest-runtime-gateway.js && node --check identity-runtime-gateway.js && node --check server.js && node --check thoth-voice.js",
+    "dev": "node --watch authorization-gateway.js"
   },
   "dependencies": {
     "@google/genai": "^2.18.0",
