@@ -89,3 +89,6 @@ jobs:
           test "$CODE" = 401
           grep -q 'AUTH_REQUIRED' /tmp/vedic-anon.json
           echo 'PASS Vedic endpoint is live and GID-authenticated.'
+
+      - name: Report deployment proof
+        run: echo "PASS Vedic onboarding runtime deployed and authenticated."
