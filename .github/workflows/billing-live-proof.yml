@@ -44,17 +44,10 @@ jobs:
         with:
           project_id: ${{ env.GCP_PROJECT_ID }}
 
-      - name: Promote billing gateway to Cloud Run edge
+      - name: Verify canonical ARI edge without mutating production
         shell: bash
         run: |
           set -euo pipefail
-          gcloud run services update "$CLOUD_RUN_SERVICE" \
-            --project="$GCP_PROJECT_ID" \
-            --region="$GCP_REGION" \
-            --platform=managed \
-            --command=node \
-            --args=billing-gateway.js \
-            --quiet
           gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json > /tmp/service.json
           python3 - <<'PY'
           import json
@@ -62,12 +55,13 @@ jobs:
           c=(obj.get('spec',{}).get('template',{}).get('spec',{}).get('containers') or [{}])[0]
           command=c.get('command') or []
           args=c.get('args') or []
-          if command != ['node'] or args != ['billing-gateway.js']:
-              raise SystemExit(f'Cloud Run command mismatch command={command} args={args}')
+          if command != ['node'] or args != ['authorization-gateway.js']:
+              raise SystemExit(f'Cloud Run edge is not canonical: command={command} args={args}')
           print('IMAGE=', c.get('image'))
           print('COMMAND=', command)
           print('ARGS=', args)
-          print('REVISION=', obj.get('status',{}).get('latestReadyRevisionName'))
+          print('LATEST_CREATED=', obj.get('status',{}).get('latestCreatedRevisionName'))
+          print('LATEST_READY=', obj.get('status',{}).get('latestReadyRevisionName'))
           PY
 
       - name: Prove live billing catalog authority
