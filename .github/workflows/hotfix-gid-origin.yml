@@ -157,3 +157,5 @@ jobs:
           test "$code" = 200 || { cat /tmp/catalog.json >&2; exit 1; }
           grep -qi '^access-control-allow-origin: https://jahorin-ga.vercel.app' /tmp/catalog.headers
           echo 'PASS Jahorin Vercel origin can reach GID session, authorization, and billing APIs.'
+
+# execution trigger: 2026-08-27 gid-load-hotfix
