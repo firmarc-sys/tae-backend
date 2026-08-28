@@ -1,0 +1,62 @@
+name: ARI Runtime Diagnostics
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/ari-runtime-diagnostics.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: project-7e6f2720-0291-4c91-8c3
+  GCP_PROJECT_NUMBER: '689058655022'
+  GCP_REGION: us-west1
+  CLOUD_RUN_SERVICE: ari
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/${{ env.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github/providers/github
+          service_account: github-actions@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Capture current revision and runtime errors
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== SERVICE ==='
+          gcloud run services describe "$CLOUD_RUN_SERVICE" \
+            --project="$GCP_PROJECT_ID" \
+            --region="$GCP_REGION" \
+            --format='yaml(status.latestReadyRevisionName,status.traffic,spec.template.spec.containers[0].image,spec.template.spec.containers[0].command,spec.template.spec.containers[0].args)'
+
+          REVISION="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format='value(status.latestReadyRevisionName)')"
+          echo "=== REVISION: $REVISION ==="
+          echo '=== RECENT LOGS ==='
+          gcloud logging read \
+            "resource.type=cloud_run_revision AND resource.labels.service_name=$CLOUD_RUN_SERVICE AND resource.labels.revision_name=$REVISION" \
+            --project="$GCP_PROJECT_ID" \
+            --freshness=30m \
+            --limit=250 \
+            --order=asc \
+            --format='value(timestamp,severity,textPayload,jsonPayload.message)' || true
+
+          echo '=== READY PROBE ==='
+          ARI="https://ari-${GCP_PROJECT_NUMBER}.${GCP_REGION}.run.app"
+          curl -sS -D - --connect-timeout 5 --max-time 20 "$ARI/api/ready?diagnostic=${GITHUB_SHA}" || true
