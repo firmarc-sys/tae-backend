@@ -29,13 +29,30 @@ const allowedOrigins = new Set(
     .filter(Boolean),
 );
 
+let childReady = false;
+let childExit = null;
+let recentChildOutput = [];
+function rememberChildOutput(source, chunk) {
+  const text = String(chunk || "").trim();
+  if (!text) return;
+  for (const line of text.split(/\r?\n/)) {
+    recentChildOutput.push(`${source}: ${line}`);
+    if (recentChildOutput.length > 80) recentChildOutput.shift();
+  }
+  console.log(`[production-child:${source}] ${text}`);
+}
+
 const child = spawn(process.execPath, ["production-gateway.js"], {
   env: { ...process.env, PORT: String(innerPort) },
-  stdio: "inherit",
+  stdio: ["ignore", "pipe", "pipe"],
 });
+child.stdout?.on("data", (chunk) => rememberChildOutput("stdout", chunk));
+child.stderr?.on("data", (chunk) => rememberChildOutput("stderr", chunk));
+child.on("error", (error) => rememberChildOutput("spawn", error?.stack || error?.message || error));
 child.on("exit", (code, signal) => {
-  console.error(`ARI production gateway exited code=${code} signal=${signal || ""}`);
-  process.exit(code || 1);
+  childReady = false;
+  childExit = { code, signal: signal || null, at: new Date().toISOString() };
+  rememberChildOutput("exit", `code=${code} signal=${signal || ""}`);
 });
 
 function requestId(req) {
@@ -270,8 +287,40 @@ async function handle(req, res) {
       return res.end();
     }
 
+    if (pathname === "/api/edge-diagnostics") {
+      return json(req, res, childReady ? 200 : 503, {
+        ok: childReady,
+        edge_listening: true,
+        inner_port: innerPort,
+        child_ready: childReady,
+        child_exit: childExit,
+        child_output: recentChildOutput.slice(-40),
+      });
+    }
+
+    if (pathname === "/api/ready" && !childReady) {
+      return json(req, res, 503, {
+        ok: false,
+        code: "INNER_CHAIN_NOT_READY",
+        edge_listening: true,
+        inner_port: innerPort,
+        child_ready: false,
+        child_exit: childExit,
+        child_output: recentChildOutput.slice(-40),
+      });
+    }
+
     if (req.method === "POST" && (pathname === "/api/runtime" || pathname === "/runtime")) {
       return await authorizeRuntime(req, res);
+    }
+
+    if (!childReady) {
+      return json(req, res, 503, {
+        ok: false,
+        code: "INNER_CHAIN_NOT_READY",
+        error: "ARI inner production chain is not ready",
+        child_exit: childExit,
+      });
     }
 
     return proxyStream(req, res);
@@ -287,7 +336,7 @@ async function handle(req, res) {
 
 const gateway = http.createServer((req, res) => void handle(req, res));
 
-function waitForPort(port, { timeout = 20000, interval = 100 } = {}) {
+function waitForPort(port, { timeout = 30000, interval = 120 } = {}) {
   const deadline = Date.now() + timeout;
   return new Promise((resolve, reject) => {
     const attempt = () => {
@@ -303,12 +352,18 @@ function waitForPort(port, { timeout = 20000, interval = 100 } = {}) {
   });
 }
 
+gateway.listen(outerPort, "0.0.0.0", () => {
+  console.log(`ARI GID authorization edge listening on ${outerPort}; awaiting production inner ${innerPort}`);
+});
+
 waitForPort(innerPort)
-  .then(() => gateway.listen(outerPort, "0.0.0.0", () => console.log(`ARI GID authorization gateway ${outerPort}; production inner ${innerPort}`)))
+  .then(() => {
+    childReady = true;
+    console.log(`ARI production inner chain ready on ${innerPort}`);
+  })
   .catch((error) => {
-    console.error(`ARI production child failed readiness: ${error.message}`);
-    if (!child.killed) child.kill("SIGTERM");
-    process.exit(1);
+    childReady = false;
+    rememberChildOutput("readiness", `production child failed readiness: ${error.message}`);
   });
 
 function shutdown(signal) {
