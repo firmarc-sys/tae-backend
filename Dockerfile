@@ -15,5 +15,5 @@ EXPOSE 8080
 
 USER node
 # Vedic runtime dependencies are locked by package-lock.json.
-# Nested gateway startup budgets are normalized during the image build.
+# Nested gateway and authorization-edge startup budgets are normalized during the image build.
 CMD ["npm", "start"]
