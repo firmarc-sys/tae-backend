@@ -15,7 +15,11 @@ import {
 } from "./capability-fabric.js";
 
 const outerPort = Number(process.env.PORT || 8080);
-const innerPort = Number(process.env.UNIVERSAL_CAPABILITY_INNER_PORT || 8082);
+// 8082 is reserved by the manifest -> identity -> core runtime chain.
+// Using it here causes secure-gateway and the core runtime to contend for
+// the same loopback port once the authorization/production/billing layers
+// wrap the full gateway stack in one Cloud Run container.
+const innerPort = Number(process.env.UNIVERSAL_CAPABILITY_INNER_PORT || 8085);
 const SESSION_COOKIE = "ari_session";
 const OWNER_GID = process.env.SIOS_OWNER_GID || "399152573423";
 const legacyJwtSecret = process.env.JWT_SECRET || "";
@@ -67,18 +71,12 @@ function requestId(req) {
 }
 
 function parseCookies(header = "") {
-  return Object.fromEntries(
-    String(header)
-      .split(";")
-      .map((part) => part.trim())
-      .filter(Boolean)
-      .map((part) => {
-        const index = part.indexOf("=");
-        return index === -1
-          ? [decodeURIComponent(part), ""]
-          : [decodeURIComponent(part.slice(0, index)), decodeURIComponent(part.slice(index + 1))];
-      }),
-  );
+  return Object.fromEntries(String(header).split(";").map((part) => part.trim()).filter(Boolean).map((part) => {
+    const index = part.indexOf("=");
+    return index === -1
+      ? [decodeURIComponent(part), ""]
+      : [decodeURIComponent(part.slice(0, index)), decodeURIComponent(part.slice(index + 1))];
+  }));
 }
 
 function timingSafeEqualText(left, right) {
@@ -93,13 +91,9 @@ function sessionGid(req) {
   if (!token) return null;
   const [gid, expiresRaw, signature] = token.split(".", 3);
   const expires = Number(expiresRaw);
-  if (!gid || !Number.isFinite(expires) || expires <= Math.floor(Date.now() / 1000) || !signature) return null;
+  if (!gid || !signature || !Number.isFinite(expires) || expires <= Math.floor(Date.now() / 1000)) return null;
   const expected = crypto.createHmac("sha256", sessionSecret).update(`${gid}.${expires}`).digest("hex");
   return timingSafeEqualText(signature, expected) ? gid : null;
-}
-
-function hasBearer(req) {
-  return /^Bearer\s+\S+/i.test(String(req.headers.authorization || ""));
 }
 
 function originFor(req) {
@@ -114,13 +108,15 @@ function corsHeaders(req) {
   return {
     "access-control-allow-origin": origin,
     "access-control-allow-credentials": "true",
-    "access-control-expose-headers": "x-request-id,x-runtime,x-capability-fabric,x-ratelimit-limit,x-ratelimit-remaining,x-ratelimit-reset,retry-after",
+    "access-control-allow-headers": "content-type,authorization,x-request-id,x-csrf-token",
+    "access-control-allow-methods": "GET,POST,PATCH,DELETE,OPTIONS",
+    "access-control-expose-headers": "x-request-id,x-runtime,x-capability-fabric",
     vary: "Origin",
   };
 }
 
-function json(res, status, body, id, req, extraHeaders = {}) {
-  const data = Buffer.from(JSON.stringify(body));
+function json(req, res, status, body, id = requestId(req), extraHeaders = {}) {
+  const data = Buffer.from(JSON.stringify({ ...body, request_id: body?.request_id || id }));
   res.writeHead(status, {
     ...SECURITY_HEADERS,
     ...corsHeaders(req),
@@ -129,13 +125,13 @@ function json(res, status, body, id, req, extraHeaders = {}) {
     "cache-control": "no-store",
     "x-runtime": "ARI",
     "x-capability-fabric": "universal-v1",
-    ...(id ? { "x-request-id": id } : {}),
+    "x-request-id": id,
     ...extraHeaders,
   });
   res.end(data);
 }
 
-function readBody(req, limit = 512 * 1024) {
+function readBody(req, limit = 2 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
@@ -153,209 +149,67 @@ function readBody(req, limit = 512 * 1024) {
   });
 }
 
-function parseJson(raw) {
-  try {
-    const body = raw.length ? JSON.parse(raw.toString("utf8")) : {};
-    if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error("body must be an object");
-    return body;
-  } catch (error) {
-    throw Object.assign(new Error(error.message === "body must be an object" ? error.message : "Invalid JSON body"), { status: 400, code: "INVALID_JSON" });
-  }
-}
-
-function clientAddress(req) {
-  const forwarded = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
-  return forwarded || req.socket?.remoteAddress || "unknown";
-}
-
-function rateBucket(req) {
-  const gid = sessionGid(req);
-  if (gid) return `gid:${gid}`;
-  return `ip:${crypto.createHash("sha256").update(clientAddress(req)).digest("hex").slice(0, 32)}`;
-}
-
-async function enforcePlanRate(req, res, id) {
-  const result = await enforceDistributedRateLimit(db, {
-    bucketKey: rateBucket(req),
-    routeClass: "capability-planning",
-    limit: 60,
-    windowSeconds: 60,
-  });
-  const headers = {
-    "x-ratelimit-limit": String(result.limit),
-    "x-ratelimit-remaining": String(result.remaining),
-    "x-ratelimit-reset": String(result.retryAfter),
-  };
-  if (!result.allowed) {
-    headers["retry-after"] = String(result.retryAfter);
-    json(res, 429, { ok: false, code: "RATE_LIMITED", error: "Capability planning rate limit exceeded", request_id: id }, id, req, headers);
-    return false;
-  }
-  req.__capabilityRateHeaders = headers;
-  return true;
-}
-
-function proxyResponseHeaders(req, upstreamHeaders) {
-  const headers = {};
-  for (const [key, value] of Object.entries(upstreamHeaders || {})) {
-    const lower = key.toLowerCase();
-    if (lower.startsWith("access-control-") || lower === "content-security-policy" || lower === "strict-transport-security" || lower === "x-frame-options" || lower === "x-content-type-options" || lower === "referrer-policy" || lower === "permissions-policy") continue;
-    if (value != null) headers[key] = value;
-  }
-  return { ...headers, ...SECURITY_HEADERS, ...corsHeaders(req) };
-}
-
-function proxyStream(req, res) {
-  const upstream = http.request(
-    {
-      hostname: "127.0.0.1",
-      port: innerPort,
-      path: req.url,
-      method: req.method,
-      headers: { ...req.headers, host: `127.0.0.1:${innerPort}` },
-    },
-    (upstreamRes) => {
-      res.writeHead(upstreamRes.statusCode || 502, proxyResponseHeaders(req, upstreamRes.headers));
-      upstreamRes.pipe(res);
-    },
-  );
-  upstream.on("error", (error) => {
-    const id = requestId(req);
-    json(res, 503, { ok: false, code: "RUNTIME_UNAVAILABLE", error: "ARI secure runtime unavailable", request_id: id }, id, req);
-    console.error("Universal capability gateway upstream error", error);
-  });
-  req.pipe(upstream);
+function proxyHeaders(req, raw = null) {
+  const headers = { ...req.headers, host: `127.0.0.1:${innerPort}` };
+  if (raw) headers["content-length"] = String(raw.length);
+  return headers;
 }
 
 function proxyBuffered(req, res, raw) {
-  const headers = {
-    ...req.headers,
-    host: `127.0.0.1:${innerPort}`,
-    "content-length": String(raw.length),
-  };
-  const upstream = http.request(
-    {
-      hostname: "127.0.0.1",
-      port: innerPort,
-      path: req.url,
-      method: req.method,
-      headers,
-    },
-    (upstreamRes) => {
-      res.writeHead(upstreamRes.statusCode || 502, proxyResponseHeaders(req, upstreamRes.headers));
-      upstreamRes.pipe(res);
-    },
-  );
-  upstream.on("error", (error) => {
-    const id = requestId(req);
-    json(res, 503, { ok: false, code: "RUNTIME_UNAVAILABLE", error: "ARI secure runtime unavailable", request_id: id }, id, req);
-    console.error("Universal capability buffered proxy error", error);
+  const upstream = http.request({ hostname: "127.0.0.1", port: innerPort, path: req.url, method: req.method, headers: proxyHeaders(req, raw) }, (upstreamRes) => {
+    res.writeHead(upstreamRes.statusCode || 502, { ...upstreamRes.headers, ...corsHeaders(req), ...SECURITY_HEADERS, "x-capability-fabric": "universal-v1" });
+    upstreamRes.pipe(res);
   });
+  upstream.on("error", (error) => json(req, res, 503, { ok: false, code: "INNER_RUNTIME_UNAVAILABLE", error: error.message }));
   upstream.end(raw);
 }
 
-async function requireExecutionIdentity(req) {
+function proxyStream(req, res) {
+  const upstream = http.request({ hostname: "127.0.0.1", port: innerPort, path: req.url, method: req.method, headers: proxyHeaders(req) }, (upstreamRes) => {
+    res.writeHead(upstreamRes.statusCode || 502, { ...upstreamRes.headers, ...corsHeaders(req), ...SECURITY_HEADERS, "x-capability-fabric": "universal-v1" });
+    upstreamRes.pipe(res);
+  });
+  upstream.on("error", (error) => json(req, res, 503, { ok: false, code: "INNER_RUNTIME_UNAVAILABLE", error: error.message }));
+  req.pipe(upstream);
+}
+
+async function handleCatalog(req, res) {
+  const id = requestId(req);
+  await ensureCapabilityFabricSchema(db());
+  const catalog = await getCapabilityCatalog(db());
+  return json(req, res, 200, { ok: true, catalog }, id);
+}
+
+async function handleRegister(req, res) {
+  const id = requestId(req);
   const gid = sessionGid(req);
-  if (gid || hasBearer(req)) return gid;
-  throw Object.assign(new Error("Authenticated ARI session required"), { status: 401, code: "AUTH_REQUIRED" });
-}
-
-async function requireOwner(req) {
-  const gid = sessionGid(req);
-  if (gid !== OWNER_GID) throw Object.assign(new Error("Prime Orchestrator session required"), { status: gid ? 403 : 401, code: "OWNER_REQUIRED" });
-  return gid;
-}
-
-function compactCapabilityContext(catalog) {
-  return {
-    authority: "ARI",
-    schema_version: catalog.schema_version,
-    open_ended: true,
-    dynamic_discovery: true,
-    rule: "Capabilities are execution primitives, not UI navigation. Compose them to satisfy the human goal. If a capability is unavailable, explain the missing authority/connector/device instead of pretending execution succeeded.",
-    available: (catalog.capabilities || [])
-      .filter((capability) => capability.available)
-      .map((capability) => ({
-        id: capability.id,
-        domain: capability.domain,
-        operations: capability.operations,
-        side_effect: Boolean(capability.side_effect),
-        sources: capability.sources,
-        manifestation: capability.manifestation,
-      })),
-    discoverable_unavailable: (catalog.capabilities || [])
-      .filter((capability) => !capability.available)
-      .map((capability) => ({ id: capability.id, domain: capability.domain, connectors_required: capability.connectors_required || [] })),
-  };
-}
-
-async function handleTaeWithCapabilityContext(req, res) {
+  if (!gid) return json(req, res, 401, { ok: false, code: "AUTH_REQUIRED", error: "Authenticated GID required" }, id);
+  if (gid !== OWNER_GID) return json(req, res, 403, { ok: false, code: "OWNER_REQUIRED", error: "Owner authority required" }, id);
   const raw = await readBody(req);
-  const body = parseJson(raw);
-  const gid = sessionGid(req);
-  const catalog = await getCapabilityCatalog(db, { gid });
-  const capabilityContext = compactCapabilityContext(catalog);
-  const enriched = {
-    ...body,
-    context: {
-      ...(body.context && typeof body.context === "object" && !Array.isArray(body.context) ? body.context : {}),
-      capability_fabric: capabilityContext,
-    },
-    capability_fabric: capabilityContext,
-  };
-  return proxyBuffered(req, res, Buffer.from(JSON.stringify(enriched)));
+  let body = {};
+  try { body = raw.length ? JSON.parse(raw.toString("utf8")) : {}; } catch { return json(req, res, 400, { ok: false, code: "INVALID_JSON", error: "Invalid JSON body" }, id); }
+  await ensureCapabilityFabricSchema(db());
+  const capability = await registerCapability(db(), body);
+  return json(req, res, 201, { ok: true, capability }, id);
 }
 
-async function handleCapabilityRoute(req, res, pathname, id) {
+async function handleGraph(req, res, pathname) {
+  const id = requestId(req);
   const gid = sessionGid(req);
-
-  if (req.method === "GET" && pathname === "/api/capabilities") {
-    const catalog = await getCapabilityCatalog(db, { gid });
-    return json(res, 200, { ok: true, ...catalog }, id, req);
+  if (!gid) return json(req, res, 401, { ok: false, code: "AUTH_REQUIRED", error: "Authenticated GID required" }, id);
+  await ensureCapabilityFabricSchema(db());
+  if (req.method === "GET") {
+    const graphId = decodeURIComponent(pathname.split("/").pop() || "");
+    const graph = await getExecutionGraph(db(), gid, graphId);
+    if (!graph) return json(req, res, 404, { ok: false, code: "GRAPH_NOT_FOUND", error: "Execution graph not found" }, id);
+    return json(req, res, 200, { ok: true, graph }, id);
   }
-
-  if (req.method === "POST" && pathname === "/api/capabilities/plan") {
-    const authenticatedGid = await requireExecutionIdentity(req);
-    if (!(await enforcePlanRate(req, res, id))) return;
-    const raw = await readBody(req);
-    const body = parseJson(raw);
-    const catalog = await getCapabilityCatalog(db, { gid: authenticatedGid });
-    const graph = compileExecutionGraph({
-      goal: body.goal || body.intent || body.prompt,
-      catalog,
-      requestedCapabilities: body.requested_capabilities || body.capabilities || [],
-    });
-    await persistExecutionGraph(db, { gid: authenticatedGid, graph });
-    return json(res, 200, {
-      ok: true,
-      authority: "ARI",
-      planner: "JAHORIN_CAPABILITY_FABRIC",
-      graph,
-    }, id, req, req.__capabilityRateHeaders || {});
-  }
-
-  const graphMatch = pathname.match(/^\/api\/capabilities\/graphs\/([0-9a-f-]{36})$/i);
-  if (req.method === "GET" && graphMatch) {
-    const authenticatedGid = await requireExecutionIdentity(req);
-    const graph = await getExecutionGraph(db, { gid: authenticatedGid, graphId: graphMatch[1] });
-    if (!graph) return json(res, 404, { ok: false, code: "GRAPH_NOT_FOUND", error: "Execution graph not found", request_id: id }, id, req);
-    return json(res, 200, { ok: true, execution_graph: graph }, id, req);
-  }
-
-  if (pathname === "/api/control/capabilities") {
-    await requireOwner(req);
-    if (req.method === "GET") {
-      const catalog = await getCapabilityCatalog(db, { gid: OWNER_GID });
-      return json(res, 200, { ok: true, ...catalog }, id, req);
-    }
-    if (req.method === "POST") {
-      const body = parseJson(await readBody(req));
-      const capability = await registerCapability(db, body);
-      return json(res, 200, { ok: true, capability }, id, req);
-    }
-  }
-
-  return json(res, 404, { ok: false, code: "CAPABILITY_ROUTE_NOT_FOUND", error: "Capability route not found", request_id: id }, id, req);
+  const raw = await readBody(req);
+  let body = {};
+  try { body = raw.length ? JSON.parse(raw.toString("utf8")) : {}; } catch { return json(req, res, 400, { ok: false, code: "INVALID_JSON", error: "Invalid JSON body" }, id); }
+  const graph = compileExecutionGraph({ gid, intent: body.intent, capabilities: body.capabilities, context: body.context });
+  await persistExecutionGraph(db(), graph);
+  return json(req, res, 201, { ok: true, graph }, id);
 }
 
 async function handle(req, res) {
@@ -363,65 +217,66 @@ async function handle(req, res) {
   const pathname = new URL(req.url || "/", "http://localhost").pathname;
   try {
     const origin = originFor(req);
-    if (origin === false) {
-      return json(res, 403, { ok: false, code: "ORIGIN_NOT_ALLOWED", error: "Origin not allowed", request_id: id }, id, req);
-    }
-
-    if (req.method === "OPTIONS" && (pathname.startsWith("/api/capabilities") || pathname === "/api/control/capabilities")) {
-      res.writeHead(204, {
-        ...SECURITY_HEADERS,
-        ...corsHeaders(req),
-        "access-control-allow-methods": "GET,POST,OPTIONS",
-        "access-control-allow-headers": "content-type,authorization,x-request-id",
-        "access-control-max-age": "600",
-      });
+    if (origin === false) return json(req, res, 403, { ok: false, code: "ORIGIN_NOT_ALLOWED", error: "Origin not allowed" }, id);
+    if (req.method === "OPTIONS") {
+      res.writeHead(204, { ...corsHeaders(req), ...SECURITY_HEADERS, "access-control-max-age": "600" });
       return res.end();
     }
 
-    if (pathname.startsWith("/api/capabilities") || pathname === "/api/control/capabilities") {
-      return await handleCapabilityRoute(req, res, pathname, id);
-    }
+    if (pathname === "/api/capabilities" && req.method === "GET") return await handleCatalog(req, res);
+    if (pathname === "/api/capabilities/register" && req.method === "POST") return await handleRegister(req, res);
+    if (pathname.startsWith("/api/capabilities/graph/") && ["GET", "POST"].includes(req.method)) return await handleGraph(req, res, pathname);
 
-    if (req.method === "POST" && pathname === "/api/tae") {
-      return await handleTaeWithCapabilityContext(req, res);
+    if (req.method === "POST" && (pathname === "/api/runtime" || pathname === "/runtime")) {
+      const gid = sessionGid(req);
+      const limit = await enforceDistributedRateLimit(db(), {
+        scope: "runtime",
+        key: gid || String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "anonymous").split(",")[0].trim(),
+        limit: Math.max(10, Number(process.env.RUNTIME_RATE_LIMIT_PER_MINUTE || 60)),
+        windowSeconds: 60,
+      });
+      if (!limit.allowed) return json(req, res, 429, { ok: false, code: "RATE_LIMITED", error: "Runtime rate limit exceeded", retry_after: limit.retry_after }, id, { "retry-after": String(limit.retry_after) });
+      const raw = await readBody(req);
+      return proxyBuffered(req, res, raw);
     }
 
     return proxyStream(req, res);
   } catch (error) {
-    const status = Number(error?.status) || 503;
-    const code = String(error?.code || (status >= 500 ? "SYSTEM_FAILURE" : "REQUEST_DENIED"));
-    if (status >= 500) console.error("Universal capability gateway error", error);
-    return json(res, status, { ok: false, code, error: error?.message || "Capability fabric failure", request_id: id }, id, req, req.__capabilityRateHeaders || {});
+    console.error("ARI universal capability gateway error", error);
+    return json(req, res, Number(error?.status || 503), { ok: false, code: error?.code || "CAPABILITY_FABRIC_FAILURE", error: error?.message || "Capability fabric failure" }, id);
   }
 }
 
-const gateway = http.createServer((req, res) => void handle(req, res));
+const server = http.createServer((req, res) => void handle(req, res));
 
-function waitForPort(port, { timeout = 20000, interval = 100 } = {}) {
+function waitForPort(port, timeout = 30000) {
   const deadline = Date.now() + timeout;
   return new Promise((resolve, reject) => {
     const attempt = () => {
       const socket = net.createConnection({ host: "127.0.0.1", port });
       socket.once("connect", () => { socket.destroy(); resolve(); });
-      socket.once("error", (error) => { socket.destroy(); if (Date.now() >= deadline) reject(error); else setTimeout(attempt, interval); });
+      socket.once("error", (error) => {
+        socket.destroy();
+        if (Date.now() >= deadline) reject(error); else setTimeout(attempt, 120);
+      });
     };
     attempt();
   });
 }
 
-Promise.all([ensureCapabilityFabricSchema(db), waitForPort(innerPort)])
-  .then(() => gateway.listen(outerPort, "0.0.0.0", () => console.log(`Jahorin universal capability gateway ${outerPort}; hardened ARI ${innerPort}; open-ended capability discovery ready`)))
-  .catch((error) => {
-    console.error(`Universal capability gateway failed readiness: ${error.message}`);
-    if (!child.killed) child.kill("SIGTERM");
-    process.exit(1);
-  });
+waitForPort(innerPort).then(() => {
+  server.listen(outerPort, "0.0.0.0", () => console.log(`ARI universal capability gateway listening on ${outerPort}; secure inner ${innerPort}`));
+}).catch((error) => {
+  console.error(`ARI universal capability gateway readiness failed: ${error.message}`);
+  if (!child.killed) child.kill("SIGTERM");
+  process.exit(1);
+});
 
 function shutdown(signal) {
-  console.log(`Universal capability gateway received ${signal}`);
-  gateway.close(async () => {
+  console.log(`ARI universal capability gateway received ${signal}`);
+  server.close(async () => {
     if (!child.killed) child.kill("SIGTERM");
-    try { await pool?.end(); } catch {}
+    if (pool) await pool.end().catch(() => {});
     process.exit(0);
   });
   setTimeout(() => process.exit(1), 10000).unref();
