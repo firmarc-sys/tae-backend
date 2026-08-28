@@ -1,0 +1,91 @@
+name: Reconcile Live ARI Authorities
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/reconcile-live-authorities.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: project-7e6f2720-0291-4c91-8c3
+  GCP_PROJECT_NUMBER: '689058655022'
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/${{ env.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github/providers/github
+          service_account: github-actions@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Install locked runtime dependencies
+        run: npm ci --omit=dev --ignore-scripts
+
+      - name: Mirror Google provider routes to active Gemini runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          export NEON_DATABASE_URL="$(gcloud secrets versions access latest --secret=ari-neon-database-url --project="$GCP_PROJECT_ID")"
+          node --input-type=module <<'NODE'
+          import pg from 'pg';
+          const { Pool } = pg;
+          const pool = new Pool({ connectionString: process.env.NEON_DATABASE_URL, max: 1, connectionTimeoutMillis: 10000 });
+          try {
+            const source = await pool.query(`
+              select capability_id, operation, model_alias, fallback_alias, priority, enabled, config
+              from public.provider_routes
+              where enabled=true and provider='google-vertex-ai'
+              order by capability_id, operation, priority desc, id
+            `);
+            let changed = 0;
+            for (const row of source.rows) {
+              await pool.query(`
+                insert into public.provider_routes
+                  (capability_id,operation,provider,model_alias,fallback_alias,priority,enabled,config)
+                values ($1,$2,'google-gemini-api',$3,$4,$5,true,$6::jsonb)
+                on conflict (capability_id,operation,provider,model_alias)
+                do update set
+                  fallback_alias=excluded.fallback_alias,
+                  priority=excluded.priority,
+                  enabled=true,
+                  config=public.provider_routes.config || excluded.config,
+                  updated_at=now()
+              `, [row.capability_id, row.operation, row.model_alias, row.fallback_alias, row.priority, JSON.stringify(row.config || {})]);
+              changed += 1;
+            }
+            const proof = await pool.query(`
+              select count(*)::int as active_gemini_routes
+              from public.provider_routes
+              where enabled=true and provider='google-gemini-api'
+            `);
+            console.log(`PASS provider registry reconciled; mirrored=${changed}; active_gemini_routes=${proof.rows[0].active_gemini_routes}`);
+          } finally {
+            await pool.end();
+          }
+          NODE
+          unset NEON_DATABASE_URL
+
+      - name: Canonicalize existing Stripe Cloud Run authority without exposing value
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE='ari-stripe-key'
+          TARGET='ari-stripe-secret-key'
+          gcloud secrets describe "$SOURCE" --project="$GCP_PROJECT_ID" >/dev/null
+          if ! gcloud secrets describe "$TARGET" --project="$GCP_PROJECT_ID" >/dev/null 2>&1; then
+            gcloud secrets create "$TARGET" --project="$GCP_PROJECT_ID" --replication-policy=automatic >/dev/null
+          fi
+          gcloud secrets versions access latest --secret="$SOURCE" --project="$GCP_PROJECT_ID" \
+            | gcloud secrets versions add "$TARGET" --project="$GCP_PROJECT_ID" --data-file=- >/dev/null
+          echo 'PASS canonical Stripe server authority created from existing Cloud Run authority'
