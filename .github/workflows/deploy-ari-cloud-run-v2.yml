@@ -87,13 +87,14 @@ jobs:
         with:
           project_id: ${{ env.GCP_PROJECT_ID }}
 
-      - name: Verify production authorities and canonical Prime secret
+      - name: Verify production authorities and migrate canonical Prime secret if needed
         shell: bash
         run: |
           set -euo pipefail
+          umask 077
           gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json > /tmp/current.json
           python3 - <<'PY'
-          import json
+          import json, os, pathlib
           obj=json.load(open('/tmp/current.json'))
           env={}
           for c in obj.get('spec',{}).get('template',{}).get('spec',{}).get('containers',[]):
@@ -116,12 +117,55 @@ jobs:
                       break
               if not found:
                   raise SystemExit(f'Missing Secret Manager binding for {label}: one of {names}')
+
+          legacy=''
+          for name in ('OWNER_ACCESS_CODE','SIOS_OWNER_ACCESS_CODE'):
+              item=env.get(name) or {}
+              value=item.get('value')
+              if isinstance(value,str) and value:
+                  legacy=value
+                  break
+          if legacy:
+              target=pathlib.Path('/tmp/owner-code')
+              target.write_text(legacy,encoding='utf-8')
+              os.chmod(target,0o600)
+              print('PASS legacy Prime credential is available for non-disclosing migration')
+          else:
+              print('INFO no legacy plain Prime credential is present on the current service')
           print('PASS existing session, identity, Supabase credential, and Stripe authorities remain Secret Manager backed')
           PY
 
-          gcloud secrets describe "$OWNER_ACCESS_CODE_SECRET" --project="$GCP_PROJECT_ID" >/dev/null
+          if ! gcloud secrets describe "$OWNER_ACCESS_CODE_SECRET" --project="$GCP_PROJECT_ID" >/dev/null 2>&1; then
+            if [ ! -s /tmp/owner-code ]; then
+              rm -f /tmp/current.json /tmp/owner-code
+              echo "Canonical Prime secret is absent and no legacy owner credential exists to migrate." >&2
+              exit 1
+            fi
+            gcloud secrets create "$OWNER_ACCESS_CODE_SECRET" \
+              --project="$GCP_PROJECT_ID" \
+              --replication-policy=automatic \
+              --quiet
+            echo 'PASS created canonical Prime credential secret container.'
+          fi
+
           OWNER_VERSION="$(gcloud secrets versions list "$OWNER_ACCESS_CODE_SECRET" --project="$GCP_PROJECT_ID" --filter='state=ENABLED' --limit=1 --sort-by='~createTime' --format='value(name)')"
-          test -n "$OWNER_VERSION" || { echo "No enabled version exists for $OWNER_ACCESS_CODE_SECRET" >&2; exit 1; }
+          if [ -z "$OWNER_VERSION" ]; then
+            if [ ! -s /tmp/owner-code ]; then
+              rm -f /tmp/current.json /tmp/owner-code
+              echo "Canonical Prime secret has no enabled version and no legacy owner credential exists to migrate." >&2
+              exit 1
+            fi
+            gcloud secrets versions add "$OWNER_ACCESS_CODE_SECRET" \
+              --project="$GCP_PROJECT_ID" \
+              --data-file=/tmp/owner-code \
+              --quiet >/dev/null
+            OWNER_VERSION="$(gcloud secrets versions list "$OWNER_ACCESS_CODE_SECRET" --project="$GCP_PROJECT_ID" --filter='state=ENABLED' --limit=1 --sort-by='~createTime' --format='value(name)')"
+            test -n "$OWNER_VERSION"
+            echo 'PASS migrated the existing Prime credential into Secret Manager without exposing or changing it.'
+          fi
+
+          if command -v shred >/dev/null 2>&1; then shred -u /tmp/owner-code 2>/dev/null || true; else rm -f /tmp/owner-code; fi
+          rm -f /tmp/current.json
           echo "PASS canonical Prime credential secret exists with an enabled version: $OWNER_ACCESS_CODE_SECRET"
 
       - name: Configure Artifact Registry
