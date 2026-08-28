@@ -1,0 +1,91 @@
+name: Deploy Vedic Runtime Hotfix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/deploy-vedic-runtime-hotfix.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-ari-cloud-run
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: project-7e6f2720-0291-4c91-8c3
+  GCP_PROJECT_NUMBER: '689058655022'
+  GCP_REGION: us-west1
+  CLOUD_RUN_SERVICE: ari
+  ARTIFACT_REPOSITORY: cloud-run-source-deploy
+  IMAGE_NAME: ari
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout canonical backend
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Prove source and lock
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run check
+          node -e "import('astronomy-engine').then(()=>import('tz-lookup')).then(()=>import('./vedic-profile.js')).then(()=>console.log('PASS Vedic runtime imports'))"
+
+      - name: Authenticate Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/${{ env.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github/providers/github
+          service_account: github-actions@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Build and push ARI image
+        run: |
+          set -euo pipefail
+          gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
+          IMAGE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/${IMAGE_NAME}:${GITHUB_SHA}"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+
+      - name: Deploy while preserving current secret bindings
+        run: |
+          set -euo pipefail
+          gcloud run deploy "$CLOUD_RUN_SERVICE" \
+            --project="$GCP_PROJECT_ID" \
+            --region="$GCP_REGION" \
+            --platform=managed \
+            --image="$IMAGE" \
+            --allow-unauthenticated \
+            --update-env-vars="NODE_ENV=production,ARI_REQUIRE_AUTH=true,JAHORIN_FREE_ACCESS=false" \
+            --quiet
+          REVISION="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format='value(status.latestReadyRevisionName)')"
+          echo "REVISION=$REVISION" >> "$GITHUB_ENV"
+          echo "Deployed $REVISION"
+
+      - name: Prove live gateway
+        run: |
+          set -euo pipefail
+          ARI="https://ari-${GCP_PROJECT_NUMBER}.${GCP_REGION}.run.app"
+          curl -fsS "$ARI/api/health" >/tmp/health.json
+          cat /tmp/health.json
+          CODE="$(curl -sS -o /tmp/vedic-anon.json -w '%{http_code}' "$ARI/api/identity/vedic-profile")"
+          test "$CODE" = 401
+          grep -q 'AUTH_REQUIRED' /tmp/vedic-anon.json
+          echo 'PASS Vedic endpoint is live and GID-authenticated.'
