@@ -1,6 +1,6 @@
 {
   "name": "tae-backend",
-  "version": "1.8.1",
+  "version": "1.9.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -19,16 +19,18 @@
     "start:manifest": "node manifest-runtime-gateway.js",
     "start:identity": "node identity-runtime-gateway.js",
     "start:inner": "node server.js",
-    "check": "node --check authorization-gateway.js && node --check production-gateway.js && node --check billing-gateway.js && node --check subscription-entitlement-gateway.js && node --check universal-capability-gateway.js && node --check capability-fabric.js && node --check secure-gateway.js && node --check device-fabric.js && node --check control-plane-gateway.js && node --check neon-runtime-gateway.js && node --check neon-store.js && node --check manifest-runtime-gateway.js && node --check identity-runtime-gateway.js && node --check server.js && node --check thoth-voice.js",
+    "check": "node --check authorization-gateway.js && node --check production-gateway.js && node --check vedic-profile.js && node --check billing-gateway.js && node --check subscription-entitlement-gateway.js && node --check universal-capability-gateway.js && node --check capability-fabric.js && node --check secure-gateway.js && node --check device-fabric.js && node --check control-plane-gateway.js && node --check neon-runtime-gateway.js && node --check neon-store.js && node --check manifest-runtime-gateway.js && node --check identity-runtime-gateway.js && node --check server.js && node --check thoth-voice.js",
     "dev": "node --watch authorization-gateway.js"
   },
   "dependencies": {
     "@google/genai": "^2.18.0",
+    "astronomy-engine": "^2.1.19",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "helmet": "^8.0.0",
     "pg": "^8.13.1",
-    "stripe": "^18.0.0"
+    "stripe": "^18.0.0",
+    "tz-lookup": "^6.1.25"
   }
 }
