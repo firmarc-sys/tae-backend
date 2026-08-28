@@ -65,3 +65,15 @@ jobs:
 
           echo '=== EDGE DIAGNOSTICS PROBE ==='
           curl -sS -D - --connect-timeout 5 --max-time 20 "$ARI/api/edge-diagnostics?diagnostic=${GITHUB_SHA}" || true
+
+          echo '=== RECENT CLOUD RUN RUNTIME LOGS ==='
+          # Read only recent ARI runtime output. Do not print environment variables,
+          # revision specs with secret refs, or Secret Manager payloads.
+          gcloud logging read \
+            'resource.type="cloud_run_revision" AND resource.labels.service_name="ari"' \
+            --project="$GCP_PROJECT_ID" \
+            --freshness=45m \
+            --limit=160 \
+            --order=desc \
+            --format='value(timestamp,severity,textPayload,jsonPayload.message)' \
+            2>/dev/null | grep -Eiv '(sk_live_|rk_live_|whsec_|authorization:|cookie:)' | head -160 || true
