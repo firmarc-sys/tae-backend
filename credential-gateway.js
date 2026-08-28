@@ -133,7 +133,7 @@ async function authBindingForGid(gid) {
     [gid],
   );
   const row = result.rows[0] || null;
-  if (!row || row.status === "disabled" || row.status === "revoked") return null;
+  if (!row || row.status !== "active") return null;
   return row.auth_user_id ? { authUserId: String(row.auth_user_id) } : null;
 }
 
