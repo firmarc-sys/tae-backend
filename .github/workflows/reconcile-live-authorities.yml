@@ -30,6 +30,16 @@ jobs:
         with:
           project_id: ${{ env.GCP_PROJECT_ID }}
 
+      - name: Inspect canonical GitHub workload identity condition
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud iam workload-identity-pools providers describe github \
+            --project="$GCP_PROJECT_ID" \
+            --location=global \
+            --workload-identity-pool=github \
+            --format='value(attributeCondition)'
+
       - name: Install locked runtime dependencies
         run: npm ci --omit=dev --ignore-scripts
 
