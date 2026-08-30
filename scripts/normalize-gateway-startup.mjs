@@ -47,12 +47,46 @@ refreshInnerReadiness();
 const readinessMonitor = setInterval(refreshInnerReadiness, 1000);
 readinessMonitor.unref();`;
 
+const credentialImmediateStart = `gateway.listen(outerPort, "0.0.0.0", () => {
+  console.log(\`ARI credential edge listening on \${outerPort}; awaiting UAE governance inner \${innerPort}\`);
+});
+
+waitForPort(innerPort)
+  .then(() => {
+    childReady = true;
+    console.log(\`ARI UAE governance inner chain reachable on \${innerPort}\`);
+  })
+  .catch((error) => {
+    childReady = false;
+    childExit = { code: null, signal: null, at: new Date().toISOString(), error: error.message };
+    console.error(\`ARI credential edge readiness failed: \${error.message}\`);
+  });`;
+
+const credentialFullChainStart = `async function startCredentialEdge() {
+  console.log(\`ARI credential edge holding Cloud Run startup until the full UAE production chain is ready on \${innerPort}\`);
+  try {
+    await waitForInnerChainReady();
+    childReady = true;
+    gateway.listen(outerPort, "0.0.0.0", () => {
+      console.log(\`ARI credential edge listening on \${outerPort}; full UAE production chain ready on \${innerPort}\`);
+    });
+  } catch (error) {
+    childReady = false;
+    childExit = childExit || { code: null, signal: null, at: new Date().toISOString(), error: error.message };
+    console.error(\`ARI credential edge full-chain startup failed: \${error.message}\`);
+    if (!child.killed) child.kill("SIGTERM");
+    process.exit(1);
+  }
+}
+void startCredentialEdge();`;
+
 const writeChanges = process.env.CI !== 'true' || process.env.NORMALIZE_GATEWAY_WRITE === 'true';
 let filesChanged = 0;
 let filesWouldChange = 0;
 let startupBudgetChanges = 0;
 let neonTimeoutChanges = 0;
 let readinessMonitorChanges = 0;
+let credentialStartupGateChanges = 0;
 const verified = [];
 
 for (const file of files) {
@@ -63,12 +97,18 @@ for (const file of files) {
   const neonMatches = before.match(unsafeNeonBudget) || [];
 
   let after = before
-    .replace(unsafeStartupBudget, 'timeout = 120000')
-    .replace(unsafeNeonBudget, 'connectionTimeoutMillis: 30000');
+    .replace(unsafeStartupBudget, 'timeout = 180000')
+    .replace(unsafeNeonBudget, 'connectionTimeoutMillis: 30000')
+    .replace('ARI_INNER_CHAIN_READY_TIMEOUT_MS || 30000', 'ARI_INNER_CHAIN_READY_TIMEOUT_MS || 180000');
 
   if (file === 'authorization-gateway.js' && after.includes(authorizationOneShot)) {
     after = after.replace(authorizationOneShot, authorizationMonitor);
     readinessMonitorChanges += 1;
+  }
+
+  if (file === 'credential-gateway.js' && after.includes(credentialImmediateStart)) {
+    after = after.replace(credentialImmediateStart, credentialFullChainStart);
+    credentialStartupGateChanges += 1;
   }
 
   startupBudgetChanges += startupMatches.length;
@@ -99,6 +139,14 @@ for (const file of files) {
   if (file === 'authorization-gateway.js' && !normalized.includes('const readinessMonitor = setInterval(refreshInnerReadiness, 1000);')) {
     throw new Error('authorization readiness monitor was not installed');
   }
+  if (file === 'credential-gateway.js') {
+    if (!normalized.includes('async function startCredentialEdge()')) {
+      throw new Error('credential edge full-chain startup gate was not installed');
+    }
+    if (!normalized.includes('ARI_INNER_CHAIN_READY_TIMEOUT_MS || 180000')) {
+      throw new Error('credential edge full-chain readiness budget is not 180000ms');
+    }
+  }
   verified.push(file);
 }
 
@@ -109,4 +157,6 @@ if (!verified.length) {
 console.log(`ARI startup normalization verified across ${verified.length} gateway files`);
 console.log(`write_changes=${writeChanges}; changed=${filesChanged}; would_change=${filesWouldChange}; startup_budgets=${startupBudgetChanges}; neon_budgets=${neonTimeoutChanges}`);
 console.log(`authorization readiness monitor replacements this invocation: ${readinessMonitorChanges}`);
+console.log(`credential full-chain startup gate replacements this invocation: ${credentialStartupGateChanges}`);
 console.log('self-healing authorization child readiness monitor verified');
+console.log('Cloud Run external port is gated on full ARI inner-chain readiness');
