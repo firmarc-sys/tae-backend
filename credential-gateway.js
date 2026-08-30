@@ -30,7 +30,7 @@ const allowedOrigins = new Set(
 
 let childReady = false;
 let childExit = null;
-const child = spawn(process.execPath, ["authorization-gateway.js"], {
+const child = spawn(process.execPath, ["governance-gateway.js"], {
   env: { ...process.env, PORT: String(innerPort) },
   stdio: "inherit",
 });
@@ -252,7 +252,7 @@ const gateway = http.createServer(async (req, res) => {
       });
     }
     if (req.method === "POST" && pathname === "/api/identity/authorize") return await handleAuthorize(req, res);
-    if (!childReady) return json(req, res, 503, { ok: false, code: "INNER_CHAIN_NOT_READY", error: "ARI inner authorization chain is not ready", child_exit: childExit });
+    if (!childReady) return json(req, res, 503, { ok: false, code: "INNER_CHAIN_NOT_READY", error: "ARI inner governance chain is not ready", child_exit: childExit });
     return proxyStream(req, res);
   } catch (error) {
     console.error("ARI credential gateway error", error);
@@ -282,13 +282,13 @@ function waitForPort(port, { timeout = 120000, interval = 120 } = {}) {
 }
 
 gateway.listen(outerPort, "0.0.0.0", () => {
-  console.log(`ARI credential edge listening on ${outerPort}; awaiting authorization inner ${innerPort}`);
+  console.log(`ARI credential edge listening on ${outerPort}; awaiting UAE governance inner ${innerPort}`);
 });
 
 waitForPort(innerPort)
   .then(() => {
     childReady = true;
-    console.log(`ARI authorization inner chain reachable on ${innerPort}`);
+    console.log(`ARI UAE governance inner chain reachable on ${innerPort}`);
   })
   .catch((error) => {
     childReady = false;
