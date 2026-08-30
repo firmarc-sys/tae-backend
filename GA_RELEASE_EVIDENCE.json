@@ -1,9 +1,9 @@
 {
   "release": "ga",
   "ga_status": "VERIFIED",
-  "backend_commit": "17ea221504d476954111098b932ae035c806bed8",
-  "cloud_run_revision": "ari-00262-7vq",
-  "verified_at": "2026-08-30T15:39:37.392Z",
+  "backend_commit": "ce2fcaca3bc58bfd83cd206c63e9a1ba7827d6ff",
+  "cloud_run_revision": "ari-00275-q6q",
+  "verified_at": "2026-08-30T17:22:28.036Z",
   "checks": {
     "backend_clean_install": true,
     "secret_manager": true,
@@ -22,6 +22,7 @@
     "bad_signature_rejected": true,
     "stripe_lifecycle": true,
     "credential_gate": true,
-    "gid_identifier_only_rejected": true
+    "prime_owner_gid_authorized": true,
+    "member_credential_required": true
   }
 }
