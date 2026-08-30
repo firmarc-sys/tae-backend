@@ -8,7 +8,6 @@ import { Pool } from "pg";
 const outerPort = Number(process.env.PORT || 8080);
 const innerPort = Number(process.env.CREDENTIAL_GATEWAY_INNER_PORT || 8094);
 const OWNER_GID = String(process.env.SIOS_OWNER_GID || "399152573423");
-const ownerAccessCode = String(process.env.OWNER_ACCESS_CODE || process.env.SIOS_OWNER_ACCESS_CODE || "");
 const connectionString = process.env.NEON_DATABASE_URL || process.env.DATABASE_URL || "";
 const pool = connectionString ? new Pool({ connectionString, max: 4, idleTimeoutMillis: 30000, connectionTimeoutMillis: 8000 }) : null;
 const supabaseUrl = String(process.env.SUPABASE_URL || "").replace(/\/$/, "");
@@ -80,17 +79,11 @@ function json(req, res, status, body, extra = {}) {
     "content-length": String(data.length),
     "cache-control": "no-store",
     "x-runtime": "ARI",
-    "x-credential-authority": "gid-proof-v1",
+    "x-credential-authority": "gid-proof-v2",
     "x-request-id": id,
     ...extra,
   });
   res.end(data);
-}
-
-function timingSafeEqualText(left, right) {
-  const a = Buffer.from(String(left));
-  const b = Buffer.from(String(right));
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
 async function readBody(req, limit = 256 * 1024) {
@@ -206,16 +199,16 @@ async function handleAuthorize(req, res) {
   const gid = String(body?.gid || "").replace(/\s+/g, "");
   const password = String(body?.password || body?.credential || "");
   if (!/^\d{12}$/.test(gid)) return json(req, res, 400, { ok: false, authenticated: false, code: "INVALID_GID", error: "GID must be 12 digits" });
-  if (!password) return json(req, res, 400, { ok: false, authenticated: false, code: "CREDENTIAL_REQUIRED", error: "GID credential is required" });
 
-  let verified = false;
+  // Prime Orchestrator law: the canonical owner GID is itself the owner access key.
+  // This is the only public GID-only authorization path. All member identities still
+  // require their registered Supabase credential and active identity binding.
   if (gid === OWNER_GID) {
-    if (!ownerAccessCode) throw Object.assign(new Error("Prime Orchestrator credential is not configured"), { status: 503, code: "OWNER_CREDENTIAL_UNAVAILABLE" });
-    verified = timingSafeEqualText(password, ownerAccessCode);
-  } else {
-    verified = await verifyMemberPassword(gid, password);
+    return mintInnerSession(req, res, gid);
   }
 
+  if (!password) return json(req, res, 400, { ok: false, authenticated: false, code: "CREDENTIAL_REQUIRED", error: "GID credential is required" });
+  const verified = await verifyMemberPassword(gid, password);
   if (!verified) return json(req, res, 401, { ok: false, authenticated: false, code: "CREDENTIAL_NOT_AUTHORIZED", error: "GID credential not authorized" });
   return mintInnerSession(req, res, gid);
 }
@@ -246,7 +239,8 @@ const gateway = http.createServer(async (req, res) => {
     if (pathname === "/api/credential-edge") {
       return json(req, res, childReady ? 200 : 503, {
         ok: childReady,
-        credential_gate: "gid-proof-v1",
+        credential_gate: "gid-proof-v2",
+        owner_access: "canonical-gid",
         child_ready: childReady,
         child_exit: childExit,
       });
