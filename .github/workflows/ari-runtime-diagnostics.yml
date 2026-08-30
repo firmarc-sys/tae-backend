@@ -36,7 +36,7 @@ jobs:
         with:
           project_id: ${{ env.GCP_PROJECT_ID }}
 
-      - name: Capture runtime state and recent failures
+      - name: Capture runtime state and text logs
         shell: bash
         run: |
           set -euo pipefail
@@ -44,28 +44,18 @@ jobs:
           READY="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format='value(status.latestReadyRevisionName)')"
           echo "CREATED=$CREATED" >> "$GITHUB_ENV"
           echo "READY=$READY" >> "$GITHUB_ENV"
-          echo "LATEST_CREATED=$CREATED"
-          echo "LATEST_READY=$READY"
 
           ARI="https://ari-${GCP_PROJECT_NUMBER}.${GCP_REGION}.run.app"
           curl -sS --connect-timeout 5 --max-time 20 "$ARI/api/ready?diagnostic=${GITHUB_SHA}" -o /tmp/ready.json || true
           curl -sS --connect-timeout 5 --max-time 20 "$ARI/api/edge-diagnostics?diagnostic=${GITHUB_SHA}" -o /tmp/edge.json || true
 
           gcloud logging read \
-            'resource.type="cloud_run_revision" AND resource.labels.service_name="ari" AND severity>=WARNING' \
+            'resource.type="cloud_run_revision" AND resource.labels.service_name="ari" AND textPayload:*' \
             --project="$GCP_PROJECT_ID" \
-            --freshness=90m \
-            --limit=250 \
+            --freshness=2h \
+            --limit=400 \
             --order=desc \
-            --format=json > /tmp/cloud-errors.json 2>/dev/null || printf '[]\n' > /tmp/cloud-errors.json
-
-          gcloud logging read \
-            'resource.type="cloud_run_revision" AND resource.labels.service_name="ari"' \
-            --project="$GCP_PROJECT_ID" \
-            --freshness=90m \
-            --limit=500 \
-            --order=desc \
-            --format=json > /tmp/cloud-recent.json 2>/dev/null || printf '[]\n' > /tmp/cloud-recent.json
+            --format=json > /tmp/cloud-text.json 2>/dev/null || printf '[]\n' > /tmp/cloud-text.json
 
       - name: Record sanitized runtime diagnosis
         shell: bash
@@ -74,9 +64,6 @@ jobs:
           node - <<'NODE'
           const fs=require('fs');
           function parsed(path,fallback=null){try{return JSON.parse(fs.readFileSync(path,'utf8'))}catch{return fallback}}
-          function text(entry){
-            return String(entry?.textPayload||entry?.jsonPayload?.message||entry?.jsonPayload?.error||entry?.protoPayload?.status?.message||'').trim();
-          }
           function sanitize(value){
             return String(value||'')
               .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g,'[email]')
@@ -85,22 +72,19 @@ jobs:
               .replace(/whsec_[A-Za-z0-9_-]+/g,'[stripe-webhook]')
               .replace(/Bearer\s+\S+/gi,'Bearer [redacted]')
               .replace(/ari_session=[^;\s]+/gi,'ari_session=[redacted]')
-              .slice(0,1200);
+              .slice(0,1600);
           }
-          const warningEntries=parsed('/tmp/cloud-errors.json',[])||[];
-          const recentEntries=parsed('/tmp/cloud-recent.json',[])||[];
-          const failureTerms=/(gateway|readiness|listening|inner chain|inner ARI|inner runtime|child runtime|child failed|exited|ECONNREFUSED|EADDRINUSE|error|failed)/i;
-          const combined=[...warningEntries,...recentEntries];
+          const entries=parsed('/tmp/cloud-text.json',[])||[];
           const seen=new Set();
-          const runtimeLines=[];
-          for(const entry of combined){
-            const raw=text(entry);
-            if(!raw||!failureTerms.test(raw)) continue;
+          const textLines=[];
+          for(const entry of entries){
+            const raw=String(entry?.textPayload||'').trim();
+            if(!raw) continue;
             const line=sanitize(raw);
             if(!line||seen.has(line)) continue;
             seen.add(line);
-            runtimeLines.push({timestamp:entry?.timestamp||null,severity:entry?.severity||null,message:line,revision:entry?.resource?.labels?.revision_name||null});
-            if(runtimeLines.length>=120) break;
+            textLines.push({timestamp:entry?.timestamp||null,severity:entry?.severity||null,message:line,revision:entry?.resource?.labels?.revision_name||null});
+            if(textLines.length>=160) break;
           }
           const evidence={
             captured_at:new Date().toISOString(),
@@ -109,12 +93,12 @@ jobs:
             latest_ready_revision:process.env.READY||null,
             ready:parsed('/tmp/ready.json'),
             edge:parsed('/tmp/edge.json'),
-            runtime_lines:runtimeLines,
+            text_runtime_lines:textLines,
           };
           fs.writeFileSync('ARI_RUNTIME_DIAGNOSTIC.json',JSON.stringify(evidence,null,2)+'\n');
           NODE
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add ARI_RUNTIME_DIAGNOSTIC.json
-          git commit -m 'Record expanded sanitized ARI runtime diagnosis' || exit 0
+          git commit -m 'Record Cloud Run text runtime diagnosis' || exit 0
           git push origin HEAD:main
