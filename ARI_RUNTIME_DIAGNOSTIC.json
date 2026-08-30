@@ -1,40 +1,26 @@
 {
-  "captured_at": "2026-08-30T22:03:36.886Z",
-  "workflow_sha": "3761c186ec73babd0c4e93cf248d2aebd305435e",
-  "latest_created_revision": "ari-00286-9b4",
-  "latest_ready_revision": "ari-00286-9b4",
+  "captured_at": "2026-08-30T22:04:59.118Z",
+  "workflow_sha": "5cf94fada99f92b593edee09302c9edc7324008b",
+  "latest_created_revision": "ari-00288-z9t",
+  "latest_ready_revision": "ari-00288-z9t",
   "ready": {
     "ok": false,
     "code": "INNER_CHAIN_NOT_READY",
     "edge_listening": true,
     "inner_port": 8092,
     "child_ready": false,
-    "child_exit": {
-      "code": 1,
-      "signal": null,
-      "at": "2026-08-30T21:37:00.827Z"
-    },
-    "child_output": [
-      "stderr: ARI production gateway readiness failed: connect ECONNREFUSED 127.0.0.1:8090",
-      "exit: code=1 signal="
-    ],
-    "request_id": "dd238f68-ecb6-4b3a-a15f-e36b0eaaccac"
+    "child_exit": null,
+    "child_output": [],
+    "request_id": "2f61c5fb-0f1b-4dea-b87c-05ea7ddc6a2e"
   },
   "edge": {
     "ok": false,
     "edge_listening": true,
     "inner_port": 8092,
     "child_ready": false,
-    "child_exit": {
-      "code": 1,
-      "signal": null,
-      "at": "2026-08-30T21:37:00.827Z"
-    },
-    "child_output": [
-      "stderr: ARI production gateway readiness failed: connect ECONNREFUSED 127.0.0.1:8090",
-      "exit: code=1 signal="
-    ],
-    "request_id": "93409494-9781-4b80-a9a6-49b83b89ef1c"
+    "child_exit": null,
+    "child_output": [],
+    "request_id": "648721c3-6061-47c9-8158-6890a28bd7e2"
   },
-  "startup_readiness_lines": []
+  "runtime_lines": []
 }
