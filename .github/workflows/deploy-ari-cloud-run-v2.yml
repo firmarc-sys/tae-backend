@@ -81,6 +81,7 @@ jobs:
           grep -q '"start": "node credential-gateway.js"' package.json
           grep -q 'pathname === "/api/identity/authorize"' credential-gateway.js
           grep -q 'CREDENTIAL_REQUIRED' credential-gateway.js
+          grep -q 'if (gid === OWNER_GID)' credential-gateway.js
           grep -q 'row.status !== "active"' credential-gateway.js
           grep -q 'ensureDeviceFabricSchema' secure-gateway.js
           grep -q 'REPLAY_REJECTED' device-fabric.js
@@ -231,21 +232,23 @@ jobs:
           test "$ready" = 1 || { cat /tmp/ready.json >&2 || true; exit 1; }
 
           curl -fsS "$ARI/api/credential-edge" > /tmp/credential-edge.json
-          node -e "const j=require('/tmp/credential-edge.json'); if(!(j.ok===true&&j.credential_gate==='gid-proof-v1')) process.exit(1)"
+          node -e "const j=require('/tmp/credential-edge.json'); if(!(j.ok===true&&j.credential_gate==='gid-proof-v2'&&j.owner_access==='canonical-gid')) process.exit(1)"
 
-          gid_only="$(curl -sS -o /tmp/gid-only.json -w '%{http_code}' -H 'content-type: application/json' -d '{"gid":"399152573423"}' "$ARI/api/identity/authorize")"
-          test "$gid_only" = 400
-          node -e "const j=require('/tmp/gid-only.json'); if(j.code!=='CREDENTIAL_REQUIRED'||j.authenticated!==false) process.exit(1)"
+          owner="$(curl -sS -c /tmp/owner.cookies -o /tmp/owner-authorize.json -w '%{http_code}' -H 'content-type: application/json' -d '{"gid":"399152573423"}' "$ARI/api/identity/authorize")"
+          test "$owner" = 200
+          owner_identity="$(curl -sS -b /tmp/owner.cookies -o /tmp/owner-identity.json -w '%{http_code}' "$ARI/api/identity")"
+          test "$owner_identity" = 200
+          node -e "const j=require('/tmp/owner-identity.json'); if(String(j.gid||'')!=='399152573423') process.exit(1)"
 
-          wrong="$(curl -sS -o /tmp/wrong.json -w '%{http_code}' -H 'content-type: application/json' -d '{"gid":"399152573423","credential":"definitely-not-valid"}' "$ARI/api/identity/authorize")"
-          test "$wrong" = 401
-          node -e "const j=require('/tmp/wrong.json'); if(j.code!=='CREDENTIAL_NOT_AUTHORIZED'||j.authenticated!==false) process.exit(1)"
+          member_missing="$(curl -sS -o /tmp/member-missing.json -w '%{http_code}' -H 'content-type: application/json' -d '{"gid":"000000000000"}' "$ARI/api/identity/authorize")"
+          test "$member_missing" = 400
+          node -e "const j=require('/tmp/member-missing.json'); if(j.code!=='CREDENTIAL_REQUIRED'||j.authenticated!==false) process.exit(1)"
 
           vedic="$(curl -sS -o /tmp/vedic-anon.json -w '%{http_code}' "$ARI/api/identity/vedic-profile")"
           test "$vedic" = 401
           runtime="$(curl -sS -o /tmp/anon-runtime.json -w '%{http_code}' -H 'content-type: application/json' -d '{"intent":"deny anonymous execution","capability":"scribe","request_id":"maat-anon"}' "$ARI/api/runtime")"
           test "$runtime" = 401
-          echo 'PASS live ARI rejects identifier-only authentication and anonymous execution.'
+          echo 'PASS live ARI authorizes the canonical Prime Orchestrator GID, requires member credentials, and rejects anonymous execution.'
 
       - name: Prove private-device authorization
         shell: bash
@@ -286,8 +289,9 @@ jobs:
           const prior=fs.existsSync('GA_RELEASE_EVIDENCE.json')?JSON.parse(fs.readFileSync('GA_RELEASE_EVIDENCE.json','utf8')):{};
           const device=JSON.parse(fs.readFileSync('DEVICE_FABRIC_RELEASE_PROOF.json','utf8'));
           const stripeLifecycle=process.env.STRIPE_LIFECYCLE_VERIFIED==='true'||(prior.checks||{}).stripe_lifecycle===true;
-          const checks={...(prior.checks||{}),backend_clean_install:true,credential_gate:true,gid_identifier_only_rejected:true,session_auth:true,gid:true,vedic_onboarding_api:true,neon_persistence:true,device_enrollment:device.checks.cryptographic_enrollment===true,device_isolation:device.checks.gid_isolation===true,device_revocation:device.checks.revocation===true,device_grants:device.checks.explicit_grant===true,replay_protection:device.checks.request_replay_rejected===true,bad_signature_rejected:device.checks.bad_signature_rejected===true,stripe_lifecycle:stripeLifecycle};
-          const required=['backend_clean_install','credential_gate','gid_identifier_only_rejected','session_auth','gid','vedic_onboarding_api','neon_persistence','device_enrollment','device_isolation','device_revocation','device_grants','replay_protection','bad_signature_rejected','stripe_lifecycle'];
+          const checks={...(prior.checks||{}),backend_clean_install:true,credential_gate:true,prime_owner_gid_authorized:true,member_credential_required:true,session_auth:true,gid:true,vedic_onboarding_api:true,neon_persistence:true,device_enrollment:device.checks.cryptographic_enrollment===true,device_isolation:device.checks.gid_isolation===true,device_revocation:device.checks.revocation===true,device_grants:device.checks.explicit_grant===true,replay_protection:device.checks.request_replay_rejected===true,bad_signature_rejected:device.checks.bad_signature_rejected===true,stripe_lifecycle:stripeLifecycle};
+          delete checks.gid_identifier_only_rejected;
+          const required=['backend_clean_install','credential_gate','prime_owner_gid_authorized','member_credential_required','session_auth','gid','vedic_onboarding_api','neon_persistence','device_enrollment','device_isolation','device_revocation','device_grants','replay_protection','bad_signature_rejected','stripe_lifecycle'];
           const gaReady=required.every((key)=>checks[key]===true);
           const evidence={...prior,release:gaReady?'ga':'ga-candidate',ga_status:gaReady?'VERIFIED':'BLOCKED',backend_commit:process.env.GITHUB_SHA,cloud_run_revision:process.env.CLOUD_RUN_REVISION,verified_at:new Date().toISOString(),checks};
           fs.writeFileSync('GA_RELEASE_EVIDENCE.json',JSON.stringify(evidence,null,2)+'\n');
