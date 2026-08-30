@@ -18,6 +18,10 @@ assert(edge.includes('/api/auth/login'), 'subscriber password proof is not deleg
 assert(edge.includes('auth_user_id'), 'GID is not bound to the registered auth user');
 assert(edge.includes('row.status !== "active"'), 'GID access must fail closed unless identity status is active');
 assert(edge.includes('user_metadata?.gid'), 'authenticated Supabase user GID continuity is not verified');
+assert(edge.includes('async function waitForInnerChainReady()'), 'credential edge does not wait for the full ARI chain before session mint');
+assert(edge.includes('innerJson("/api/ready")'), 'credential edge does not probe canonical ARI readiness');
+assert(edge.indexOf('await waitForInnerChainReady();') < edge.indexOf('innerJson("/api/identity/authorize"'), 'session mint can occur before full ARI readiness');
+assert(edge.includes('chain_ready: readiness.ready'), 'credential-edge health does not report full-chain readiness');
 assert(!edge.includes('console.log(password)'), 'credential material must never be logged');
 
 const legacyAuthorize = production.match(/async function handleAuthorize[\s\S]*?\n}\n\nasync function handleRegister/);
@@ -25,6 +29,7 @@ assert(legacyAuthorize, 'inner production authorize handler not found');
 assert(edge.indexOf('pathname === "/api/identity/authorize"') < edge.indexOf('return proxyStream(req, res)'), 'credential intercept must occur before generic proxying');
 
 console.log("MA'AT credential boundary: PASS");
-console.log('Prime Orchestrator flow: canonical owner GID -> credential edge -> internal session mint');
-console.log('Member flow: GID + credential -> credential edge -> Supabase proof -> internal session mint');
+console.log('Prime Orchestrator flow: canonical owner GID -> credential edge -> full ARI readiness -> internal session mint');
+console.log('Member flow: GID + credential -> credential edge -> Supabase proof -> full ARI readiness -> internal session mint');
+console.log('Cold-start law: no GID session mint is attempted until /api/ready confirms the complete inner chain.');
 console.log('Inner GID-only mint remains unreachable from the public Cloud Run edge except for the canonical Prime Orchestrator GID.');
