@@ -1,8 +1,8 @@
 {
-  "captured_at": "2026-08-30T22:04:59.118Z",
-  "workflow_sha": "5cf94fada99f92b593edee09302c9edc7324008b",
-  "latest_created_revision": "ari-00288-z9t",
-  "latest_ready_revision": "ari-00288-z9t",
+  "captured_at": "2026-08-30T22:06:35.584Z",
+  "workflow_sha": "427345214ee16488c54fe1d1246e93765d5c1597",
+  "latest_created_revision": "ari-00290-rhg",
+  "latest_ready_revision": "ari-00290-rhg",
   "ready": {
     "ok": false,
     "code": "INNER_CHAIN_NOT_READY",
@@ -11,7 +11,7 @@
     "child_ready": false,
     "child_exit": null,
     "child_output": [],
-    "request_id": "2f61c5fb-0f1b-4dea-b87c-05ea7ddc6a2e"
+    "request_id": "3f2d7573-b177-4209-86f9-01796493d08c"
   },
   "edge": {
     "ok": false,
@@ -20,7 +20,7 @@
     "child_ready": false,
     "child_exit": null,
     "child_output": [],
-    "request_id": "648721c3-6061-47c9-8158-6890a28bd7e2"
+    "request_id": "043abbff-27eb-4b00-8474-811335b98865"
   },
-  "runtime_lines": []
+  "text_runtime_lines": []
 }
