@@ -9,7 +9,8 @@ import {
 assert.equal(UAE_GOVERNANCE_VERSION, "uae-governance-v1");
 assert.equal(classifyGovernanceRisk("interweb", "search"), "low");
 assert.equal(classifyGovernanceRisk("code", "deploy"), "high");
-assert.equal(classifyGovernanceRisk("novafin", "transfer"), "critical");
+assert.equal(classifyGovernanceRisk("novafin", "transfer"), "high");
+assert.equal(classifyGovernanceRisk("novalife", "execute"), "moderate");
 
 const lowRisk = evaluateUaeGovernance({
   gid: "399152573423",
@@ -21,6 +22,16 @@ const lowRisk = evaluateUaeGovernance({
 assert.equal(lowRisk.allowed, true);
 assert.equal(lowRisk.confirmation_required, false);
 assert.equal(lowRisk.jurisdiction.primary, "wepwawet");
+
+const moderateRisk = evaluateUaeGovernance({
+  gid: "399152573423",
+  capability: "novalife",
+  operation: "execute",
+  body: { agent: "hathor", intent_id: "intent-context" },
+  requestId: "req-context",
+});
+assert.equal(moderateRisk.allowed, true);
+assert.equal(moderateRisk.confirmation_required, false);
 
 const highRiskDenied = evaluateUaeGovernance({
   gid: "399152573423",
