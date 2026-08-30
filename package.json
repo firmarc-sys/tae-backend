@@ -1,8 +1,9 @@
 {
   "name": "tae-backend",
-  "version": "1.9.1",
+  "version": "1.9.2",
   "private": true,
   "type": "module",
+  "governance": "uae-governance-v1",
   "engines": {
     "node": ">=20"
   },
