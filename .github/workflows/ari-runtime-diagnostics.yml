@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/ari-runtime-diagnostics.yml'
+      - 'scripts/normalize-gateway-startup.mjs'
   workflow_dispatch:
 
 permissions:
