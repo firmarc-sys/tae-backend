@@ -36,52 +36,36 @@ jobs:
         with:
           project_id: ${{ env.GCP_PROJECT_ID }}
 
-      - name: Capture created vs ready revision state
+      - name: Capture runtime state and recent failures
         shell: bash
         run: |
           set -euo pipefail
-          echo '=== SERVICE ==='
-          gcloud run services describe "$CLOUD_RUN_SERVICE" \
-            --project="$GCP_PROJECT_ID" \
-            --region="$GCP_REGION" \
-            --format='yaml(status.latestCreatedRevisionName,status.latestReadyRevisionName,status.conditions,status.traffic,spec.template.spec.containers[0].image,spec.template.spec.containers[0].command,spec.template.spec.containers[0].args)'
-
           CREATED="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format='value(status.latestCreatedRevisionName)')"
           READY="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format='value(status.latestReadyRevisionName)')"
-          echo "LATEST_CREATED=$CREATED"
-          echo "LATEST_READY=$READY"
           echo "CREATED=$CREATED" >> "$GITHUB_ENV"
           echo "READY=$READY" >> "$GITHUB_ENV"
+          echo "LATEST_CREATED=$CREATED"
+          echo "LATEST_READY=$READY"
 
-          if [ -n "$CREATED" ]; then
-            echo '=== LATEST CREATED REVISION CONDITIONS ==='
-            gcloud run revisions describe "$CREATED" \
-              --project="$GCP_PROJECT_ID" \
-              --region="$GCP_REGION" \
-              --format='yaml(metadata.name,status.conditions,status.containerStatuses,spec.containers[0].image,spec.containers[0].command,spec.containers[0].args)'
-          fi
-
-          echo '=== READY PROBE ==='
           ARI="https://ari-${GCP_PROJECT_NUMBER}.${GCP_REGION}.run.app"
-          curl -sS -D /tmp/ready.headers --connect-timeout 5 --max-time 20 "$ARI/api/ready?diagnostic=${GITHUB_SHA}" -o /tmp/ready.json || true
-          cat /tmp/ready.json || true
+          curl -sS --connect-timeout 5 --max-time 20 "$ARI/api/ready?diagnostic=${GITHUB_SHA}" -o /tmp/ready.json || true
+          curl -sS --connect-timeout 5 --max-time 20 "$ARI/api/edge-diagnostics?diagnostic=${GITHUB_SHA}" -o /tmp/edge.json || true
 
-          echo '=== EDGE DIAGNOSTICS PROBE ==='
-          curl -sS -D /tmp/edge.headers --connect-timeout 5 --max-time 20 "$ARI/api/edge-diagnostics?diagnostic=${GITHUB_SHA}" -o /tmp/edge.json || true
-          cat /tmp/edge.json || true
+          gcloud logging read \
+            'resource.type="cloud_run_revision" AND resource.labels.service_name="ari" AND severity>=WARNING' \
+            --project="$GCP_PROJECT_ID" \
+            --freshness=90m \
+            --limit=250 \
+            --order=desc \
+            --format=json > /tmp/cloud-errors.json 2>/dev/null || printf '[]\n' > /tmp/cloud-errors.json
 
-          echo '=== RECENT STARTUP/READINESS LOGS ==='
           gcloud logging read \
             'resource.type="cloud_run_revision" AND resource.labels.service_name="ari"' \
             --project="$GCP_PROJECT_ID" \
-            --freshness=45m \
-            --limit=300 \
+            --freshness=90m \
+            --limit=500 \
             --order=desc \
-            --format='value(timestamp,textPayload,jsonPayload.message)' \
-            2>/dev/null \
-            | grep -Ei '(gateway|readiness|listening|inner chain|inner ARI|inner runtime|child runtime|child failed|exited|ECONNREFUSED)' \
-            | grep -Eiv '(sk_live_|rk_live_|whsec_|authorization:|cookie:)' \
-            | head -120 | tee /tmp/startup.log || true
+            --format=json > /tmp/cloud-recent.json 2>/dev/null || printf '[]\n' > /tmp/cloud-recent.json
 
       - name: Record sanitized runtime diagnosis
         shell: bash
@@ -89,25 +73,48 @@ jobs:
           set -euo pipefail
           node - <<'NODE'
           const fs=require('fs');
-          function parsed(path){try{return JSON.parse(fs.readFileSync(path,'utf8'))}catch{return null}}
-          const ready=parsed('/tmp/ready.json');
-          const edge=parsed('/tmp/edge.json');
-          const lines=fs.existsSync('/tmp/startup.log')
-            ? fs.readFileSync('/tmp/startup.log','utf8').split(/\r?\n/).filter(Boolean).slice(0,120)
-            : [];
+          function parsed(path,fallback=null){try{return JSON.parse(fs.readFileSync(path,'utf8'))}catch{return fallback}}
+          function text(entry){
+            return String(entry?.textPayload||entry?.jsonPayload?.message||entry?.jsonPayload?.error||entry?.protoPayload?.status?.message||'').trim();
+          }
+          function sanitize(value){
+            return String(value||'')
+              .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g,'[email]')
+              .replace(/\b\d{12}\b/g,'[gid]')
+              .replace(/(?:sk|rk)_(?:live|test)_[A-Za-z0-9_-]+/g,'[stripe-key]')
+              .replace(/whsec_[A-Za-z0-9_-]+/g,'[stripe-webhook]')
+              .replace(/Bearer\s+\S+/gi,'Bearer [redacted]')
+              .replace(/ari_session=[^;\s]+/gi,'ari_session=[redacted]')
+              .slice(0,1200);
+          }
+          const warningEntries=parsed('/tmp/cloud-errors.json',[])||[];
+          const recentEntries=parsed('/tmp/cloud-recent.json',[])||[];
+          const failureTerms=/(gateway|readiness|listening|inner chain|inner ARI|inner runtime|child runtime|child failed|exited|ECONNREFUSED|EADDRINUSE|error|failed)/i;
+          const combined=[...warningEntries,...recentEntries];
+          const seen=new Set();
+          const runtimeLines=[];
+          for(const entry of combined){
+            const raw=text(entry);
+            if(!raw||!failureTerms.test(raw)) continue;
+            const line=sanitize(raw);
+            if(!line||seen.has(line)) continue;
+            seen.add(line);
+            runtimeLines.push({timestamp:entry?.timestamp||null,severity:entry?.severity||null,message:line,revision:entry?.resource?.labels?.revision_name||null});
+            if(runtimeLines.length>=120) break;
+          }
           const evidence={
             captured_at:new Date().toISOString(),
             workflow_sha:process.env.GITHUB_SHA,
             latest_created_revision:process.env.CREATED||null,
             latest_ready_revision:process.env.READY||null,
-            ready,
-            edge,
-            startup_readiness_lines:lines,
+            ready:parsed('/tmp/ready.json'),
+            edge:parsed('/tmp/edge.json'),
+            runtime_lines:runtimeLines,
           };
           fs.writeFileSync('ARI_RUNTIME_DIAGNOSTIC.json',JSON.stringify(evidence,null,2)+'\n');
           NODE
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add ARI_RUNTIME_DIAGNOSTIC.json
-          git commit -m 'Record sanitized ARI runtime diagnosis' || exit 0
+          git commit -m 'Record expanded sanitized ARI runtime diagnosis' || exit 0
           git push origin HEAD:main
