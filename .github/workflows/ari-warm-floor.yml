@@ -1,4 +1,4 @@
-name: Keep ARI Warm Floor
+name: Verify ARI Warm Floor
 
 on:
   push:
@@ -19,7 +19,7 @@ env:
   CLOUD_RUN_SERVICE: ari
 
 jobs:
-  enforce:
+  verify:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -34,17 +34,10 @@ jobs:
         with:
           project_id: ${{ env.GCP_PROJECT_ID }}
 
-      - name: Keep one ARI instance warm
+      - name: Verify one ARI instance warm
         shell: bash
         run: |
           set -euo pipefail
-          gcloud run services update "$CLOUD_RUN_SERVICE" \
-            --project="$GCP_PROJECT_ID" \
-            --region="$GCP_REGION" \
-            --platform=managed \
-            --min=1 \
-            --quiet
-
           gcloud run services describe "$CLOUD_RUN_SERVICE" \
             --project="$GCP_PROJECT_ID" \
             --region="$GCP_REGION" \
@@ -56,12 +49,11 @@ jobs:
           scaling=(obj.get('scaling') or {})
           value=scaling.get('minInstanceCount')
           if value is None:
-              # Some gcloud/API representations expose the service-level floor via annotations.
               meta=obj.get('metadata') or {}
               ann=meta.get('annotations') or {}
               value=ann.get('run.googleapis.com/minScale')
           if str(value) != '1':
-              raise SystemExit(f'ARI service warm floor not applied: {value!r}')
+              raise SystemExit(f'ARI service warm floor drift: expected 1, found {value!r}')
           print('PASS ARI service minimum instances = 1')
           PY
 
