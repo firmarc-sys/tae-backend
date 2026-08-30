@@ -1,0 +1,82 @@
+name: Keep ARI Warm Floor
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/ari-warm-floor.yml'
+      - 'ARI_WARM_POLICY.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: project-7e6f2720-0291-4c91-8c3
+  GCP_PROJECT_NUMBER: '689058655022'
+  GCP_REGION: us-west1
+  CLOUD_RUN_SERVICE: ari
+
+jobs:
+  enforce:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/${{ env.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github/providers/github
+          service_account: github-actions@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Keep one ARI instance warm
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services update "$CLOUD_RUN_SERVICE" \
+            --project="$GCP_PROJECT_ID" \
+            --region="$GCP_REGION" \
+            --platform=managed \
+            --min=1 \
+            --quiet
+
+          gcloud run services describe "$CLOUD_RUN_SERVICE" \
+            --project="$GCP_PROJECT_ID" \
+            --region="$GCP_REGION" \
+            --format=json > /tmp/ari-service.json
+
+          python3 - <<'PY'
+          import json
+          obj=json.load(open('/tmp/ari-service.json'))
+          scaling=(obj.get('scaling') or {})
+          value=scaling.get('minInstanceCount')
+          if value is None:
+              # Some gcloud/API representations expose the service-level floor via annotations.
+              meta=obj.get('metadata') or {}
+              ann=meta.get('annotations') or {}
+              value=ann.get('run.googleapis.com/minScale')
+          if str(value) != '1':
+              raise SystemExit(f'ARI service warm floor not applied: {value!r}')
+          print('PASS ARI service minimum instances = 1')
+          PY
+
+      - name: Prove live readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARI="https://ari-${GCP_PROJECT_NUMBER}.${GCP_REGION}.run.app"
+          for attempt in $(seq 1 12); do
+            code="$(curl -sS --connect-timeout 4 --max-time 12 -o /tmp/ready.json -w '%{http_code}' "$ARI/api/ready?warm-floor=$GITHUB_SHA-$attempt" || true)"
+            if [ "$code" = 200 ] && node -e "const j=require('/tmp/ready.json'); if(j.ok!==true) process.exit(1)"; then
+              echo 'PASS ARI full production chain is ready'
+              exit 0
+            fi
+            sleep 3
+          done
+          cat /tmp/ready.json >&2 || true
+          exit 1
