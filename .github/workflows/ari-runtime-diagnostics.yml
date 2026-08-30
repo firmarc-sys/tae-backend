@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   id-token: write
 
 env:
@@ -50,6 +50,8 @@ jobs:
           READY="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format='value(status.latestReadyRevisionName)')"
           echo "LATEST_CREATED=$CREATED"
           echo "LATEST_READY=$READY"
+          echo "CREATED=$CREATED" >> "$GITHUB_ENV"
+          echo "READY=$READY" >> "$GITHUB_ENV"
 
           if [ -n "$CREATED" ]; then
             echo '=== LATEST CREATED REVISION CONDITIONS ==='
@@ -61,20 +63,51 @@ jobs:
 
           echo '=== READY PROBE ==='
           ARI="https://ari-${GCP_PROJECT_NUMBER}.${GCP_REGION}.run.app"
-          curl -sS -D - --connect-timeout 5 --max-time 20 "$ARI/api/ready?diagnostic=${GITHUB_SHA}" || true
+          curl -sS -D /tmp/ready.headers --connect-timeout 5 --max-time 20 "$ARI/api/ready?diagnostic=${GITHUB_SHA}" -o /tmp/ready.json || true
+          cat /tmp/ready.json || true
 
           echo '=== EDGE DIAGNOSTICS PROBE ==='
-          curl -sS -D - --connect-timeout 5 --max-time 20 "$ARI/api/edge-diagnostics?diagnostic=${GITHUB_SHA}" || true
+          curl -sS -D /tmp/edge.headers --connect-timeout 5 --max-time 20 "$ARI/api/edge-diagnostics?diagnostic=${GITHUB_SHA}" -o /tmp/edge.json || true
+          cat /tmp/edge.json || true
 
-          echo '=== RECENT CLOUD RUN RUNTIME LOGS ==='
-          # Read only recent ARI runtime output. Do not print environment variables,
-          # revision specs with secret refs, or Secret Manager payloads.
-          # Final-pass trigger: inspect persistent nested-chain readiness only.
+          echo '=== RECENT STARTUP/READINESS LOGS ==='
           gcloud logging read \
             'resource.type="cloud_run_revision" AND resource.labels.service_name="ari"' \
             --project="$GCP_PROJECT_ID" \
             --freshness=45m \
-            --limit=160 \
+            --limit=300 \
             --order=desc \
-            --format='value(timestamp,severity,textPayload,jsonPayload.message)' \
-            2>/dev/null | grep -Eiv '(sk_live_|rk_live_|whsec_|authorization:|cookie:)' | head -160 || true
+            --format='value(timestamp,textPayload,jsonPayload.message)' \
+            2>/dev/null \
+            | grep -Ei '(gateway|readiness|listening|inner chain|inner ARI|inner runtime|child runtime|child failed|exited|ECONNREFUSED)' \
+            | grep -Eiv '(sk_live_|rk_live_|whsec_|authorization:|cookie:)' \
+            | head -120 | tee /tmp/startup.log || true
+
+      - name: Record sanitized runtime diagnosis
+        shell: bash
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs=require('fs');
+          function parsed(path){try{return JSON.parse(fs.readFileSync(path,'utf8'))}catch{return null}}
+          const ready=parsed('/tmp/ready.json');
+          const edge=parsed('/tmp/edge.json');
+          const lines=fs.existsSync('/tmp/startup.log')
+            ? fs.readFileSync('/tmp/startup.log','utf8').split(/\r?\n/).filter(Boolean).slice(0,120)
+            : [];
+          const evidence={
+            captured_at:new Date().toISOString(),
+            workflow_sha:process.env.GITHUB_SHA,
+            latest_created_revision:process.env.CREATED||null,
+            latest_ready_revision:process.env.READY||null,
+            ready,
+            edge,
+            startup_readiness_lines:lines,
+          };
+          fs.writeFileSync('ARI_RUNTIME_DIAGNOSTIC.json',JSON.stringify(evidence,null,2)+'\n');
+          NODE
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add ARI_RUNTIME_DIAGNOSTIC.json
+          git commit -m 'Record sanitized ARI runtime diagnosis' || exit 0
+          git push origin HEAD:main
