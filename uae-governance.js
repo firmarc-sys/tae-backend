@@ -149,10 +149,10 @@ const READ_ONLY_OPERATIONS = new Set([
 
 const HIGH_RISK_TERMS = [
   "purchase", "pay", "transfer", "withdraw", "send_money", "charge",
-  "delete", "destroy", "revoke", "grant", "permission", "credential",
-  "deploy", "publish", "post", "send", "message", "email",
-  "execute", "run", "shell", "command", "commit", "merge",
-  "device_control", "device.write", "iot.write", "unlock", "lock", "start", "stop",
+  "delete", "destroy", "revoke", "grant", "permission.write", "credential.rotate", "secrets.write",
+  "deploy", "publish", "post", "send", "message.send", "email.send",
+  "shell", "command", "commit", "merge",
+  "device_control", "device.write", "iot.write", "unlock_door", "lock_door",
   "webhook", "automation.execute",
 ];
 
@@ -179,7 +179,6 @@ export function classifyGovernanceRisk(capability, operation) {
   const op = normalize(operation);
   if (READ_ONLY_OPERATIONS.has(op) || op.startsWith("read.") || op.endsWith(".read")) return "low";
   if (operationMatches(op, CRITICAL_RISK_TERMS)) return "critical";
-  if (cap === "novafin" && !READ_ONLY_OPERATIONS.has(op)) return "critical";
   if (["iot", "deploy", "automation"].includes(cap) && !READ_ONLY_OPERATIONS.has(op)) return "high";
   if (cap === "code" && operationMatches(op, ["execute", "run", "deploy", "commit", "merge", "delete"])) return "high";
   if (operationMatches(op, HIGH_RISK_TERMS)) return "high";
