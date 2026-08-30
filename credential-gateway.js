@@ -8,6 +8,8 @@ import { Pool } from "pg";
 const outerPort = Number(process.env.PORT || 8080);
 const innerPort = Number(process.env.CREDENTIAL_GATEWAY_INNER_PORT || 8094);
 const OWNER_GID = String(process.env.SIOS_OWNER_GID || "399152573423");
+const INNER_CHAIN_READY_TIMEOUT_MS = Math.max(5000, Number(process.env.ARI_INNER_CHAIN_READY_TIMEOUT_MS || 30000));
+const INNER_CHAIN_READY_INTERVAL_MS = Math.max(100, Number(process.env.ARI_INNER_CHAIN_READY_INTERVAL_MS || 250));
 const connectionString = process.env.NEON_DATABASE_URL || process.env.DATABASE_URL || "";
 const pool = connectionString ? new Pool({ connectionString, max: 4, idleTimeoutMillis: 30000, connectionTimeoutMillis: 8000 }) : null;
 const supabaseUrl = String(process.env.SUPABASE_URL || "").replace(/\/$/, "");
@@ -165,6 +167,47 @@ async function innerJson(path, { method = "GET", body, headers = {} } = {}) {
   return { response, payload };
 }
 
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function probeInnerChainReady() {
+  try {
+    const { response, payload } = await innerJson("/api/ready");
+    return {
+      ready: response.ok && payload?.ok === true,
+      status: response.status,
+      payload,
+    };
+  } catch (error) {
+    return {
+      ready: false,
+      status: 503,
+      payload: {
+        code: "INNER_CHAIN_NOT_READY",
+        error: error?.message || "ARI inner chain is not reachable",
+      },
+    };
+  }
+}
+
+async function waitForInnerChainReady() {
+  const deadline = Date.now() + INNER_CHAIN_READY_TIMEOUT_MS;
+  let last = null;
+  while (Date.now() < deadline) {
+    last = await probeInnerChainReady();
+    if (last.ready) return last;
+    await delay(INNER_CHAIN_READY_INTERVAL_MS);
+  }
+  throw Object.assign(
+    new Error(last?.payload?.error || "ARI inner production chain did not become ready before authorization"),
+    {
+      status: 503,
+      code: "INNER_CHAIN_NOT_READY",
+    },
+  );
+}
+
 async function verifyMemberPassword(gid, password) {
   const binding = await authBindingForGid(gid);
   if (!binding?.authUserId) return false;
@@ -181,6 +224,7 @@ async function verifyMemberPassword(gid, password) {
 }
 
 async function mintInnerSession(req, res, gid) {
+  await waitForInnerChainReady();
   const { response, payload } = await innerJson("/api/identity/authorize", {
     method: "POST",
     body: { gid },
@@ -237,11 +281,14 @@ const gateway = http.createServer(async (req, res) => {
       return res.end();
     }
     if (pathname === "/api/credential-edge") {
-      return json(req, res, childReady ? 200 : 503, {
-        ok: childReady,
+      const readiness = await probeInnerChainReady();
+      return json(req, res, readiness.ready ? 200 : 503, {
+        ok: readiness.ready,
         credential_gate: "gid-proof-v2",
         owner_access: "canonical-gid",
         child_ready: childReady,
+        chain_ready: readiness.ready,
+        chain_status: readiness.status,
         child_exit: childExit,
       });
     }
