@@ -25,3 +25,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run deploy-ari-cloud-run-v2.yml --repo "${GITHUB_REPOSITORY}" --ref main
+
+# This bridge exists because the canonical deploy workflow predates Retrograde
+# and its push path filter does not include the Retrograde authority files.
