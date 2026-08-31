@@ -147,6 +147,7 @@ function canonicalCapability(value = "") {
     stare: "stare",
     gid: "gid",
     eden: "eden",
+    elec: "eden",
     nsos: "nsos",
     heros: "nsos",
   })[raw] || raw;
@@ -176,6 +177,13 @@ function canonicalOperation(capability, body = {}) {
     eden: "execute",
     nsos: "read",
   })[capability] || "execute";
+}
+
+function retrogradeIntelligenceOperation(capability, operation) {
+  const op = String(operation || "").toLowerCase();
+  if (/\b(deploy|publish|release|device|iot|control|admin|delete|revoke|grant|payment|checkout)\b/.test(op)) return false;
+  if (capability === "code" && /^execute$/.test(op)) return false;
+  return new Set(["interweb", "augment", "code", "scribe", "optics", "novalife", "nsos"]).has(capability);
 }
 
 function readBody(req, limit = 1024 * 1024) {
@@ -247,6 +255,9 @@ async function authorizeRuntime(req, res) {
   const capability = canonicalCapability(body.capability || body?.payload?.capability || "");
   const operation = canonicalOperation(capability, body);
   const authorization = await resolveRuntimeAuthorization(gid, capability, operation);
+  const retrogradeEligible = retrogradeIntelligenceOperation(capability, operation);
+  const allowed = authorization.allowed || retrogradeEligible;
+  const reasonCode = authorization.allowed ? authorization.reason_code : retrogradeEligible ? "RETROGRADE_METERED" : authorization.reason_code;
 
   await recordRuntimeAuthorizationEvent({
     request_id: body.request_id || id,
@@ -256,13 +267,13 @@ async function authorizeRuntime(req, res) {
     tier_id: authorization.tier_id,
     capability_id: capability,
     operation,
-    authorization_result: authorization.allowed ? "allow" : "deny",
-    reason_code: authorization.reason_code,
+    authorization_result: allowed ? "allow" : "deny",
+    reason_code: reasonCode,
     latency_ms: authorization.latency_ms,
-    metadata: { source: "authorization-gateway", owner: gid === OWNER_GID },
+    metadata: { source: "authorization-gateway", owner: gid === OWNER_GID, retrograde_metered: retrogradeEligible && !authorization.allowed },
   }).catch((error) => console.error("authorization audit record failed", error));
 
-  if (!authorization.allowed) {
+  if (!allowed) {
     const code = authorization.reason_code || "ENTITLEMENT_REQUIRED";
     return json(req, res, code === "USAGE_LIMIT_REACHED" ? 429 : 403, {
       ok: false,

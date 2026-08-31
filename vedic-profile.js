@@ -1,5 +1,6 @@
 import * as Astronomy from 'astronomy-engine';
 import tzLookup from 'tz-lookup';
+import { calculateBirthNumerology } from './numerology.js';
 
 const SIGNS=['Aries','Taurus','Gemini','Cancer','Leo','Virgo','Libra','Scorpio','Sagittarius','Capricorn','Aquarius','Pisces'];
 const NAKSHATRAS=['Ashwini','Bharani','Krittika','Rohini','Mrigashira','Ardra','Punarvasu','Pushya','Ashlesha','Magha','Purva Phalguni','Uttara Phalguni','Hasta','Chitra','Swati','Vishakha','Anuradha','Jyeshtha','Mula','Purva Ashadha','Uttara Ashadha','Shravana','Dhanishta','Shatabhisha','Purva Bhadrapada','Uttara Bhadrapada','Revati'];
@@ -109,12 +110,13 @@ export async function calculateVedicProfile(input){
   const meanRahu=longitudeMeta(norm(meanNodeTropical(date)-ay)), trueRahu=longitudeMeta(norm(trueNodeTropical(date)-ay));
   const meanKetu=longitudeMeta(norm(meanRahu.longitude+180)), trueKetu=longitudeMeta(norm(trueRahu.longitude+180));
   meanRahu.house=houseFor(meanRahu.sign,asc.sign); trueRahu.house=houseFor(trueRahu.sign,asc.sign); meanKetu.house=houseFor(meanKetu.sign,asc.sign); trueKetu.house=houseFor(trueKetu.sign,asc.sign);
+  const numerology=calculateBirthNumerology(birthDate);
   const chart={ascendant:asc,planets,lunar_nodes:{rahu:{mean:meanRahu,true:trueRahu},ketu:{mean:meanKetu,true:trueKetu}},house_system:'whole_sign'};
   return {
     birth:{date:birthDate,local_time:birthTime,time_precision:timePrecision,birthplace:location.place,resolved_place:location.resolved_place,latitude:location.latitude,longitude:location.longitude,time_zone:location.time_zone,utc:date.toISOString()},
-    calculation:{zodiac:'sidereal',ayanamsa:'lahiri',ayanamsa_degrees:Number(ay.toFixed(6)),ephemeris:'astronomy-engine',node_methods:['mean','true-approx'],calculated_at:new Date().toISOString()},
+    calculation:{zodiac:'sidereal',ayanamsa:'lahiri',ayanamsa_degrees:Number(ay.toFixed(6)),ephemeris:'astronomy-engine',node_methods:['mean','true-approx'],numerology,calculated_at:new Date().toISOString()},
     chart,
-    interpretation:{framework:'vedic_astrology',status:'interpretive_not_diagnostic',growth_direction:`Rahu in ${trueRahu.sign}`,familiar_patterns:`Ketu in ${trueKetu.sign}`,reflection_prompt:`Does the ${trueRahu.sign}–${trueKetu.sign} lunar-node axis resonate with how you experience your growth and familiar patterns?`},
+    interpretation:{framework:'vedic_astrology_plus_birth_date_numerology',status:'interpretive_not_diagnostic',growth_direction:`Rahu in ${trueRahu.sign}`,familiar_patterns:`Ketu in ${trueKetu.sign}`,numerology_summary:`Life Path ${numerology.life_path.number}: ${numerology.life_path.theme}.`,reflection_prompt:`Does the ${trueRahu.sign}–${trueKetu.sign} lunar-node axis and Life Path ${numerology.life_path.number} resonate with how you experience your growth and familiar patterns?`},
     validation:{resonance:'unanswered',notes:null}
   };
 }
