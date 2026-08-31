@@ -1,9 +1,9 @@
 {
   "release": "ga",
   "ga_status": "VERIFIED",
-  "backend_commit": "2559488bb030e78db141a4f362ddb48304034770",
-  "cloud_run_revision": "ari-00303-8rx",
-  "verified_at": "2026-08-31T04:49:12.647Z",
+  "backend_commit": "84ba4bcab5ed446c3f9603cd0562b3faceb2771b",
+  "cloud_run_revision": "ari-00309-txv",
+  "verified_at": "2026-08-31T04:54:43.856Z",
   "checks": {
     "backend_clean_install": true,
     "secret_manager": true,
