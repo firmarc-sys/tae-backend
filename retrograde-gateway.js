@@ -23,7 +23,10 @@ import {
 } from './retrograde.js';
 
 const outerPort = Number(process.env.PORT || 8080);
-const innerPort = Number(process.env.RETROGRADE_GATEWAY_INNER_PORT || 8086);
+// 8086 is the secure/control-plane boundary and 8085 is the universal->secure
+// boundary. Retrograde must place Universal on its own loopback port so the
+// nested Cloud Run process graph can become ready without EADDRINUSE.
+const innerPort = Number(process.env.RETROGRADE_GATEWAY_INNER_PORT || 8089);
 const OWNER_GID = String(process.env.SIOS_OWNER_GID || '399152573423');
 const SESSION_COOKIE = 'ari_session';
 const PUBLIC_DOMAIN = String(process.env.PUBLIC_DOMAIN || process.env.FRONTEND_URL || 'https://siaas.space').replace(/\/$/, '');
@@ -243,73 +246,93 @@ async function handleMetered(req, res, pathname) {
   return proxyMetered(req, res, raw, { gid, tier, quote, reservation, id, pathname });
 }
 
-async function handleCheckout(req, res) {
-  if (!stripe) return json(req, res, 503, { ok: false, code: 'BILLING_NOT_CONFIGURED', error: 'Stripe is not configured for Retrograde funding.' });
+function centsToUsd(value) {
+  return Math.max(0, Number(value || 0)) / 100;
+}
+
+async function handlePurchaseCheckout(req, res) {
+  if (!stripe) return json(req, res, 503, { ok: false, code: 'RGC_BILLING_NOT_CONFIGURED', error: 'Retrograde purchasing is not configured' });
   const gid = await principalGid(req);
   if (!gid) return json(req, res, 401, { ok: false, code: 'AUTH_REQUIRED', error: 'Authenticated GID required' });
-  if (gid === OWNER_GID) return json(req, res, 400, { ok: false, code: 'OWNER_FUNDING_NOT_REQUIRED', error: 'Owner Retrograde balance is unlimited.' });
   const raw = await readBody(req, 256 * 1024);
   let body = {};
   try { body = raw.length ? JSON.parse(raw.toString('utf8')) : {}; }
   catch { return json(req, res, 400, { ok: false, code: 'INVALID_JSON', error: 'Invalid JSON body' }); }
   const usd = Number(body.usd || body.amount_usd || 0);
-  if (!Number.isFinite(usd) || usd < 1 || usd > 500) return json(req, res, 400, { ok: false, code: 'INVALID_AMOUNT', error: 'Retrograde funding must be between $1 and $500.' });
-  const usdCents = Math.round(usd * 100);
+  if (!Number.isFinite(usd) || usd < 1 || usd > 5000) return json(req, res, 400, { ok: false, code: 'RGC_PURCHASE_AMOUNT', error: 'Purchase amount must be between $1 and $5,000' });
+  const amount = Math.round(usd * 100);
   const rgc = usdToRgc(usd);
-  const metadata = { kind: 'retrograde', gid, rgc: String(rgc), usd_cents: String(usdCents), version: RETROGRADE_VERSION };
   const checkout = await stripe.checkout.sessions.create({
     mode: 'payment',
+    line_items: [{ price_data: { currency: 'usd', unit_amount: amount, product_data: { name: 'Retrograde Coin', metadata: { currency: RGC_SYMBOL } } }, quantity: 1 }],
+    success_url: `${PUBLIC_DOMAIN}/?rgc=return&session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${PUBLIC_DOMAIN}/?rgc=cancel`,
     client_reference_id: gid,
-    line_items: [{ quantity: 1, price_data: { currency: 'usd', unit_amount: usdCents, product_data: { name: `${rgc} Retrograde Coin`, description: `Jahorin intelligence balance · ${rgc} RGC`, metadata: { kind: 'retrograde', version: RETROGRADE_VERSION } } } }],
-    success_url: `${PUBLIC_DOMAIN}/?retrograde=success&session_id={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${PUBLIC_DOMAIN}/?retrograde=cancel`,
-    metadata,
-    payment_intent_data: { metadata },
+    metadata: { gid, purpose: 'retrograde_purchase', rgc: String(rgc), usd: usd.toFixed(2) },
+    payment_intent_data: { metadata: { gid, purpose: 'retrograde_purchase', rgc: String(rgc) } },
   });
-  return json(req, res, 200, { ok: true, url: checkout.url, session_id: checkout.id, usd, rgc, conversion: `1 USD = ${USD_TO_RGC} ${RGC_SYMBOL}` });
+  return json(req, res, 200, { ok: true, checkout_required: true, session_id: checkout.id, url: checkout.url, purchase: { usd, rgc, symbol: RGC_SYMBOL, rate: USD_TO_RGC } });
 }
 
-async function reconcileCheckout(req, res, url) {
-  if (!stripe) return json(req, res, 503, { ok: false, code: 'BILLING_NOT_CONFIGURED', error: 'Stripe is not configured for Retrograde funding.' });
+async function handlePurchaseReconcile(req, res, url) {
+  if (!stripe) return json(req, res, 503, { ok: false, code: 'RGC_BILLING_NOT_CONFIGURED', error: 'Retrograde purchasing is not configured' });
   const gid = await principalGid(req);
   if (!gid) return json(req, res, 401, { ok: false, code: 'AUTH_REQUIRED', error: 'Authenticated GID required' });
   const sessionId = String(url.searchParams.get('session_id') || '').trim();
   if (!sessionId) return json(req, res, 400, { ok: false, code: 'SESSION_ID_REQUIRED', error: 'session_id is required' });
   const session = await stripe.checkout.sessions.retrieve(sessionId);
-  if (session.metadata?.kind !== 'retrograde') return json(req, res, 400, { ok: false, code: 'NOT_RETROGRADE_PURCHASE', error: 'Checkout is not a Retrograde purchase.' });
-  if (String(session.metadata?.gid || session.client_reference_id || '') !== gid) return json(req, res, 403, { ok: false, code: 'CHECKOUT_SESSION_DENIED', error: 'Checkout session does not belong to this GID.' });
-  if (session.payment_status !== 'paid') return json(req, res, 409, { ok: false, code: 'PAYMENT_NOT_COMPLETE', error: 'Retrograde payment is not complete.', payment_status: session.payment_status });
+  if (String(session.client_reference_id || '') !== gid || session.metadata?.purpose !== 'retrograde_purchase') {
+    return json(req, res, 403, { ok: false, code: 'RGC_PURCHASE_DENIED', error: 'Checkout session does not belong to this GID' });
+  }
+  if (session.status !== 'complete' || session.payment_status !== 'paid') {
+    return json(req, res, 409, { ok: false, code: 'RGC_PAYMENT_INCOMPLETE', error: 'Retrograde payment is not complete' });
+  }
+  const paidUsd = centsToUsd(session.amount_total);
+  const purchased = Number(session.metadata?.rgc || usdToRgc(paidUsd));
   const tier = await tierForGid(gid);
-  const rgc = Math.max(1, Number(session.metadata?.rgc || usdToRgc(Number(session.amount_total || 0) / 100)));
-  const credit = await creditRetrogradePurchase(db(), { gid, tier, rgc, sourceId: session.id, usdCents: Number(session.amount_total || session.metadata?.usd_cents || 0), metadata: { stripe_payment_intent: session.payment_intent || null, checkout_session_id: session.id } });
-  return json(req, res, 200, { ok: true, gid, credited: credit.credited, duplicate: Boolean(credit.duplicate), rgc, balance_rgc: credit.balance_rgc, session_id: session.id });
+  const credited = await creditRetrogradePurchase(db(), {
+    gid,
+    tier,
+    rgc: purchased,
+    requestId: `stripe:${session.id}`,
+    reference: session.id,
+    metadata: { stripe_payment_intent: String(session.payment_intent || ''), usd: paidUsd },
+  });
+  return json(req, res, 200, { ok: true, synchronized: true, purchase: { usd: paidUsd, rgc: purchased, symbol: RGC_SYMBOL }, retrograde: credited });
 }
 
-async function handleWebhook(req, res) {
-  if (!stripe || !stripeWebhookSecret) return json(req, res, 503, { ok: false, code: 'WEBHOOK_NOT_CONFIGURED', error: 'Stripe webhook verification is not configured.' });
-  const raw = await readBody(req, 2 * 1024 * 1024);
+async function handleStripeWebhook(req, res) {
+  if (!stripe || !stripeWebhookSecret) return json(req, res, 503, { ok: false, code: 'RGC_WEBHOOK_NOT_CONFIGURED', error: 'Retrograde webhook is not configured' });
+  const raw = await readBody(req, 1024 * 1024);
   const signature = String(req.headers['stripe-signature'] || '');
   let event;
   try { event = stripe.webhooks.constructEvent(raw, signature, stripeWebhookSecret); }
-  catch { return json(req, res, 400, { ok: false, code: 'INVALID_STRIPE_SIGNATURE', error: 'Stripe signature verification failed.' }); }
-  const session = event.type === 'checkout.session.completed' ? event.data?.object : null;
-  if (session?.metadata?.kind === 'retrograde' && session.payment_status === 'paid' && session.metadata?.gid) {
-    const gid = String(session.metadata.gid);
-    const tier = await tierForGid(gid);
-    const rgc = Math.max(1, Number(session.metadata.rgc || usdToRgc(Number(session.amount_total || 0) / 100)));
-    await creditRetrogradePurchase(db(), { gid, tier, rgc, sourceId: session.id, usdCents: Number(session.amount_total || session.metadata?.usd_cents || 0), metadata: { stripe_event_id: event.id, checkout_session_id: session.id } });
+  catch { return json(req, res, 400, { ok: false, code: 'INVALID_STRIPE_SIGNATURE', error: 'Invalid Stripe webhook signature' }); }
+  if (event.type === 'checkout.session.completed') {
+    const session = event.data.object;
+    if (session?.metadata?.purpose === 'retrograde_purchase' && session.payment_status === 'paid') {
+      const gid = String(session.client_reference_id || session.metadata?.gid || '').trim();
+      if (gid) {
+        const tier = await tierForGid(gid);
+        const rgc = Number(session.metadata?.rgc || usdToRgc(centsToUsd(session.amount_total)));
+        await creditRetrogradePurchase(db(), {
+          gid,
+          tier,
+          rgc,
+          requestId: `stripe:${session.id}`,
+          reference: session.id,
+          metadata: { stripe_event_id: event.id, stripe_payment_intent: String(session.payment_intent || ''), usd: centsToUsd(session.amount_total) },
+        });
+      }
+    }
   }
-  return json(req, res, 200, { ok: true, received: true, event_id: event.id });
+  return json(req, res, 200, { received: true });
 }
 
 async function handle(req, res) {
   const url = new URL(req.url || '/', 'http://localhost');
   const pathname = url.pathname;
   try {
-    if (req.method === 'POST' && pathname === '/api/retrograde/webhook') return await handleWebhook(req, res);
-    if (req.method === 'POST' && pathname === '/api/retrograde/checkout') return await handleCheckout(req, res);
-    if (req.method === 'GET' && pathname === '/api/retrograde/checkout-session') return await reconcileCheckout(req, res, url);
-
     if (req.method === 'GET' && pathname === '/api/retrograde/balance') {
       const gid = await principalGid(req);
       if (!gid) return json(req, res, 401, { ok: false, code: 'AUTH_REQUIRED', error: 'Authenticated GID required' });
@@ -331,7 +354,6 @@ async function handle(req, res) {
         standard_token_units_per_rgc: STANDARD_TOKEN_UNITS_PER_RGC,
         usd_to_rgc: USD_TO_RGC,
         ledger: 'neon.atomic.append_only',
-        stripe_funding: Boolean(stripe),
       });
     }
 
@@ -351,6 +373,9 @@ async function handle(req, res) {
       return json(req, res, 200, { ok: true, version: RETROGRADE_VERSION, quote: quoteRetrograde(route, body.payload || {}) });
     }
 
+    if (req.method === 'POST' && pathname === '/api/retrograde/purchase') return await handlePurchaseCheckout(req, res);
+    if (req.method === 'GET' && pathname === '/api/retrograde/purchase/reconcile') return await handlePurchaseReconcile(req, res, url);
+    if (req.method === 'POST' && pathname === '/api/retrograde/webhook') return await handleStripeWebhook(req, res);
     if (req.method === 'POST' && RETROGRADE_METERED_ROUTES.has(pathname)) return await handleMetered(req, res, pathname);
     return proxyStream(req, res);
   } catch (error) {
@@ -374,7 +399,7 @@ function waitForPort(port, { timeout = 30000, interval = 120 } = {}) {
 }
 
 waitForPort(innerPort)
-  .then(() => gateway.listen(outerPort, '0.0.0.0', () => console.log(`ARI Retrograde authority ${outerPort}; universal inner ${innerPort}; version=${RETROGRADE_VERSION}; stripe=${Boolean(stripe)}`)))
+  .then(() => gateway.listen(outerPort, '0.0.0.0', () => console.log(`ARI Retrograde authority ${outerPort}; universal inner ${innerPort}; version=${RETROGRADE_VERSION}`)))
   .catch((error) => {
     console.error(`ARI universal capability child failed readiness: ${error.message}`);
     if (!child.killed) child.kill('SIGTERM');
@@ -382,7 +407,7 @@ waitForPort(innerPort)
   });
 
 function shutdown(signal) {
-  console.log(`Retrograde gateway received ${signal}`);
+  console.log(`ARI Retrograde gateway received ${signal}`);
   gateway.close(async () => {
     if (!child.killed) child.kill('SIGTERM');
     try { await pool?.end(); } catch {}
