@@ -4,7 +4,7 @@ This repository is the currently deployed Cloud Run implementation behind the ca
 
 ## Production role
 
-Public product: **Agentic Mercury Time Runner**
+Public product: **Jahorin Trismegistus / Agentic Mercury Time Runner**
 
 Architecture:
 
@@ -15,11 +15,19 @@ Architecture:
 - ARI — browser-facing REST gateway implemented by `server.js`
 - SYNCORI — Audio and Optics instrument suite
 
+Canonical frontend repository:
+
+`firmarc-sys/trismegistus`
+
+Canonical frontend Cloud Run service:
+
+`https://jtrismegistus-ga-689058655022.us-west1.run.app`
+
 Production ARI hostname:
 
 `https://ari-689058655022.us-west1.run.app`
 
-The canonical frontend is maintained separately in `firmarc-sys/Mercury-TimeRunner` and reaches this service through same-origin `/api/*` proxying on Netlify.
+The Trismegistus frontend reaches this service through same-origin `/api/*` proxying on its Cloud Run server. ARI remains the backend authority; provider credentials and protected execution stay server-side.
 
 ## Deployed runtime
 
@@ -107,4 +115,4 @@ Do not mark Agentic Mercury Time Runner production-ready until:
 1. the Cloud Run service identity can successfully invoke the configured Vertex model;
 2. GID session secrets are configured;
 3. invalid GID access is rejected;
-4. the browser-facing Netlify `/api/*` proxy passes the same live checks.
+4. the Trismegistus Cloud Run same-origin `/api/*` proxy passes the same live checks against ARI.
