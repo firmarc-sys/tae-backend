@@ -17,6 +17,7 @@
     "start:production": "node production-gateway.js",
     "start:billing": "node billing-gateway.js",
     "start:entitlements": "node subscription-entitlement-gateway.js",
+    "start:retrograde": "node retrograde-gateway.js",
     "start:universal": "node universal-capability-gateway.js",
     "start:secure": "node secure-gateway.js",
     "start:control": "node control-plane-gateway.js",
@@ -27,7 +28,8 @@
     "verify:credential": "node scripts/verify-credential-gate.mjs",
     "verify:governance": "node scripts/verify-uae-governance.mjs",
     "verify:deploy-authority": "node scripts/verify-deploy-authority.mjs",
-    "check": "node --check credential-gateway.js && node --check governance-gateway.js && node --check uae-governance.js && node --check vedic-gateway.js && node --check authorization-gateway.js && node --check production-gateway.js && node --check vedic-profile.js && node --check billing-gateway.js && node --check subscription-entitlement-gateway.js && node --check universal-capability-gateway.js && node --check capability-fabric.js && node --check secure-gateway.js && node --check device-fabric.js && node --check control-plane-gateway.js && node --check neon-runtime-gateway.js && node --check neon-store.js && node --check manifest-runtime-gateway.js && node --check identity-runtime-gateway.js && node --check server.js && node --check thoth-voice.js && node scripts/verify-credential-gate.mjs && node scripts/verify-uae-governance.mjs && node scripts/verify-deploy-authority.mjs",
+    "verify:retrograde": "node scripts/verify-retrograde.mjs",
+    "check": "node --check credential-gateway.js && node --check governance-gateway.js && node --check uae-governance.js && node --check vedic-gateway.js && node --check authorization-gateway.js && node --check production-gateway.js && node --check vedic-profile.js && node --check billing-gateway.js && node --check subscription-entitlement-gateway.js && node --check retrograde-gateway.js && node --check retrograde.js && node --check universal-capability-gateway.js && node --check capability-fabric.js && node --check secure-gateway.js && node --check device-fabric.js && node --check control-plane-gateway.js && node --check neon-runtime-gateway.js && node --check neon-store.js && node --check manifest-runtime-gateway.js && node --check identity-runtime-gateway.js && node --check server.js && node --check thoth-voice.js && node scripts/verify-credential-gate.mjs && node scripts/verify-uae-governance.mjs && node scripts/verify-deploy-authority.mjs && node scripts/verify-retrograde.mjs",
     "dev": "node --watch credential-gateway.js"
   },
   "dependencies": {
