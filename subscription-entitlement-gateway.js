@@ -4,12 +4,13 @@ import net from "node:net";
 import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { Pool } from "pg";
+import { RETROGRADE_VERSION, RGC_SYMBOL, USD_TO_RGC, STANDARD_TOKEN_UNITS_PER_RGC, allowanceForTier } from "./retrograde.js";
 
 const outerPort = Number(process.env.PORT || 8080);
 const innerPort = Number(process.env.SUBSCRIPTION_ENTITLEMENT_INNER_PORT || 8087);
 const OWNER_GID = process.env.SIOS_OWNER_GID || "399152573423";
 const SESSION_COOKIE = "ari_session";
-const TOKEN_MATRIX_VERSION = "1.0.0";
+const TOKEN_MATRIX_VERSION = "1.1.0";
 
 const legacyJwtSecret = process.env.JWT_SECRET || "";
 const sessionSecret = process.env.ARI_SESSION_SECRET || (legacyJwtSecret && legacyJwtSecret !== "CHANGE-ME-IN-PROD" ? legacyJwtSecret : "");
@@ -20,12 +21,12 @@ const pool = connectionString
   ? new Pool({ connectionString, max: Math.max(2, Number(process.env.NEON_POOL_MAX || 5)), idleTimeoutMillis: 30000, connectionTimeoutMillis: 8000 })
   : null;
 
-const child = spawn(process.execPath, ["universal-capability-gateway.js"], {
+const child = spawn(process.execPath, ["retrograde-gateway.js"], {
   env: { ...process.env, PORT: String(innerPort) },
   stdio: "inherit",
 });
 child.on("exit", (code, signal) => {
-  console.error(`ARI universal gateway exited code=${code} signal=${signal || ""}`);
+  console.error(`ARI Retrograde gateway exited code=${code} signal=${signal || ""}`);
   process.exit(code || 1);
 });
 
@@ -180,6 +181,7 @@ async function entitlementSnapshot(gid) {
     if (allowed === true) grants.add(grant);
     if (allowed === false) grants.delete(grant);
   }
+  const tier = publicTier(row.tier_id);
 
   return {
     ok: true,
@@ -188,13 +190,21 @@ async function entitlementSnapshot(gid) {
     gid: String(row.gid),
     user_type: row.user_type,
     role: row.role_id,
-    tier: publicTier(row.tier_id),
+    tier,
     internal_tier: row.tier_id,
     status: subscriptionStatus(row),
     enabled: row.status === "active" && row.role_enabled !== false && row.tier_enabled !== false,
     grants: [...grants].sort(),
     limits: row.tier_limits || null,
-    resolution_order: ["gid", "subscription", "entitlements", "tokens", "capability", "action"],
+    retrograde: {
+      version: RETROGRADE_VERSION,
+      symbol: RGC_SYMBOL,
+      usd_to_rgc: USD_TO_RGC,
+      standard_token_units_per_rgc: STANDARD_TOKEN_UNITS_PER_RGC,
+      monthly_allowance: allowanceForTier(tier),
+      ledger: "neon.atomic.append_only",
+    },
+    resolution_order: ["gid", "subscription", "entitlements", "retrograde", "capability", "action"],
   };
 }
 
@@ -262,8 +272,6 @@ async function proxyIdentity(req, res, id) {
     return json(res, response.status, payload || {}, id, passthroughHeaders(response));
   }
 
-  // The legacy inner response base carries the owner GID even for public display state.
-  // Never let an unauthenticated display response masquerade as an authenticated GID.
   if (payload.authenticated !== true) {
     payload.gid = null;
     payload.tier = "free";
@@ -282,6 +290,7 @@ async function proxyIdentity(req, res, id) {
     payload.tier = snapshot.tier;
     payload.subscription_status = snapshot.status;
     payload.entitlements = snapshot.grants;
+    payload.retrograde = snapshot.retrograde;
     payload.entitlement_authority = snapshot.authority;
     payload.entitlement_version = snapshot.version;
   }
@@ -304,7 +313,7 @@ function proxyStream(req, res) {
   );
   upstream.on("error", (error) => {
     const id = requestId(req);
-    json(res, 503, { ok: false, code: "RUNTIME_UNAVAILABLE", error: "ARI universal runtime unavailable", request_id: id }, id);
+    json(res, 503, { ok: false, code: "RUNTIME_UNAVAILABLE", error: "ARI Retrograde runtime unavailable", request_id: id }, id);
     console.error("Subscription entitlement gateway upstream error", error);
   });
   req.pipe(upstream);
@@ -346,6 +355,7 @@ async function handle(req, res) {
           status: snapshot.status,
           version: snapshot.version,
           authority: snapshot.authority,
+          retrograde: snapshot.retrograde,
         }, id);
       }
       return json(res, 200, snapshot, id);
@@ -405,9 +415,9 @@ function waitForPort(port, { timeout = 20000, interval = 100 } = {}) {
 }
 
 waitForPort(innerPort)
-  .then(() => gateway.listen(outerPort, "0.0.0.0", () => console.log(`ARI subscription entitlement authority ${outerPort}; universal inner ${innerPort}; matrix=${TOKEN_MATRIX_VERSION}`)))
+  .then(() => gateway.listen(outerPort, "0.0.0.0", () => console.log(`ARI subscription entitlement authority ${outerPort}; Retrograde inner ${innerPort}; matrix=${TOKEN_MATRIX_VERSION}`)))
   .catch((error) => {
-    console.error(`ARI universal child failed readiness: ${error.message}`);
+    console.error(`ARI Retrograde child failed readiness: ${error.message}`);
     if (!child.killed) child.kill("SIGTERM");
     process.exit(1);
   });
