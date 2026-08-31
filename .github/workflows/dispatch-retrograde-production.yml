@@ -1,0 +1,27 @@
+name: Dispatch ARI Production for Retrograde
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'retrograde-gateway.js'
+      - 'retrograde.js'
+      - 'scripts/verify-retrograde.mjs'
+      - '.github/workflows/dispatch-retrograde-production.yml'
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: dispatch-ari-retrograde-production
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch canonical ARI Cloud Run deploy
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run deploy-ari-cloud-run-v2.yml --repo "${GITHUB_REPOSITORY}" --ref main
