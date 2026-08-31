@@ -294,9 +294,9 @@ async function handlePurchaseReconcile(req, res, url) {
     gid,
     tier,
     rgc: purchased,
-    requestId: `stripe:${session.id}`,
-    reference: session.id,
-    metadata: { stripe_payment_intent: String(session.payment_intent || ''), usd: paidUsd },
+    sourceId: session.id,
+    usdCents: Number(session.amount_total || 0),
+    metadata: { stripe_payment_intent: String(session.payment_intent || ''), usd: paidUsd, checkout_session_id: session.id },
   });
   return json(req, res, 200, { ok: true, synchronized: true, purchase: { usd: paidUsd, rgc: purchased, symbol: RGC_SYMBOL }, retrograde: credited });
 }
@@ -319,9 +319,9 @@ async function handleStripeWebhook(req, res) {
           gid,
           tier,
           rgc,
-          requestId: `stripe:${session.id}`,
-          reference: session.id,
-          metadata: { stripe_event_id: event.id, stripe_payment_intent: String(session.payment_intent || ''), usd: centsToUsd(session.amount_total) },
+          sourceId: session.id,
+          usdCents: Number(session.amount_total || 0),
+          metadata: { stripe_event_id: event.id, stripe_payment_intent: String(session.payment_intent || ''), checkout_session_id: session.id },
         });
       }
     }
