@@ -15,6 +15,9 @@ on:
       - 'device-fabric.js'
       - 'control-plane-gateway.js'
       - 'server.js'
+      - 'thoth-voice.js'
+      - 'vertex-model-registry.js'
+      - 'vertex-model-router.js'
       - 'neon-runtime-gateway.js'
       - 'neon-store.js'
       - 'manifest-runtime-gateway.js'
@@ -22,6 +25,8 @@ on:
       - 'vedic-gateway.js'
       - 'vedic-profile.js'
       - 'scripts/normalize-gateway-startup.mjs'
+      - 'scripts/enforce-vertex-model-policy.mjs'
+      - 'scripts/verify-vertex-model-policy.mjs'
       - 'scripts/verify-credential-gate.mjs'
       - 'scripts/verify-deploy-authority.mjs'
       - 'scripts/prove-device-fabric.mjs'
@@ -55,6 +60,8 @@ env:
   STRIPE_SECRET: ari-stripe-secret-key
   STRIPE_WEBHOOK_SECRET: ari-stripe-webhook-secret
   SUPABASE_URL: https://zrkkilsynurpgwrijicq.supabase.co
+  VERTEX_LOCATION: global
+  VERTEX_APPROVED_ROUTING_LOCATIONS: global
 
 jobs:
   deploy:
@@ -174,7 +181,8 @@ jobs:
             --allow-unauthenticated \
             --command=node \
             --args=credential-gateway.js \
-            --update-env-vars="NODE_ENV=production,ARI_REQUIRE_AUTH=true,JAHORIN_FREE_ACCESS=false,SUPABASE_URL=${SUPABASE_URL}" \
+            --remove-env-vars="GEMINI_API_KEY,GEMINI_RUNTIME_API_KEY,GOOGLE_API_KEY,THOTH_GEMINI_API_KEY" \
+            --update-env-vars="NODE_ENV=production,ARI_REQUIRE_AUTH=true,JAHORIN_FREE_ACCESS=false,SUPABASE_URL=${SUPABASE_URL},GOOGLE_CLOUD_PROJECT=${GCP_PROJECT_ID},GOOGLE_CLOUD_LOCATION=${VERTEX_LOCATION},VERTEX_LOCATION=${VERTEX_LOCATION},GOOGLE_GENAI_USE_VERTEXAI=true,VERTEX_APPROVED_ROUTING_LOCATIONS=${VERTEX_APPROVED_ROUTING_LOCATIONS},VERTEX_APPROVE_PREVIEW_REASONING=false,VERTEX_APPROVE_PREVIEW_VIDEO=false,VERTEX_APPROVE_PREVIEW_AUDIO=false,VERTEX_LOG_IDENTITY_REFERENCES=false" \
             --update-secrets="ARI_SESSION_SECRET=${SESSION_SECRET}:latest,OWNER_ACCESS_CODE=${OWNER_ACCESS_CODE_SECRET}:latest,NEON_DATABASE_URL=${NEON_DATABASE_SECRET}:latest,SUPABASE_SECRET_KEY=${SUPABASE_SERVER_SECRET}:latest,STRIPE_SECRET_KEY=${STRIPE_SECRET}:latest,STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}:latest" \
             --quiet
 
@@ -202,6 +210,10 @@ jobs:
           if (c.get('command') or []) != ['node'] or (c.get('args') or []) != ['credential-gateway.js']:
               raise SystemExit(f'wrong public edge command: {c.get("command")} {c.get("args")}')
           env={item.get('name'):item for item in c.get('env',[]) or []}
+          forbidden=['GEMINI_API_KEY','GEMINI_RUNTIME_API_KEY','GOOGLE_API_KEY','THOTH_GEMINI_API_KEY']
+          present=[name for name in forbidden if name in env]
+          if present:
+              raise SystemExit(f'legacy provider credentials remain after deployment: {present}')
           for name in ['ARI_SESSION_SECRET','OWNER_ACCESS_CODE','NEON_DATABASE_URL','SUPABASE_SECRET_KEY','STRIPE_SECRET_KEY','STRIPE_WEBHOOK_SECRET']:
               item=env.get(name) or {}
               ref=(item.get('valueFrom') or {}).get('secretKeyRef') or (item.get('valueSource') or {}).get('secretKeyRef')
@@ -210,9 +222,22 @@ jobs:
           supabase_url=(env.get('SUPABASE_URL') or {}).get('value')
           if supabase_url != os.environ['SUPABASE_URL']:
               raise SystemExit(f'SUPABASE_URL drift after deployment: {supabase_url!r}')
+          expected_vertex={
+              'GOOGLE_CLOUD_PROJECT':os.environ['GCP_PROJECT_ID'],
+              'GOOGLE_CLOUD_LOCATION':os.environ['VERTEX_LOCATION'],
+              'VERTEX_LOCATION':os.environ['VERTEX_LOCATION'],
+              'GOOGLE_GENAI_USE_VERTEXAI':'true',
+              'VERTEX_APPROVED_ROUTING_LOCATIONS':os.environ['VERTEX_APPROVED_ROUTING_LOCATIONS'],
+          }
+          for name,value in expected_vertex.items():
+              actual=(env.get(name) or {}).get('value')
+              if actual != value:
+                  raise SystemExit(f'{name} drift after deployment: expected={value!r} actual={actual!r}')
           print('PASS credential-gateway.js is the sole public ARI edge with 100% traffic')
           print('PASS all session, identity, Supabase and Stripe authorities are Secret Manager backed')
           print('PASS canonical Supabase compatibility URL is present on the live revision')
+          print('PASS legacy Developer API credentials are absent from the live revision')
+          print('PASS Vertex project, location and routing policy are explicit on the live revision')
           print('REVISION', ready)
           with open(os.environ['GITHUB_ENV'],'a') as f:
               f.write(f'CLOUD_RUN_REVISION={ready}\n')
@@ -226,7 +251,7 @@ jobs:
           ready=0
           for attempt in $(seq 1 60); do
             code="$(curl -sS --connect-timeout 5 --max-time 15 -o /tmp/ready.json -w '%{http_code}' "$ARI/api/ready?release=$GITHUB_SHA-$attempt" || true)"
-            if [ "$code" = 200 ] && node -e "const j=require('/tmp/ready.json'); if(!(j.ok===true&&j.auth_required===true&&j.auth_configured===true&&j.provider_configured===true&&j.neon_ready===true)) process.exit(1)"; then ready=1; break; fi
+            if [ "$code" = 200 ] && node -e "const j=require('/tmp/ready.json'); if(!(j.ok===true&&j.auth_required===true&&j.auth_configured===true&&j.provider_configured===true&&j.provider==='google-vertex-ai'&&j.neon_ready===true)) process.exit(1)"; then ready=1; break; fi
             sleep 5
           done
           test "$ready" = 1 || { cat /tmp/ready.json >&2 || true; exit 1; }
@@ -289,9 +314,9 @@ jobs:
           const prior=fs.existsSync('GA_RELEASE_EVIDENCE.json')?JSON.parse(fs.readFileSync('GA_RELEASE_EVIDENCE.json','utf8')):{};
           const device=JSON.parse(fs.readFileSync('DEVICE_FABRIC_RELEASE_PROOF.json','utf8'));
           const stripeLifecycle=process.env.STRIPE_LIFECYCLE_VERIFIED==='true'||(prior.checks||{}).stripe_lifecycle===true;
-          const checks={...(prior.checks||{}),backend_clean_install:true,credential_gate:true,prime_owner_gid_authorized:true,member_credential_required:true,session_auth:true,gid:true,vedic_onboarding_api:true,neon_persistence:true,device_enrollment:device.checks.cryptographic_enrollment===true,device_isolation:device.checks.gid_isolation===true,device_revocation:device.checks.revocation===true,device_grants:device.checks.explicit_grant===true,replay_protection:device.checks.request_replay_rejected===true,bad_signature_rejected:device.checks.bad_signature_rejected===true,stripe_lifecycle:stripeLifecycle};
+          const checks={...(prior.checks||{}),backend_clean_install:true,credential_gate:true,prime_owner_gid_authorized:true,member_credential_required:true,session_auth:true,gid:true,vedic_onboarding_api:true,neon_persistence:true,device_enrollment:device.checks.cryptographic_enrollment===true,device_isolation:device.checks.gid_isolation===true,device_revocation:device.checks.revocation===true,device_grants:device.checks.explicit_grant===true,replay_protection:device.checks.request_replay_rejected===true,bad_signature_rejected:device.checks.bad_signature_rejected===true,stripe_lifecycle:stripeLifecycle,vertex_only_runtime:true,legacy_provider_credentials_absent:true};
           delete checks.gid_identifier_only_rejected;
-          const required=['backend_clean_install','credential_gate','prime_owner_gid_authorized','member_credential_required','session_auth','gid','vedic_onboarding_api','neon_persistence','device_enrollment','device_isolation','device_revocation','device_grants','replay_protection','bad_signature_rejected','stripe_lifecycle'];
+          const required=['backend_clean_install','credential_gate','prime_owner_gid_authorized','member_credential_required','session_auth','gid','vedic_onboarding_api','neon_persistence','device_enrollment','device_isolation','device_revocation','device_grants','replay_protection','bad_signature_rejected','stripe_lifecycle','vertex_only_runtime','legacy_provider_credentials_absent'];
           const gaReady=required.every((key)=>checks[key]===true);
           const evidence={...prior,release:gaReady?'ga':'ga-candidate',ga_status:gaReady?'VERIFIED':'BLOCKED',backend_commit:process.env.GITHUB_SHA,cloud_run_revision:process.env.CLOUD_RUN_REVISION,verified_at:new Date().toISOString(),checks};
           fs.writeFileSync('GA_RELEASE_EVIDENCE.json',JSON.stringify(evidence,null,2)+'\n');
@@ -299,6 +324,7 @@ jobs:
           cat GA_RELEASE_EVIDENCE.json
 
       - name: Commit verified release evidence
+        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
