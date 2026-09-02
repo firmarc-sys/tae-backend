@@ -33,7 +33,7 @@ jobs:
       - name: Install locked runtime dependencies
         run: npm ci --omit=dev --ignore-scripts
 
-      - name: Mirror Google provider routes to active Gemini runtime
+      - name: Enforce Vertex-only provider registry
         shell: bash
         run: |
           set -euo pipefail
@@ -43,34 +43,23 @@ jobs:
           const { Pool } = pg;
           const pool = new Pool({ connectionString: process.env.NEON_DATABASE_URL, max: 1, connectionTimeoutMillis: 10000 });
           try {
-            const source = await pool.query(`
-              select capability_id, operation, model_alias, fallback_alias, priority, enabled, config
-              from public.provider_routes
-              where enabled=true and provider='google-vertex-ai'
-              order by capability_id, operation, priority desc, id
+            await pool.query(`
+              update public.provider_routes
+              set enabled=false, updated_at=now()
+              where enabled=true and provider <> 'google-vertex-ai'
             `);
-            let changed = 0;
-            for (const row of source.rows) {
-              await pool.query(`
-                insert into public.provider_routes
-                  (capability_id,operation,provider,model_alias,fallback_alias,priority,enabled,config)
-                values ($1,$2,'google-gemini-api',$3,$4,$5,true,$6::jsonb)
-                on conflict (capability_id,operation,provider,model_alias)
-                do update set
-                  fallback_alias=excluded.fallback_alias,
-                  priority=excluded.priority,
-                  enabled=true,
-                  config=public.provider_routes.config || excluded.config,
-                  updated_at=now()
-              `, [row.capability_id, row.operation, row.model_alias, row.fallback_alias, row.priority, JSON.stringify(row.config || {})]);
-              changed += 1;
-            }
             const proof = await pool.query(`
-              select count(*)::int as active_gemini_routes
+              select provider, count(*)::int as routes
               from public.provider_routes
-              where enabled=true and provider='google-gemini-api'
+              where enabled=true
+              group by provider
+              order by provider
             `);
-            console.log(`PASS provider registry reconciled; mirrored=${changed}; active_gemini_routes=${proof.rows[0].active_gemini_routes}`);
+            if (!proof.rows.length) throw new Error('No enabled Vertex provider routes remain');
+            if (proof.rows.some((row) => row.provider !== 'google-vertex-ai')) {
+              throw new Error(`Non-Vertex provider remains enabled: ${JSON.stringify(proof.rows)}`);
+            }
+            console.log(`PASS Vertex-only provider registry: ${JSON.stringify(proof.rows)}`);
           } finally {
             await pool.end();
           }
@@ -93,17 +82,19 @@ jobs:
           fi
           echo 'PASS canonical Stripe Secret Manager authority present'
 
-      - name: Verify reconciled live readiness read-only
+      - name: Verify Vertex-only live readiness read-only
         shell: bash
         run: |
           set -euo pipefail
           ARI="https://ari-${GCP_PROJECT_NUMBER}.${GCP_REGION}.run.app"
-          code="$(curl -sS --connect-timeout 5 --max-time 20 -o /tmp/ready.json -w '%{http_code}' "$ARI/api/ready?reconcile=${GITHUB_SHA}" || true)"
+          code="$(curl -sS --connect-timeout 5 --max-time 30 -o /tmp/ready.json -w '%{http_code}' "$ARI/api/ready?reconcile=${GITHUB_SHA}" || true)"
           test "$code" = '200' || { cat /tmp/ready.json >&2 || true; exit 1; }
           python3 - <<'PY'
           import json
           body=json.load(open('/tmp/ready.json'))
-          ok=(body.get('ok') is True and body.get('provider') == 'google-gemini-api' and body.get('provider_configured') is True and body.get('mercury_runtime_ready') is True)
-          raise SystemExit(0 if ok else 1)
+          ok=(body.get('ok') is True and body.get('provider') == 'google-vertex-ai' and body.get('provider_configured') is True and body.get('mercury_runtime_ready') is True)
+          if not ok:
+              print(body)
+              raise SystemExit(1)
           PY
-          echo 'PASS live ARI remains reconciled on google-gemini-api'
+          echo 'PASS live ARI is reconciled on google-vertex-ai only'
