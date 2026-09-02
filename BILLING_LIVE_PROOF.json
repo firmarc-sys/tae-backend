@@ -2,7 +2,7 @@
   "ok": true,
   "scope": "billing-catalog-only",
   "real_stripe_lifecycle_verified": false,
-  "verified_at": "2026-08-31T04:38:13.616Z",
+  "verified_at": "2026-09-02T12:53:36.775Z",
   "endpoint": "https://ari-689058655022.us-west1.run.app",
   "authority": "Stripe + Neon",
   "pricing_source": "stripe",
