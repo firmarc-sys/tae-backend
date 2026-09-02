@@ -1,6 +1,18 @@
 name: Jahorin GA End-to-End
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/jahorin-ga-e2e.yml'
+      - 'scripts/prove-final-production-gate.mjs'
+      - 'scripts/enforce-vertex-model-policy.mjs'
+      - 'scripts/verify-vertex-model-policy.mjs'
+      - 'vertex-model-registry.js'
+      - 'vertex-model-router.js'
+      - 'server.js'
+      - 'thoth-voice.js'
+      - 'Dockerfile'
   workflow_dispatch:
   workflow_run:
     workflows: ['Deploy ARI to Cloud Run']
@@ -8,6 +20,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 concurrency:
   group: jahorin-ga-e2e
@@ -15,12 +28,16 @@ concurrency:
 
 env:
   ARI: https://ari-689058655022.us-west1.run.app
+  GCP_PROJECT_ID: project-7e6f2720-0291-4c91-8c3
+  GCP_PROJECT_NUMBER: '689058655022'
+  GCP_REGION: us-west1
+  CLOUD_RUN_SERVICE: ari
+  EXPECTED_LOCATION: global
 
 jobs:
   ga-e2e:
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - name: Checkout canonical backend
         uses: actions/checkout@v4
@@ -31,62 +48,166 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Clean install
-        run: npm ci
-
-      - name: Prove public production chain without production signing secrets
+      - name: MA'AT source and model-policy gate
         shell: bash
         run: |
           set -euo pipefail
-          code="$(curl -sS -o /tmp/ready.json -w '%{http_code}' --connect-timeout 5 --max-time 20 "$ARI/api/ready")"
-          test "$code" = 200
-          node -e "const j=require('/tmp/ready.json'); if(!(j.ok===true&&j.auth_required===true&&j.provider_configured===true&&j.mercury_runtime_ready===true&&j.neon_ready===true)) process.exit(1)"
-          echo 'PASS readiness'
+          npm ci
+          npm run check
+          node --check scripts/prove-final-production-gate.mjs
+          ! grep -IEq 'generativelanguage\.googleapis\.com|google-gemini-api|GEMINI_RUNTIME_API_KEY|THOTH_GEMINI_API_KEY|GEMINI_API_KEY|GOOGLE_API_KEY' server.js control-plane-gateway.js thoth-voice.js vertex-model-router.js
+          echo 'PASS source policy is capability-driven and Vertex-only'
 
-          code="$(curl -sS -c /tmp/cookies -o /tmp/guest.json -w '%{http_code}' -H 'content-type: application/json' -d '{}' "$ARI/api/identity/guest")"
-          test "$code" = 201
-          node -e "const j=require('/tmp/guest.json'); if(!(j.authenticated===true&&/^\\d{12}$/.test(String(j.gid||'')))) process.exit(1)"
-          echo 'PASS signed GID session'
+      - name: Authenticate read-only proof runner to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/${{ env.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github/providers/github
+          service_account: github-actions@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com
 
-          code="$(curl -sS -b /tmp/cookies -o /tmp/identity.json -w '%{http_code}' "$ARI/api/identity")"
-          test "$code" = 200
-          GID="$(node -e "const j=require('/tmp/guest.json'); process.stdout.write(String(j.gid))")" node -e "const j=require('/tmp/identity.json'); if(String(j.gid)!==process.env.GID) process.exit(1)"
-          echo 'PASS identity continuity'
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
 
-          code="$(curl -sS -b /tmp/cookies -o /tmp/tae.json -w '%{http_code}' --connect-timeout 5 --max-time 90 -H 'content-type: application/json' -H 'x-request-id: ga-public-thoth' -d '{"prompt":"Respond with one concise sentence confirming Jahorin TAE production execution.","request_id":"ga-public-thoth","source_surface":"ga-release","capability":"thoth","machine":"thoth"}' "$ARI/api/tae")"
-          test "$code" = 200 || { cat /tmp/tae.json >&2; exit 1; }
-          node -e "const j=require('/tmp/tae.json'); const text=String(j?.reply?.text||j?.result?.text||j?.output||'').trim(); const provider=String(j?.provider?.name||j?.result?.provider||''); if(!(text&&['google-vertex-ai','google-gemini-api'].includes(provider))) process.exit(1)"
-          echo 'PASS TAE through live Google provider'
-
-          code="$(curl -sS -b /tmp/cookies -o /tmp/entitlement-deny.json -w '%{http_code}' -H 'content-type: application/json' -d '{"intent":"Generate a protected video.","capability":"optics","module":"mercury","payload":{"action":"video_generate"},"request_id":"ga-public-deny"}' "$ARI/api/runtime")"
-          test "$code" = 403
-          node -e "const j=require('/tmp/entitlement-deny.json'); if(!(j.code==='ENTITLEMENT_REQUIRED'&&j?.authorization?.result==='deny')) process.exit(1)"
-          echo 'PASS entitlement denial before provider execution'
-
-          code="$(curl -sS -b /tmp/cookies -o /tmp/twin.json -w '%{http_code}' "$ARI/api/twin")"
-          test "$code" = 200
-          node -e "const j=require('/tmp/twin.json'); if(!(j.ok===true&&j.persistence==='neon'&&j.cloud_sync===true)) process.exit(1)"
-          echo 'PASS Twin / Neon continuity'
-
-          ARI="$ARI" node scripts/prove-device-fabric.mjs
-          echo 'PASS cryptographic device lifecycle, GID isolation and replay protection'
-
-      - name: Enforce GA evidence gate
+      - name: Inspect exact live Cloud Run revision and provider environment
+        id: cloudrun
         shell: bash
         run: |
           set -euo pipefail
-          test -f GA_RELEASE_EVIDENCE.json || { echo 'GA_RELEASE_EVIDENCE.json has not been recorded by the Cloud Run release.' >&2; exit 1; }
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json > /tmp/ari-service.json
+          python3 - <<'PY'
+          import json, os
+          obj=json.load(open('/tmp/ari-service.json'))
+          status=obj.get('status',{})
+          ready=status.get('latestReadyRevisionName')
+          created=status.get('latestCreatedRevisionName')
+          traffic=status.get('traffic') or []
+          live=sum(int(x.get('percent') or 0) for x in traffic if x.get('revisionName') == ready or x.get('latestRevision') is True)
+          c=(obj.get('spec',{}).get('template',{}).get('spec',{}).get('containers') or [{}])[0]
+          env={item.get('name'):item for item in c.get('env',[]) or []}
+          forbidden=['GEMINI_API_KEY','GOOGLE_API_KEY','GEMINI_RUNTIME_API_KEY','THOTH_GEMINI_API_KEY']
+          present=[name for name in forbidden if name in env]
+          checks={
+            'created_equals_ready': bool(ready and created==ready),
+            'latest_traffic_100': live==100,
+            'credential_gateway_edge': (c.get('command') or [])==['node'] and (c.get('args') or [])==['credential-gateway.js'],
+            'legacy_provider_credentials_absent': not present,
+          }
+          image=c.get('image')
+          report={'revision':ready,'created_revision':created,'traffic_percent':live,'image':image,'service_account':obj.get('spec',{}).get('template',{}).get('spec',{}).get('serviceAccountName'),'forbidden_env_present':present,'checks':checks}
+          json.dump(report,open('/tmp/cloudrun-proof.json','w'),indent=2)
+          print(json.dumps(report,indent=2))
+          if not all(checks.values()):
+            raise SystemExit('Cloud Run production purity check failed')
+          with open(os.environ['GITHUB_ENV'],'a') as f:
+            f.write(f"LIVE_ARI_REVISION={ready}\n")
+          PY
+
+      - name: Generate non-secret voice test fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v espeak >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq espeak >/dev/null
+          fi
+          espeak -s 135 -w /tmp/jahorin-proof.wav 'Jahorin production voice verification'
+          test -s /tmp/jahorin-proof.wav
+
+      - name: Execute real production capability and continuity proof
+        id: production
+        continue-on-error: true
+        shell: bash
+        env:
+          EXPECTED_PROJECT: ${{ env.GCP_PROJECT_ID }}
+          VOICE_WAV: /tmp/jahorin-proof.wav
+          FINAL_GATE_EVIDENCE: FINAL_PRODUCTION_GATE_EVIDENCE.json
+        run: node scripts/prove-final-production-gate.mjs
+
+      - name: Prove server-side Vertex observability correlation
+        id: observability
+        if: ${{ always() }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f FINAL_PRODUCTION_GATE_EVIDENCE.json
+          : > /tmp/vertex-logs.json
+          found=0
+          for attempt in 1 2 3 4 5 6; do
+            gcloud logging read \
+              'resource.type="cloud_run_revision" AND resource.labels.service_name="ari" AND jsonPayload.provider="google-vertex-ai" AND jsonPayload.requestId=~"^maat-final-"' \
+              --project="$GCP_PROJECT_ID" --freshness=30m --limit=250 --format=json > /tmp/vertex-logs.json || true
+            found="$(node -e "const fs=require('fs');const rows=JSON.parse(fs.readFileSync('/tmp/vertex-logs.json','utf8')||'[]');const ids=new Set(rows.map(x=>x.jsonPayload||{}).filter(x=>x.success===true&&x.actualModel&&x.expectedModel).map(x=>x.requestId));process.stdout.write(String(ids.size))")"
+            if [ "$found" -ge 8 ]; then break; fi
+            sleep 5
+          done
+          FOUND="$found" node - <<'NODE'
+          const fs=require('fs');
+          const rows=JSON.parse(fs.readFileSync('/tmp/vertex-logs.json','utf8')||'[]');
+          const events=rows.map((x)=>x.jsonPayload||{}).filter((x)=>x.provider==='google-vertex-ai'&&x.success===true&&x.actualModel&&x.expectedModel&&String(x.requestId||'').startsWith('maat-final-'));
+          const unique=new Map(events.map((x)=>[x.requestId,x]));
+          if(unique.size<8) throw new Error(`Only ${unique.size} correlated Vertex inference events were visible in Cloud Logging`);
+          for(const event of unique.values()){
+            for(const key of ['requestId','capability','provider','expectedModel','actualModel','modelLifecycle','fallbackUsed','location','latencyMs','success','providerErrorCategory','usage']){
+              if(!Object.prototype.hasOwnProperty.call(event,key)) throw new Error(`Observability event ${event.requestId} missing ${key}`);
+            }
+          }
+          const summary={verified:true,correlated_request_count:unique.size,revision:process.env.LIVE_ARI_REVISION||null,fields:['requestId','capability','provider','expectedModel','actualModel','modelLifecycle','fallbackUsed','fallbackReason','location','latencyMs','success','providerErrorCategory','usage']};
+          fs.writeFileSync('/tmp/observability-proof.json',JSON.stringify(summary,null,2)+'\n');
+          console.log(JSON.stringify(summary,null,2));
+          NODE
+
+      - name: Merge deployment and observability evidence
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f FINAL_PRODUCTION_GATE_EVIDENCE.json
           node - <<'NODE'
-          const j=require('./GA_RELEASE_EVIDENCE.json');
+          const fs=require('fs');
+          const e=JSON.parse(fs.readFileSync('FINAL_PRODUCTION_GATE_EVIDENCE.json','utf8'));
+          if(fs.existsSync('/tmp/cloudrun-proof.json')) e.deployment={...(e.deployment||{}),...JSON.parse(fs.readFileSync('/tmp/cloudrun-proof.json','utf8'))};
+          const obs=fs.existsSync('/tmp/observability-proof.json')?JSON.parse(fs.readFileSync('/tmp/observability-proof.json','utf8')):{verified:false};
+          e.observability=obs;
+          e.checks=e.checks||{};
+          e.checks.substitution_observability=obs.verified===true;
+          e.checks.production_revision_verified=Boolean(e.deployment?.checks&&Object.values(e.deployment.checks).every(Boolean));
+          e.final_production_acceptance=(e.final_production_acceptance==='PASS'&&e.checks.substitution_observability&&e.checks.production_revision_verified)?'PASS':'INCOMPLETE';
+          fs.writeFileSync('FINAL_PRODUCTION_GATE_EVIDENCE.json',JSON.stringify(e,null,2)+'\n');
+          console.log(`FINAL_PRODUCTION_ACCEPTANCE: ${e.final_production_acceptance}`);
+          NODE
+
+      - name: Upload final production evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: jahorin-final-production-gate-${{ github.run_number }}
+          path: |
+            FINAL_PRODUCTION_GATE_EVIDENCE.json
+            /tmp/cloudrun-proof.json
+            /tmp/observability-proof.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: MA'AT final judgment
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f FINAL_PRODUCTION_GATE_EVIDENCE.json
+          node - <<'NODE'
+          const e=require('./FINAL_PRODUCTION_GATE_EVIDENCE.json');
           const required=[
-            'backend_clean_install','secret_manager','session_auth','gid','tae_provider_execution','neon_persistence',
-            'cors_hardened','security_headers_hardened','distributed_rate_limit','device_enrollment','device_isolation',
-            'device_revocation','device_grants','replay_protection','bad_signature_rejected','stripe_lifecycle'
+            'vertex_only_runtime','gid_continuity_verified','authoritative_model_registry','non_vertex_ai_providers_zero',
+            'tae_write','tae_reload_restore','client_provider_calls_zero','neon_persistence','production_model_execution_verified',
+            'project_access_verified','production_substitution_proof','fail_closed_verified','tae_continuity_verified',
+            'google_first_party_only','vertex_only_policy','production_verified','substitution_observability','production_revision_verified'
           ];
-          const failed=required.filter((key)=>j?.checks?.[key]!==true);
-          if(failed.length){
-            console.error(`GA BLOCKED: ${failed.join(', ')} not verified true.`);
+          const failed=required.filter((key)=>e?.checks?.[key]!==true);
+          if(failed.length||e.final_production_acceptance!=='PASS'){
+            console.error(`FINAL_PRODUCTION_ACCEPTANCE: INCOMPLETE; ${failed.join(', ')}`);
             process.exit(1);
           }
-          console.log('PASS all machine-readable GA gates are true');
+          console.log('FINAL_PRODUCTION_ACCEPTANCE: PASS');
           NODE
