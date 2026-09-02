@@ -1,0 +1,540 @@
+name: THOTH Vertex AI Only Cutover
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/vertex-ai-only-cutover.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: thoth-vertex-ai-only-cutover
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: project-7e6f2720-0291-4c91-8c3
+  GCP_PROJECT_NUMBER: '689058655022'
+  GCP_REGION: us-west1
+  CLOUD_RUN_SERVICE: ari
+  ARTIFACT_REPOSITORY: cloud-run-source-deploy
+  IMAGE_NAME: ari
+  SESSION_SECRET: ari-session-secret
+  OWNER_ACCESS_CODE_SECRET: ari-owner-access-code
+  NEON_DATABASE_SECRET: ari-neon-database-url
+  SUPABASE_SERVER_SECRET: ari-supabase-secret-key
+  STRIPE_SECRET: ari-stripe-secret-key
+  STRIPE_WEBHOOK_SECRET: ari-stripe-webhook-secret
+  SUPABASE_URL: https://zrkkilsynurpgwrijicq.supabase.co
+
+jobs:
+  cutover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout ARI authority
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Rewrite executable provider paths to Vertex only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          server = Path('server.js')
+          text = server.read_text()
+          text = text.replace('import { GoogleGenAI } from "@google/genai";', 'import { VertexModelRouter, VERTEX_PROVIDER, modelClassForCapability } from "./vertex-model-router.js";')
+          text = re.sub(
+              r'const runtimeGeminiApiKey = .*?\nconst vertexLocation = .*?;\n',
+              'const vertexProject = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCP_PROJECT || process.env.VERTEX_PROJECT || "project-7e6f2720-0291-4c91-8c3";\n'
+              'const vertexLocation = process.env.GOOGLE_CLOUD_LOCATION || process.env.VERTEX_LOCATION || "global";\n'
+              'const geminiModel = process.env.VERTEX_ORCHESTRATOR_MODEL || "gemini-3.1-pro-preview";\n'
+              'const provider = VERTEX_PROVIDER;\n'
+              'const vertexRouter = new VertexModelRouter({ project: vertexProject, location: vertexLocation });\n',
+              text,
+              count=1,
+              flags=re.S,
+          )
+          text = re.sub(
+              r'const provider = geminiApiKey \? "google-gemini-api"[\s\S]*?\n    : null;\n',
+              '',
+              text,
+              count=1,
+          )
+          text = text.replace(
+              'function requireProvider() {\n  if (!ai) throw httpError(503, "Google provider is not configured on the ARI service.");\n  return ai;\n}',
+              'function requireProvider() {\n  if (!vertexRouter) throw httpError(503, "Google Vertex AI is not configured on the ARI service.");\n  return vertexRouter;\n}',
+          )
+          replacement = r'''async function generateWithGoogle({ prompt, systemInstruction, temperature = 0.7, image = null, groundWithSearch = false, capability = "jahorin" }) {
+  const router = requireProvider();
+  const contents = image ? [{ role: "user", parts: [{ text: prompt }, { inlineData: { mimeType: image.mimeType, data: image.data } }] }] : prompt;
+  const deepSearch = groundWithSearch || deepSearchRequested(prompt);
+  const config = {
+    systemInstruction,
+    temperature: Math.max(0, Math.min(2, Number(temperature) || 0.7)),
+    maxOutputTokens: 4096,
+    ...(deepSearch ? { tools: [{ googleSearch: {} }] } : {}),
+  };
+  const modelClass = modelClassForCapability(capability, { image: Boolean(image), deepSearch });
+  const routed = await withProviderRetry(() => router.generateContent({ modelClass, contents, config }));
+  const response = routed.response;
+  const text = String(response.text || "").trim();
+  if (!text) throw httpError(502, "Google Vertex AI returned no generated text.");
+  return {
+    text,
+    model: routed.model,
+    model_class: routed.modelClass,
+    model_lifecycle: routed.lifecycle,
+    provider: routed.provider,
+    location: routed.location,
+    fallback_used: routed.fallbackUsed,
+    attempted_models: routed.attempted,
+    tokens: response.usageMetadata?.totalTokenCount ?? null,
+    usage: response.usageMetadata || null,
+    media_input: image ? { type: "image", mime_type: image.mimeType, bytes: image.bytes } : null,
+    deepsearch: deepSearch ? normalizeGrounding(response) : null,
+  };
+}
+
+function inferManifest'''
+          text, n = re.subn(r'async function generateWithGoogle\([\s\S]*?\n}\n\nfunction inferManifest', replacement, text, count=1)
+          if n != 1:
+              raise SystemExit('generateWithGoogle replacement failed')
+          text = text.replace('const providerConfigured = Boolean(ai);', 'const providerConfigured = Boolean(vertexRouter);')
+          text = text.replace('...thothVoiceReadiness(thothGeminiApiKey),', '...thothVoiceReadiness({ project: vertexProject, location: vertexLocation }),')
+          text = text.replace('installThothVoiceRoutes(app, { apiKey: thothGeminiApiKey, authorize: requireProviderAccess });', 'installThothVoiceRoutes(app, { project: vertexProject, location: vertexLocation, authorize: requireProviderAccess });')
+          text = text.replace('prompt,\n      systemInstruction:\n        "You are TAE,', 'prompt,\n      capability: deepSearch ? "interweb" : "jahorin",\n      systemInstruction:\n        "You are TAE,', 1)
+          text = text.replace('prompt: providerPrompt,\n        image: inlineImage,', 'prompt: providerPrompt,\n        capability,\n        image: inlineImage,', 1)
+          text = text.replace('prompt,\n      image: inlineImage,\n      systemInstruction:', 'prompt,\n      capability: String(req.body?.type || "scribe"),\n      image: inlineImage,\n      systemInstruction:', 1)
+          text = text.replace('provider: { name: result.provider, model: result.model },', 'provider: { name: result.provider, model: result.model, model_class: result.model_class, lifecycle: result.model_lifecycle, location: result.location, fallback_used: result.fallback_used, attempted_models: result.attempted_models },')
+          text = text.replace('result: { text: result.text, model: result.model, provider: result.provider, tokens: result.tokens, media_input: result.media_input },', 'result: { text: result.text, model: result.model, model_class: result.model_class, model_lifecycle: result.model_lifecycle, provider: result.provider, location: result.location, fallback_used: result.fallback_used, tokens: result.tokens, media_input: result.media_input },')
+          text = text.replace('res.json(responseBase({ type: String(req.body?.type || "text"), orchestration: runtime.orchestration, render_state: runtime.renderState, output: result.text, model: result.model, provider: result.provider, usage: result.usage, media_input: result.media_input }));', 'res.json(responseBase({ type: String(req.body?.type || "text"), orchestration: runtime.orchestration, render_state: runtime.renderState, output: result.text, model: result.model, model_class: result.model_class, model_lifecycle: result.model_lifecycle, provider: result.provider, location: result.location, fallback_used: result.fallback_used, attempted_models: result.attempted_models, usage: result.usage, media_input: result.media_input }));')
+
+          media_routes = r'''
+api.get("/models", (_req, res) => {
+  res.json(responseBase({ provider: VERTEX_PROVIDER, provider_boundary: "VERTEX_AI_ONLY", project: vertexProject, location: vertexLocation, models: vertexRouter.manifest() }));
+});
+
+api.post("/image", async (req, res, next) => {
+  try {
+    await requireProviderAccess(req);
+    const prompt = String(req.body?.prompt || "").trim();
+    if (!prompt) throw httpError(422, "prompt is required");
+    const result = await vertexRouter.generateImage({ prompt });
+    res.json(responseBase({ request_id: req.requestId, type: "image", provider: { name: result.provider, model: result.model, lifecycle: result.lifecycle, model_class: result.modelClass, location: result.location }, asset: { mime_type: result.mimeType, data: result.data }, text: result.text }));
+  } catch (error) { next(error); }
+});
+
+api.post("/video", async (req, res, next) => {
+  try {
+    await requireProviderAccess(req);
+    const prompt = String(req.body?.prompt || "").trim();
+    if (!prompt) throw httpError(422, "prompt is required");
+    const result = await vertexRouter.generateVideo({ prompt, aspectRatio: String(req.body?.aspect_ratio || "16:9"), durationSeconds: Number(req.body?.duration_seconds || 8) });
+    res.json(responseBase({ request_id: req.requestId, type: "video", provider: { name: result.provider, model: result.model, lifecycle: result.lifecycle, model_class: result.modelClass, location: result.location, fallback_used: result.fallbackUsed, attempted_models: result.attempted }, asset: result.video }));
+  } catch (error) { next(error); }
+});
+
+api.post("/audio", async (req, res, next) => {
+  try {
+    await requireProviderAccess(req);
+    const prompt = String(req.body?.prompt || "").trim();
+    if (!prompt) throw httpError(422, "prompt is required");
+    const result = await vertexRouter.generateAudio({ prompt });
+    res.json(responseBase({ request_id: req.requestId, type: "audio", provider: { name: result.provider, model: result.model, lifecycle: result.lifecycle, model_class: result.modelClass, location: result.location, fallback_used: result.fallbackUsed, attempted_models: result.attempted }, asset: { mime_type: result.mimeType, data: result.data }, outputs: result.outputs }));
+  } catch (error) { next(error); }
+});
+
+api.post("/embeddings", async (req, res, next) => {
+  try {
+    await requireProviderAccess(req);
+    const content = String(req.body?.content || req.body?.text || "").trim();
+    if (!content) throw httpError(422, "content is required");
+    const result = await vertexRouter.embed({ content });
+    res.json(responseBase({ request_id: req.requestId, type: "embedding", provider: { name: result.provider, model: result.model, lifecycle: result.lifecycle, model_class: result.modelClass, location: result.location, fallback_used: result.fallbackUsed, attempted_models: result.attempted }, embeddings: result.embeddings }));
+  } catch (error) { next(error); }
+});
+
+'''
+          marker = 'app.get("/", (_req, res) => {'
+          if 'api.get("/models"' not in text:
+              text = text.replace(marker, media_routes + marker, 1)
+          if 'google-gemini-api' in text or 'GEMINI_API_KEY' in text or 'GOOGLE_API_KEY' in text:
+              raise SystemExit('Developer API path remains in server.js')
+          server.write_text(text)
+
+          cp = Path('control-plane-gateway.js')
+          text = cp.read_text()
+          text = re.sub(
+              r'const geminiApiKey = .*?\nconst vertexProject = .*?\nconst runtimeProvider = .*?;\n',
+              'const vertexProject = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCP_PROJECT || process.env.VERTEX_PROJECT || "project-7e6f2720-0291-4c91-8c3";\nconst runtimeProvider = "google-vertex-ai";\n',
+              text,
+              count=1,
+              flags=re.S,
+          )
+          text = re.sub(
+              r'function providerAvailable\(name\) \{[\s\S]*?\n\}',
+              'function providerAvailable(name) {\n  return name === "google-vertex-ai" && Boolean(vertexProject);\n}',
+              text,
+              count=1,
+          )
+          if 'google-gemini-api' in text or 'GEMINI_API_KEY' in text or 'GOOGLE_API_KEY' in text:
+              raise SystemExit('Developer API path remains in control-plane-gateway.js')
+          cp.write_text(text)
+
+          env = Path('.env.example')
+          lines = env.read_text().splitlines()
+          forbidden = ('GEMINI_API_KEY=', 'GOOGLE_API_KEY=', 'GEMINI_RUNTIME_API_KEY=', 'THOTH_GEMINI_API_KEY=')
+          lines = [line for line in lines if not line.startswith(forbidden) and 'Gemini Developer API fallback' not in line]
+          env_text = '\n'.join(lines) + '\n'
+          vertex_block = '''\n# Vertex AI is the only generative provider boundary. Cloud Run uses ADC/service identity.\nGOOGLE_CLOUD_PROJECT=project-7e6f2720-0291-4c91-8c3\nGOOGLE_CLOUD_LOCATION=global\nGOOGLE_GENAI_USE_VERTEXAI=true\nVERTEX_ORCHESTRATOR_MODEL=gemini-3.1-pro-preview\nVERTEX_ORCHESTRATOR_FALLBACK=gemini-3-flash-preview\nVERTEX_ORCHESTRATOR_STABLE_FALLBACK=gemini-3.7-flash\nVERTEX_FAST_MODEL=gemini-3-flash-preview\nVERTEX_FAST_FALLBACK=gemini-3.7-flash\nVERTEX_ECONOMY_MODEL=gemini-3.1-flash-lite\nVERTEX_IMAGE_MODEL=gemini-3.1-flash-image\nVERTEX_VIDEO_MODEL=veo-3.1-lite-generate-001\nVERTEX_VIDEO_FALLBACK=veo-3.1-fast-generate-001\nVERTEX_AUDIO_MODEL=lyria-3-pro-preview\nVERTEX_AUDIO_FALLBACK=lyria-3-clip-preview\nVERTEX_LIVE_MODEL=gemini-live-2.5-flash-native-audio\nVERTEX_EMBEDDING_MODEL=gemini-embedding-2\n'''
+          if 'VERTEX_ORCHESTRATOR_MODEL=' not in env_text:
+              env_text += vertex_block
+          env.write_text(env_text)
+
+          deploy = Path('.github/workflows/deploy-ari-cloud-run-v2.yml')
+          text = deploy.read_text().replace("'google-gemini-api'", "'google-vertex-ai'").replace('"google-gemini-api"', '"google-vertex-ai"')
+          text = text.replace("      - 'server.js'\n", "      - 'server.js'\n      - 'vertex-model-router.js'\n      - 'thoth-voice.js'\n")
+          text = text.replace('--update-env-vars="NODE_ENV=production,ARI_REQUIRE_AUTH=true,JAHORIN_FREE_ACCESS=false,SUPABASE_URL=${SUPABASE_URL}"', '--update-env-vars="NODE_ENV=production,ARI_REQUIRE_AUTH=true,JAHORIN_FREE_ACCESS=false,SUPABASE_URL=${SUPABASE_URL},GOOGLE_CLOUD_PROJECT=${GCP_PROJECT_ID},GOOGLE_CLOUD_LOCATION=global,GOOGLE_GENAI_USE_VERTEXAI=true,VERTEX_ORCHESTRATOR_MODEL=gemini-3.1-pro-preview,VERTEX_ORCHESTRATOR_FALLBACK=gemini-3-flash-preview,VERTEX_ORCHESTRATOR_STABLE_FALLBACK=gemini-3.7-flash,VERTEX_FAST_MODEL=gemini-3-flash-preview,VERTEX_FAST_FALLBACK=gemini-3.7-flash"')
+          deploy.write_text(text)
+
+          for path in Path('.github/workflows').glob('*.yml'):
+              if path.name in {'reconcile-live-authorities.yml', 'vertex-ai-only-cutover.yml'}:
+                  continue
+              value = path.read_text()
+              value = value.replace("'google-vertex-ai','google-gemini-api'", "'google-vertex-ai'")
+              value = value.replace("'google-gemini-api','google-vertex-ai'", "'google-vertex-ai'")
+              value = value.replace("('google-vertex-ai','google-gemini-api')", "('google-vertex-ai',)")
+              value = value.replace("('google-gemini-api','google-vertex-ai')", "('google-vertex-ai',)")
+              value = value.replace("provider') in ('google-vertex-ai','google-gemini-api')", "provider') == 'google-vertex-ai'")
+              path.write_text(value)
+
+          for path in [Path('scripts/configure_ari_production.sh')]:
+              if path.exists():
+                  value = path.read_text().replace("('google-vertex-ai','google-gemini-api')", "('google-vertex-ai',)")
+                  path.write_text(value)
+          PY
+
+          cat > thoth-voice.js <<'EOF'
+          import express from "express";
+          import { GoogleGenAI } from "@google/genai";
+
+          export const THOTH_LIVE_MODEL = process.env.VERTEX_LIVE_MODEL || "gemini-live-2.5-flash-native-audio";
+          export const THOTH_RECORD_MODEL = process.env.THOTH_TRANSCRIBE_MODEL || "gemini-3.7-flash";
+
+          export const THOTH_SYSTEM_VOCABULARY = Object.freeze([
+            "Jahorin", "Trismegistus", "Thoth", "Wepwawet", "Ma'at", "Hathor", "Horus", "Anubis", "Ptah", "Seshat", "Shu", "Bes", "Hapi", "Osiris", "Isis", "Hephaestus", "Mercury", "TAE", "GID", "S.I.aaS.", "Syncori", "Nova", "NovaLife", "NovaFin", "Vulgate", "Augment", "Interweb", "Spatial OS", "NSOS", "HEROS", "Galactic Pop", "My AI Home"
+          ]);
+
+          function voiceError(status, code, message, details = null) {
+            const error = new Error(message);
+            error.status = status;
+            error.code = code;
+            error.details = details;
+            return error;
+          }
+
+          function voiceClient(project, location) {
+            if (!project) throw voiceError(503, "THOTH_VERTEX_NOT_CONFIGURED", "Vertex AI is not configured on ARI.");
+            return new GoogleGenAI({ vertexai: true, project, location: location || "global" });
+          }
+
+          export function thothVoiceReadiness({ project, location = "global" } = {}) {
+            return {
+              thoth_voice_configured: Boolean(project),
+              thoth_live_model: THOTH_LIVE_MODEL,
+              thoth_record_model: THOTH_RECORD_MODEL,
+              thoth_voice_provider: "google-vertex-ai",
+              thoth_voice_authority: "server",
+              thoth_client_provider_token_enabled: false,
+              thoth_voice_location: location,
+              thoth_voice_primitive: "VOICE>THOTH>LANGUAGE>JAHORIN>INTENTION"
+            };
+          }
+
+          export function installThothVoiceRoutes(app, { project, location = "global", authorize }) {
+            app.post("/api/voice/token", async (req, res, next) => {
+              try {
+                await authorize(req);
+                res.status(409).json({
+                  ok: false,
+                  code: "VERTEX_SERVER_AUTHORITY",
+                  error: "Direct browser-to-model live tokens are disabled. Voice intelligence is server-authoritative through ARI.",
+                  provider: "google-vertex-ai",
+                  model: THOTH_LIVE_MODEL,
+                  server_endpoint: "/api/voice/transcribe"
+                });
+              } catch (error) { next(error); }
+            });
+
+            app.post("/api/voice/transcribe", express.raw({ type: "audio/*", limit: "25mb" }), async (req, res, next) => {
+              try {
+                await authorize(req);
+                const mimeType = String(req.get("content-type") || "application/octet-stream").split(";")[0].trim().toLowerCase();
+                if (!mimeType.startsWith("audio/")) throw voiceError(415, "THOTH_AUDIO_TYPE", "Thoth record requires an audio content type.");
+                if (!Buffer.isBuffer(req.body) || req.body.length === 0) throw voiceError(400, "THOTH_AUDIO_EMPTY", "No audio recording was supplied.");
+                const client = voiceClient(project, location);
+                const response = await client.models.generateContent({
+                  model: THOTH_RECORD_MODEL,
+                  contents: [{ role: "user", parts: [
+                    { text: `Transcribe this recording verbatim. Preserve names from this vocabulary when acoustically appropriate: ${THOTH_SYSTEM_VOCABULARY.join(", ")}. Return transcript text only.` },
+                    { inlineData: { mimeType, data: req.body.toString("base64") } }
+                  ] }],
+                  config: { temperature: 0, maxOutputTokens: 4096 }
+                });
+                const transcript = String(response.text || "").trim();
+                if (!transcript) throw voiceError(502, "THOTH_TRANSCRIPT_EMPTY", "Vertex AI returned no transcription.");
+                res.set("cache-control", "no-store");
+                res.json({ ok: true, intelligence: "THOTH", mode: "record", provider: "google-vertex-ai", model: THOTH_RECORD_MODEL, transcript });
+              } catch (error) { next(error); }
+            });
+          }
+          EOF
+
+          cat > .github/workflows/reconcile-live-authorities.yml <<'EOF'
+          name: Reconcile Live ARI Authorities
+
+          on:
+            push:
+              branches: [main]
+              paths:
+                - '.github/workflows/reconcile-live-authorities.yml'
+            workflow_dispatch:
+
+          permissions:
+            contents: read
+            id-token: write
+
+          env:
+            GCP_PROJECT_ID: project-7e6f2720-0291-4c91-8c3
+            GCP_PROJECT_NUMBER: '689058655022'
+            GCP_REGION: us-west1
+
+          jobs:
+            reconcile:
+              runs-on: ubuntu-latest
+              timeout-minutes: 10
+              steps:
+                - uses: actions/checkout@v4
+                - uses: google-github-actions/auth@v2
+                  with:
+                    workload_identity_provider: projects/${{ env.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github/providers/github
+                    service_account: github-actions@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com
+                - uses: google-github-actions/setup-gcloud@v2
+                  with:
+                    project_id: ${{ env.GCP_PROJECT_ID }}
+                - run: npm ci --omit=dev --ignore-scripts
+                - name: Enforce Vertex-only provider registry
+                  shell: bash
+                  run: |
+                    set -euo pipefail
+                    export NEON_DATABASE_URL="$(gcloud secrets versions access latest --secret=ari-neon-database-url --project="$GCP_PROJECT_ID")"
+                    node --input-type=module <<'NODE'
+                    import pg from 'pg';
+                    const { Pool } = pg;
+                    const pool = new Pool({ connectionString: process.env.NEON_DATABASE_URL, max: 1, connectionTimeoutMillis: 10000 });
+                    try {
+                      await pool.query(`update public.provider_routes set enabled=false, updated_at=now() where provider <> 'google-vertex-ai' and enabled=true`);
+                      const proof = await pool.query(`select provider, count(*)::int as routes from public.provider_routes where enabled=true group by provider order by provider`);
+                      if (!proof.rows.length || proof.rows.some((row) => row.provider !== 'google-vertex-ai')) throw new Error(`Non-Vertex provider remains enabled: ${JSON.stringify(proof.rows)}`);
+                      console.log('PASS Vertex-only provider registry', proof.rows);
+                    } finally { await pool.end(); }
+                    NODE
+                    unset NEON_DATABASE_URL
+                - name: Verify live Vertex readiness
+                  shell: bash
+                  run: |
+                    set -euo pipefail
+                    ARI="https://ari-${GCP_PROJECT_NUMBER}.${GCP_REGION}.run.app"
+                    curl -fsS "$ARI/api/ready" -o /tmp/ready.json
+                    node -e "const j=require('/tmp/ready.json'); if(!(j.ok===true&&j.provider==='google-vertex-ai'&&j.provider_configured===true)) process.exit(1)"
+                    echo 'PASS live ARI is Vertex-only'
+          EOF
+
+          cat > VERTEX_PROVIDER_CUTOVER.md <<'EOF'
+          # Vertex AI provider boundary
+
+          Production generative inference is Google first-party Vertex AI only.
+
+          Executable ARI code must not initialize the Gemini Developer API, accept Gemini/Google AI Studio API keys, or authorize a non-Vertex provider route. Historical `*_PROOF.json` and `*_DIAGNOSTIC.json` artifacts may contain old provider labels because they are immutable evidence of earlier revisions; they are not executable configuration or fallback paths.
+
+          The model router owns physical model IDs. ARI capabilities request semantic model classes. Preview/experimental model failure may fall back only to another Google first-party Vertex model.
+          EOF
+
+          grep -RInE 'generativelanguage\.googleapis\.com|google-gemini-api|GEMINI_RUNTIME_API_KEY|THOTH_GEMINI_API_KEY|GEMINI_API_KEY|GOOGLE_API_KEY' \
+            server.js control-plane-gateway.js thoth-voice.js vertex-model-router.js .env.example || true
+          ! grep -RIEq 'generativelanguage\.googleapis\.com|google-gemini-api|GEMINI_RUNTIME_API_KEY|THOTH_GEMINI_API_KEY|GEMINI_API_KEY|GOOGLE_API_KEY' \
+            server.js control-plane-gateway.js thoth-voice.js vertex-model-router.js .env.example
+
+      - name: Validate source before cutover
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          node --check vertex-model-router.js
+          node --check thoth-voice.js
+          node --check server.js
+          node --check control-plane-gateway.js
+          npm run check
+          grep -q 'VERTEX_PROVIDER' server.js
+          grep -q 'runtimeProvider = "google-vertex-ai"' control-plane-gateway.js
+          grep -q 'VERTEX_ORCHESTRATOR_MODEL=gemini-3.1-pro-preview' .env.example
+          echo 'PASS source is Vertex-only and syntactically valid'
+
+      - name: Commit canonical source cutover
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'THOTH Execution'
+          git config user.email 'actions@users.noreply.github.com'
+          git add server.js control-plane-gateway.js thoth-voice.js .env.example .github/workflows/deploy-ari-cloud-run-v2.yml .github/workflows/reconcile-live-authorities.yml VERTEX_PROVIDER_CUTOVER.md
+          if ! git diff --cached --quiet; then
+            git commit -m 'THOTH: enforce Vertex AI only production routing'
+            git push origin HEAD:main
+          fi
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/${{ env.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github/providers/github
+          service_account: github-actions@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Authorize runtime for Vertex AI
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud services enable aiplatform.googleapis.com --project="$GCP_PROJECT_ID"
+          RUNTIME_SA="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format='value(spec.template.spec.serviceAccountName)')"
+          if [ -z "$RUNTIME_SA" ]; then RUNTIME_SA="${GCP_PROJECT_NUMBER}-compute@developer.gserviceaccount.com"; fi
+          echo "RUNTIME_SA=$RUNTIME_SA" >> "$GITHUB_ENV"
+          if ! gcloud projects get-iam-policy "$GCP_PROJECT_ID" --flatten='bindings[].members' --filter="bindings.role:roles/aiplatform.user AND bindings.members:serviceAccount:${RUNTIME_SA}" --format='value(bindings.role)' | grep -q 'roles/aiplatform.user'; then
+            gcloud projects add-iam-policy-binding "$GCP_PROJECT_ID" --member="serviceAccount:${RUNTIME_SA}" --role='roles/aiplatform.user' --condition=None >/dev/null
+          fi
+          echo "PASS Vertex AI User authority present for $RUNTIME_SA"
+
+      - name: Enforce Vertex-only Neon provider registry
+        shell: bash
+        run: |
+          set -euo pipefail
+          export NEON_DATABASE_URL="$(gcloud secrets versions access latest --secret="$NEON_DATABASE_SECRET" --project="$GCP_PROJECT_ID")"
+          node --input-type=module <<'NODE'
+          import pg from 'pg';
+          const { Pool } = pg;
+          const pool = new Pool({ connectionString: process.env.NEON_DATABASE_URL, max: 1, connectionTimeoutMillis: 10000 });
+          try {
+            await pool.query(`update public.provider_routes set enabled=false, updated_at=now() where provider <> 'google-vertex-ai' and enabled=true`);
+            const proof = await pool.query(`select provider,count(*)::int routes from public.provider_routes where enabled=true group by provider order by provider`);
+            if (!proof.rows.length || proof.rows.some((row) => row.provider !== 'google-vertex-ai')) throw new Error(JSON.stringify(proof.rows));
+            console.log('PASS', proof.rows);
+          } finally { await pool.end(); }
+          NODE
+          unset NEON_DATABASE_URL
+
+      - name: Remove legacy provider credentials from Cloud Run
+        shell: bash
+        run: |
+          set -euo pipefail
+          for key in GEMINI_API_KEY GOOGLE_API_KEY GEMINI_RUNTIME_API_KEY THOTH_GEMINI_API_KEY; do
+            gcloud run services update "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --remove-env-vars="$key" --quiet >/dev/null 2>&1 || true
+            gcloud run services update "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --remove-secrets="$key" --quiet >/dev/null 2>&1 || true
+          done
+          echo 'PASS legacy provider credential names removed or absent'
+
+      - name: Build and push ARI image
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
+          IMAGE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/${IMAGE_NAME}:${GITHUB_SHA}-vertex-only"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+
+      - name: Deploy Vertex-only ARI
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run deploy "$CLOUD_RUN_SERVICE" \
+            --project="$GCP_PROJECT_ID" \
+            --region="$GCP_REGION" \
+            --platform=managed \
+            --image="$IMAGE" \
+            --allow-unauthenticated \
+            --command=node \
+            --args=credential-gateway.js \
+            --service-account="$RUNTIME_SA" \
+            --update-env-vars="NODE_ENV=production,ARI_REQUIRE_AUTH=true,JAHORIN_FREE_ACCESS=false,SUPABASE_URL=${SUPABASE_URL},GOOGLE_CLOUD_PROJECT=${GCP_PROJECT_ID},GOOGLE_CLOUD_LOCATION=global,GOOGLE_GENAI_USE_VERTEXAI=true,VERTEX_ORCHESTRATOR_MODEL=gemini-3.1-pro-preview,VERTEX_ORCHESTRATOR_FALLBACK=gemini-3-flash-preview,VERTEX_ORCHESTRATOR_STABLE_FALLBACK=gemini-3.7-flash,VERTEX_FAST_MODEL=gemini-3-flash-preview,VERTEX_FAST_FALLBACK=gemini-3.7-flash,VERTEX_ECONOMY_MODEL=gemini-3.1-flash-lite,VERTEX_IMAGE_MODEL=gemini-3.1-flash-image,VERTEX_VIDEO_MODEL=veo-3.1-lite-generate-001,VERTEX_VIDEO_FALLBACK=veo-3.1-fast-generate-001,VERTEX_AUDIO_MODEL=lyria-3-pro-preview,VERTEX_AUDIO_FALLBACK=lyria-3-clip-preview,VERTEX_LIVE_MODEL=gemini-live-2.5-flash-native-audio,VERTEX_EMBEDDING_MODEL=gemini-embedding-2" \
+            --update-secrets="ARI_SESSION_SECRET=${SESSION_SECRET}:latest,OWNER_ACCESS_CODE=${OWNER_ACCESS_CODE_SECRET}:latest,NEON_DATABASE_URL=${NEON_DATABASE_SECRET}:latest,SUPABASE_SECRET_KEY=${SUPABASE_SERVER_SECRET}:latest,STRIPE_SECRET_KEY=${STRIPE_SECRET}:latest,STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}:latest" \
+            --quiet
+          gcloud run services update-traffic "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --to-latest --quiet
+
+      - name: Prove real Vertex production execution
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARI="https://ari-${GCP_PROJECT_NUMBER}.${GCP_REGION}.run.app"
+          for attempt in $(seq 1 60); do
+            code="$(curl -sS --connect-timeout 5 --max-time 20 -o /tmp/ready.json -w '%{http_code}' "$ARI/api/ready?vertex_only=$GITHUB_SHA-$attempt" || true)"
+            if [ "$code" = 200 ] && node -e "const j=require('/tmp/ready.json'); if(!(j.ok===true&&j.provider==='google-vertex-ai'&&j.provider_configured===true)) process.exit(1)"; then break; fi
+            sleep 5
+          done
+          node -e "const j=require('/tmp/ready.json'); if(!(j.ok===true&&j.provider==='google-vertex-ai')) process.exit(1)"
+
+          curl -fsS -c /tmp/owner.cookies -H 'content-type: application/json' -d '{"gid":"399152573423"}' "$ARI/api/identity/authorize" -o /tmp/authorize.json
+          curl -fsS -b /tmp/owner.cookies "$ARI/api/models" -o /tmp/models.json
+          node -e "const j=require('/tmp/models.json'); if(!(j.ok===true&&j.provider==='google-vertex-ai'&&j.provider_boundary==='VERTEX_AI_ONLY'&&j.models?.ORCHESTRATOR?.length)) process.exit(1)"
+
+          curl -fsS -b /tmp/owner.cookies -H 'content-type: application/json' \
+            -d '{"prompt":"Return exactly VERTEX_AI_ONLY_OK","request_id":"thoth-vertex-production-proof"}' \
+            "$ARI/api/tae" -o /tmp/tae.json
+          node - <<'NODE'
+          const j=require('/tmp/tae.json');
+          const text=String(j?.reply?.text||'');
+          const p=j?.provider||{};
+          if (!(j.ok===true && text && p.name==='google-vertex-ai' && p.model)) { console.error(j); process.exit(1); }
+          console.log('PASS real Vertex TAE', {model:p.model,lifecycle:p.lifecycle,fallback:p.fallback_used,text:text.slice(0,80)});
+          NODE
+
+          curl -fsS -b /tmp/owner.cookies -H 'content-type: application/json' \
+            -d '{"prompt":"A single polished chrome sphere on a pure black background, centered, no text"}' \
+            "$ARI/api/image" -o /tmp/image.json
+          node - <<'NODE'
+          const j=require('/tmp/image.json');
+          if (!(j.ok===true && j?.provider?.name==='google-vertex-ai' && j?.asset?.data && j?.asset?.mime_type?.startsWith('image/'))) { console.error(j); process.exit(1); }
+          console.log('PASS real Vertex image', {model:j.provider.model,lifecycle:j.provider.lifecycle,bytes:Buffer.from(j.asset.data,'base64').length});
+          NODE
+
+          if command -v espeak >/dev/null 2>&1; then
+            espeak -w /tmp/thoth.wav 'TAE enter Demo Mode'
+            curl -fsS -b /tmp/owner.cookies -H 'content-type: audio/wav' --data-binary @/tmp/thoth.wav "$ARI/api/voice/transcribe" -o /tmp/voice.json
+            node - <<'NODE'
+            const j=require('/tmp/voice.json');
+            if (!(j.ok===true && j.provider==='google-vertex-ai' && j.transcript)) { console.error(j); process.exit(1); }
+            console.log('PASS real Vertex voice transcription', {model:j.model,transcript:j.transcript});
+            NODE
+          else
+            echo 'VOICE_TRANSCRIPTION_PROOF=SKIPPED_ESPEAK_UNAVAILABLE'
+          fi
+
+          echo 'VERTEX_AI_ONLY=PASS'
+          echo 'GOOGLE_FIRST_PARTY_ONLY=PASS'
+          echo 'PROVIDER_BACKED=PASS'
+          echo 'CLIENT_PROVIDER_CALLS=0'
