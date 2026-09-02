@@ -8,7 +8,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "postinstall": "node scripts/normalize-gateway-startup.mjs",
+    "postinstall": "node scripts/normalize-gateway-startup.mjs && node scripts/enforce-vertex-model-policy.mjs && node scripts/enforce-final-production-gate.mjs",
     "start": "node credential-gateway.js",
     "start:credential": "node credential-gateway.js",
     "start:governance": "node governance-gateway.js",
@@ -30,7 +30,7 @@
     "verify:deploy-authority": "node scripts/verify-deploy-authority.mjs",
     "verify:retrograde": "node scripts/verify-retrograde.mjs",
     "verify:models": "node scripts/verify-vertex-model-policy.mjs",
-    "check": "node --check credential-gateway.js && node --check governance-gateway.js && node --check uae-governance.js && node --check vedic-gateway.js && node --check authorization-gateway.js && node --check production-gateway.js && node --check vedic-profile.js && node --check numerology.js && node --check billing-gateway.js && node --check subscription-entitlement-gateway.js && node --check retrograde-gateway.js && node --check retrograde.js && node --check universal-capability-gateway.js && node --check capability-fabric.js && node --check secure-gateway.js && node --check device-fabric.js && node --check control-plane-gateway.js && node --check neon-runtime-gateway.js && node --check neon-store.js && node --check manifest-runtime-gateway.js && node --check identity-runtime-gateway.js && node --check server.js && node --check thoth-voice.js && node --check vertex-model-registry.js && node --check vertex-model-router.js && node --check scripts/enforce-vertex-model-policy.mjs && node --check scripts/verify-vertex-model-policy.mjs && node scripts/verify-vertex-model-policy.mjs && node scripts/verify-credential-gate.mjs && node scripts/verify-uae-governance.mjs && node scripts/verify-deploy-authority.mjs && node scripts/verify-retrograde.mjs",
+    "check": "node --check credential-gateway.js && node --check governance-gateway.js && node --check uae-governance.js && node --check vedic-gateway.js && node --check authorization-gateway.js && node --check production-gateway.js && node --check vedic-profile.js && node --check numerology.js && node --check billing-gateway.js && node --check subscription-entitlement-gateway.js && node --check retrograde-gateway.js && node --check retrograde.js && node --check universal-capability-gateway.js && node --check capability-fabric.js && node --check secure-gateway.js && node --check device-fabric.js && node --check control-plane-gateway.js && node --check neon-runtime-gateway.js && node --check neon-store.js && node --check manifest-runtime-gateway.js && node --check identity-runtime-gateway.js && node --check server.js && node --check thoth-voice.js && node --check vertex-model-registry.js && node --check vertex-model-router.js && node --check scripts/enforce-vertex-model-policy.mjs && node --check scripts/enforce-final-production-gate.mjs && node --check scripts/verify-vertex-model-policy.mjs && node scripts/verify-vertex-model-policy.mjs && node scripts/verify-credential-gate.mjs && node scripts/verify-uae-governance.mjs && node scripts/verify-deploy-authority.mjs && node scripts/verify-retrograde.mjs",
     "dev": "node --watch credential-gateway.js"
   },
   "dependencies": {
