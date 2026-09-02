@@ -804,7 +804,7 @@ api.get("/ready", async (_req, res) => {
       supabase_configured: supabaseConfigured,
       stripe_configured: stripeConfigured,
       billing_configured: billingConfigured,
-      ...thothVoiceReadiness(thothGeminiApiKey),
+      ...thothVoiceReadiness({ project: vertexProject, location: vertexLocation }),
       mercury_runtime_ready: runtimeReady,
       mercury_runtime: mercuryRuntimeUrl,
     }),
@@ -1276,7 +1276,7 @@ api.post("/runtime", async (req, res, next) => {
           orchestration,
           render_state: runtime.renderState,
           result: { text: result.text, model: result.model, model_class: result.model_class, model_lifecycle: result.model_lifecycle, provider: result.provider, location: result.location, fallback_used: result.fallback_used, tokens: result.tokens, media_input: result.media_input },
-          provider: { name: result.provider, model: result.model },
+          provider: { name: result.provider, model: result.model, model_class: result.model_class, lifecycle: result.model_lifecycle, location: result.location, fallback_used: result.fallback_used, attempted_models: result.attempted_models },
         }),
       );
     }
