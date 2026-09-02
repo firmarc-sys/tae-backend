@@ -9,14 +9,18 @@ services:
     autoDeploy: true
     envVars:
       - key: NODE_VERSION
-        value: "20"
+        value: "22"
       - key: NODE_ENV
         value: production
-      - key: GOOGLE_API_KEY
-        sync: false
-      - key: GOOGLE_MODEL
-        value: gemini-2.5-flash
+      - key: GOOGLE_CLOUD_PROJECT
+        value: project-7e6f2720-0291-4c91-8c3
+      - key: GOOGLE_CLOUD_LOCATION
+        value: global
+      - key: GOOGLE_GENAI_USE_VERTEXAI
+        value: "true"
       - key: SIOS_OWNER_GID
         value: "399152573423"
       - key: ALLOWED_ORIGINS
         value: https://siaas.space,https://www.siaas.space
+# This non-Cloud-Run deployment definition intentionally contains no provider API key.
+# Vertex execution requires an authenticated Google Cloud workload identity/ADC; otherwise ARI fails closed.
