@@ -4,7 +4,7 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import Stripe from "stripe";
-import { GoogleGenAI } from "@google/genai";
+import { VertexModelRouter, VERTEX_PROVIDER, modelClassForCapability } from "./vertex-model-router.js";
 import { installThothVoiceRoutes, thothVoiceReadiness } from "./thoth-voice.js";
 
 const app = express();
@@ -16,12 +16,11 @@ const SESSION_COOKIE = "ari_session";
 const DEMO_PHRASE = "TAE, enter Demo Mode";
 const CANONICAL_LINE = "This is not an app. This is me.";
 
-const runtimeGeminiApiKey = process.env.GEMINI_RUNTIME_API_KEY || process.env.GOOGLE_API_KEY || "";
-const thothGeminiApiKey = process.env.THOTH_GEMINI_API_KEY || process.env.GEMINI_API_KEY || runtimeGeminiApiKey;
-const geminiApiKey = runtimeGeminiApiKey;
-const geminiModel = process.env.GEMINI_MODEL || process.env.GEMINI_DEFAULT_MODEL || (runtimeGeminiApiKey ? "gemini-3.6-flash" : "gemini-2.5-flash");
-const vertexProject = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCP_PROJECT || process.env.VERTEX_PROJECT || "689058655022";
-const vertexLocation = process.env.VERTEX_LOCATION || process.env.GOOGLE_CLOUD_LOCATION || "global";
+const vertexProject = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCP_PROJECT || process.env.VERTEX_PROJECT || "project-7e6f2720-0291-4c91-8c3";
+const vertexLocation = process.env.GOOGLE_CLOUD_LOCATION || process.env.VERTEX_LOCATION || "global";
+const geminiModel = process.env.VERTEX_ORCHESTRATOR_MODEL || "gemini-3.1-pro-preview";
+const provider = VERTEX_PROVIDER;
+const vertexRouter = new VertexModelRouter({ project: vertexProject, location: vertexLocation });
 const mercuryRuntimeUrl = (process.env.MERCURY_RUNTIME_URL || "https://agentic-mercury-runtime-689058655022.us-west1.run.app").replace(/\/$/, "");
 const legacyJwtSecret = process.env.JWT_SECRET || "";
 const sessionSecret = process.env.ARI_SESSION_SECRET || (legacyJwtSecret && legacyJwtSecret !== "CHANGE-ME-IN-PROD" ? legacyJwtSecret : "");
@@ -89,12 +88,6 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || defaultOrigins.join(","))
   .map((origin) => origin.trim())
   .filter(Boolean);
 
-const provider = geminiApiKey ? "google-gemini-api" : vertexProject ? "google-vertex-ai" : "unconfigured";
-const ai = geminiApiKey
-  ? new GoogleGenAI({ apiKey: geminiApiKey })
-  : vertexProject
-    ? new GoogleGenAI({ vertexai: true, project: vertexProject, location: vertexLocation })
-    : null;
 
 const supabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey && supabaseServerKey);
 const stripeConfigured = Boolean(stripe && stripeWebhookSecret && stripePriceBeta && stripePriceAlpha);
@@ -212,8 +205,8 @@ function renderState(state = "idle") {
 }
 
 function requireProvider() {
-  if (!ai) throw httpError(503, "Google provider is not configured on the ARI service.");
-  return ai;
+  if (!vertexRouter) throw httpError(503, "Google Vertex AI is not configured on the ARI service.");
+  return vertexRouter;
 }
 
 function requireSupabase() {
@@ -512,7 +505,7 @@ async function stripeWebhookHandler(req, res, next) {
 
 app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), stripeWebhookHandler);
 app.post("/stripe/webhook", express.raw({ type: "application/json" }), stripeWebhookHandler);
-installThothVoiceRoutes(app, { apiKey: thothGeminiApiKey, authorize: requireProviderAccess });
+installThothVoiceRoutes(app, { project: vertexProject, location: vertexLocation, authorize: requireProviderAccess });
 app.use(express.json({ limit: "10mb" }));
 
 async function mercuryRequest(path, { method = "GET", body, requestId = crypto.randomUUID(), timeout = 10000 } = {}) {
@@ -666,8 +659,8 @@ async function withProviderRetry(operation, attempts = 3) {
   throw lastError;
 }
 
-async function generateWithGoogle({ prompt, systemInstruction, temperature = 0.7, image = null, groundWithSearch = false }) {
-  const client = requireProvider();
+async function generateWithGoogle({ prompt, systemInstruction, temperature = 0.7, image = null, groundWithSearch = false, capability = "jahorin" }) {
+  const router = requireProvider();
   const contents = image ? [{ role: "user", parts: [{ text: prompt }, { inlineData: { mimeType: image.mimeType, data: image.data } }] }] : prompt;
   const deepSearch = groundWithSearch || deepSearchRequested(prompt);
   const config = {
@@ -676,13 +669,20 @@ async function generateWithGoogle({ prompt, systemInstruction, temperature = 0.7
     maxOutputTokens: 4096,
     ...(deepSearch ? { tools: [{ googleSearch: {} }] } : {}),
   };
-  const response = await withProviderRetry(() => client.models.generateContent({ model: geminiModel, contents, config }));
+  const modelClass = modelClassForCapability(capability, { image: Boolean(image), deepSearch });
+  const routed = await withProviderRetry(() => router.generateContent({ modelClass, contents, config }));
+  const response = routed.response;
   const text = String(response.text || "").trim();
-  if (!text) throw httpError(502, "Google provider returned no generated text.");
+  if (!text) throw httpError(502, "Google Vertex AI returned no generated text.");
   return {
     text,
-    model: geminiModel,
-    provider,
+    model: routed.model,
+    model_class: routed.modelClass,
+    model_lifecycle: routed.lifecycle,
+    provider: routed.provider,
+    location: routed.location,
+    fallback_used: routed.fallbackUsed,
+    attempted_models: routed.attempted,
     tokens: response.usageMetadata?.totalTokenCount ?? null,
     usage: response.usageMetadata || null,
     media_input: image ? { type: "image", mime_type: image.mimeType, bytes: image.bytes } : null,
@@ -773,13 +773,13 @@ api.get("/health", (_req, res) => {
       supabase_configured: supabaseConfigured,
       stripe_configured: stripeConfigured,
       billing_configured: billingConfigured,
-      ...thothVoiceReadiness(thothGeminiApiKey),
+      ...thothVoiceReadiness({ project: vertexProject, location: vertexLocation }),
     }),
   );
 });
 
 api.get("/ready", async (_req, res) => {
-  const providerConfigured = Boolean(ai);
+  const providerConfigured = Boolean(vertexRouter);
   const ownerAuthConfigured = Boolean(sessionSecret && ownerAccessCode);
   const memberAuthConfigured = supabaseConfigured;
   const guestAuthConfigured = Boolean(sessionSecret);
@@ -1205,6 +1205,7 @@ api.post("/tae", async (req, res, next) => {
     await requireProviderAccess(req);
     const result = await generateWithGoogle({
       prompt,
+      capability: deepSearch ? "interweb" : "tae",
       systemInstruction:
         "You are TAE, the Timeline Augmentation and orchestration intelligence inside Agentic Mercury Time Runner. Coordinate the user request clearly and return useful production-grade results.",
       temperature: req.body?.temperature,
@@ -1229,7 +1230,7 @@ api.post("/tae", async (req, res, next) => {
     } : {}),
   },
   deepsearch: result.deepsearch,
-        provider: { name: result.provider, model: result.model },
+        provider: { name: result.provider, model: result.model, model_class: result.model_class, lifecycle: result.model_lifecycle, location: result.location, fallback_used: result.fallback_used, attempted_models: result.attempted_models },
       }),
     );
   } catch (error) {
@@ -1262,6 +1263,7 @@ api.post("/runtime", async (req, res, next) => {
       await requireProviderAccess(req);
       const result = await generateWithGoogle({
         prompt: providerPrompt,
+        capability,
         image: inlineImage,
         systemInstruction:
           "You are Jahorin, the user-facing intelligence inside Agentic Mercury Time Runner. Respond directly to the user's intent and use the active Mercury capability as an instrument.",
@@ -1273,7 +1275,7 @@ api.post("/runtime", async (req, res, next) => {
           manifest, capability: manifest.capability, page: manifest.page, confidence: manifest.confidence, reason: manifest.reason, requires_confirmation: manifest.requires_confirmation,
           orchestration,
           render_state: runtime.renderState,
-          result: { text: result.text, model: result.model, provider: result.provider, tokens: result.tokens, media_input: result.media_input },
+          result: { text: result.text, model: result.model, model_class: result.model_class, model_lifecycle: result.model_lifecycle, provider: result.provider, location: result.location, fallback_used: result.fallback_used, tokens: result.tokens, media_input: result.media_input },
           provider: { name: result.provider, model: result.model },
         }),
       );
@@ -1316,16 +1318,61 @@ api.post("/generate", async (req, res, next) => {
     await requireProviderAccess(req);
     const result = await generateWithGoogle({
       prompt,
+      capability: String(req.body?.type || "scribe"),
       image: inlineImage,
       systemInstruction:
         String(req.body?.systemInstruction || "").trim() ||
         "You are Jahorin inside Agentic Mercury Time Runner. Produce useful, original, polished content that directly fulfills the user's request.",
       temperature: req.body?.temperature,
     });
-    res.json(responseBase({ type: String(req.body?.type || "text"), orchestration: runtime.orchestration, render_state: runtime.renderState, output: result.text, model: result.model, provider: result.provider, usage: result.usage, media_input: result.media_input }));
+    res.json(responseBase({ type: String(req.body?.type || "text"), orchestration: runtime.orchestration, render_state: runtime.renderState, output: result.text, model: result.model, model_class: result.model_class, model_lifecycle: result.model_lifecycle, provider: result.provider, location: result.location, fallback_used: result.fallback_used, attempted_models: result.attempted_models, usage: result.usage, media_input: result.media_input }));
   } catch (error) {
     next(error);
   }
+});
+
+api.get("/models", (_req, res) => {
+  res.json(responseBase({ provider: VERTEX_PROVIDER, provider_boundary: "VERTEX_AI_ONLY", project: vertexProject, location: vertexLocation, models: vertexRouter.manifest() }));
+});
+
+api.post("/image", async (req, res, next) => {
+  try {
+    await requireProviderAccess(req);
+    const prompt = String(req.body?.prompt || "").trim();
+    if (!prompt) throw httpError(422, "prompt is required");
+    const result = await vertexRouter.generateImage({ prompt });
+    res.json(responseBase({ request_id: req.requestId, type: "image", provider: { name: result.provider, model: result.model, lifecycle: result.lifecycle, model_class: result.modelClass, location: result.location }, asset: { mime_type: result.mimeType, data: result.data }, text: result.text }));
+  } catch (error) { next(error); }
+});
+
+api.post("/video", async (req, res, next) => {
+  try {
+    await requireProviderAccess(req);
+    const prompt = String(req.body?.prompt || "").trim();
+    if (!prompt) throw httpError(422, "prompt is required");
+    const result = await vertexRouter.generateVideo({ prompt, aspectRatio: String(req.body?.aspect_ratio || "16:9"), durationSeconds: Number(req.body?.duration_seconds || 8) });
+    res.json(responseBase({ request_id: req.requestId, type: "video", provider: { name: result.provider, model: result.model, lifecycle: result.lifecycle, model_class: result.modelClass, location: result.location, fallback_used: result.fallbackUsed, attempted_models: result.attempted }, asset: result.video }));
+  } catch (error) { next(error); }
+});
+
+api.post("/audio", async (req, res, next) => {
+  try {
+    await requireProviderAccess(req);
+    const prompt = String(req.body?.prompt || "").trim();
+    if (!prompt) throw httpError(422, "prompt is required");
+    const result = await vertexRouter.generateAudio({ prompt });
+    res.json(responseBase({ request_id: req.requestId, type: "audio", provider: { name: result.provider, model: result.model, lifecycle: result.lifecycle, model_class: result.modelClass, location: result.location, fallback_used: result.fallbackUsed, attempted_models: result.attempted }, asset: { mime_type: result.mimeType, data: result.data }, outputs: result.outputs }));
+  } catch (error) { next(error); }
+});
+
+api.post("/embeddings", async (req, res, next) => {
+  try {
+    await requireProviderAccess(req);
+    const content = String(req.body?.content || req.body?.text || "").trim();
+    if (!content) throw httpError(422, "content is required");
+    const result = await vertexRouter.embed({ content });
+    res.json(responseBase({ request_id: req.requestId, type: "embedding", provider: { name: result.provider, model: result.model, lifecycle: result.lifecycle, model_class: result.modelClass, location: result.location, fallback_used: result.fallbackUsed, attempted_models: result.attempted }, embeddings: result.embeddings }));
+  } catch (error) { next(error); }
 });
 
 app.get("/", (_req, res) => {

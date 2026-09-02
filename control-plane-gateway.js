@@ -12,7 +12,7 @@ const OWNER_GID = process.env.SIOS_OWNER_GID || "399152573423";
 const SESSION_COOKIE = "ari_session";
 
 const connectionString = process.env.NEON_DATABASE_URL || process.env.DATABASE_URL || "";
-const pool = connectionString ? new Pool({ connectionString, max: Math.max(2, Number(process.env.NEON_POOL_MAX || 5)), idleTimeoutMillis: 30000, connectionTimeoutMillis: 8000 }) : null;
+const pool = connectionString ? new Pool({ connectionString, max: Math.max(2, Number(process.env.NEON_POOL_MAX || 5)), idleTimeoutMillis: 30000, connectionTimeoutMillis: 30000 }) : null;
 const db = () => {
   if (!pool) throw Object.assign(new Error("Neon is not configured on ARI"), { status: 503 });
   return pool;
@@ -20,9 +20,8 @@ const db = () => {
 
 const legacyJwtSecret = process.env.JWT_SECRET || "";
 const sessionSecret = process.env.ARI_SESSION_SECRET || (legacyJwtSecret && legacyJwtSecret !== "CHANGE-ME-IN-PROD" ? legacyJwtSecret : "");
-const geminiApiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "";
-const vertexProject = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCP_PROJECT || process.env.VERTEX_PROJECT || "689058655022";
-const runtimeProvider = geminiApiKey ? "google-gemini-api" : vertexProject ? "google-vertex-ai" : "unconfigured";
+const vertexProject = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCP_PROJECT || process.env.VERTEX_PROJECT || "project-7e6f2720-0291-4c91-8c3";
+const runtimeProvider = "google-vertex-ai";
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || "";
 const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET || "";
@@ -174,9 +173,7 @@ function canonicalOperation(capability, body = {}) {
   return ({ interweb: "search", augment: "generate", code: "generate", scribe: "write", optics: "analyze" })[capability] || "execute";
 }
 function providerAvailable(name) {
-  if (name === "google-vertex-ai") return Boolean(vertexProject);
-  if (name === "google-gemini-api") return Boolean(geminiApiKey);
-  return false;
+  return name === "google-vertex-ai" && Boolean(vertexProject);
 }
 async function resolveProviderRoute(capability, operation) {
   const result = await db().query(`select id,capability_id,operation,provider,model_alias,fallback_alias,priority,enabled,config from public.provider_routes where capability_id=$1 and operation=$2 and enabled=true order by priority desc,id asc`, [capability, operation]);
@@ -383,7 +380,7 @@ async function handle(req, res) {
 }
 
 const gateway = http.createServer((req, res) => void handle(req, res));
-function waitForPort(port, { timeout = 20000, interval = 100 } = {}) {
+function waitForPort(port, { timeout = 180000, interval = 100 } = {}) {
   const deadline = Date.now() + timeout;
   return new Promise((resolve, reject) => {
     const attempt = () => {
