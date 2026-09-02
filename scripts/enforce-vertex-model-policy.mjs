@@ -19,6 +19,35 @@ rewrite('server.js', (source) => {
   );
   text = text.replace(/model:\s*geminiModel,/g, 'model: primaryOrchestrationModel,');
   text = text.replace(/withProviderRetry\(\(\) => router\.generateContent\((\{[\s\S]*?\})\)\)/g, 'router.generateContent($1)');
+
+  // Every HTTP inference must carry the API request/correlation id into Vertex observability.
+  text = text.replace(
+    'async function generateWithGoogle({ prompt, systemInstruction, temperature = 0.7, image = null, groundWithSearch = false, capability = "jahorin" }) {',
+    'async function generateWithGoogle({ prompt, systemInstruction, temperature = 0.7, image = null, groundWithSearch = false, capability = "jahorin", requestId = null }) {',
+  );
+  text = text.replace(
+    'const routed = await router.generateContent({ modelClass, contents, config });',
+    'const routed = await router.generateContent({ modelClass, contents, config, context: { requestId } });',
+  );
+  text = text.replace(
+    'const result = await generateWithGoogle({\n      prompt,\n      capability: deepSearch ? "interweb" : "tae",',
+    'const result = await generateWithGoogle({\n      prompt,\n      requestId: req.body?.request_id || req.requestId,\n      capability: deepSearch ? "interweb" : "tae",',
+  );
+  text = text.replace(
+    'const result = await generateWithGoogle({\n        prompt: providerPrompt,\n        capability,',
+    'const result = await generateWithGoogle({\n        prompt: providerPrompt,\n        requestId,\n        capability,',
+  );
+  text = text.replace(
+    'const result = await generateWithGoogle({\n      prompt,\n      capability: String(req.body?.type || "scribe"),',
+    'const result = await generateWithGoogle({\n      prompt,\n      requestId: req.requestId,\n      capability: String(req.body?.type || "scribe"),',
+  );
+  text = text.replace('vertexRouter.generateImage({ prompt })', 'vertexRouter.generateImage({ prompt, context: { requestId: req.requestId } })');
+  text = text.replace(
+    'vertexRouter.generateVideo({ prompt, aspectRatio: String(req.body?.aspect_ratio || "16:9"), durationSeconds: Number(req.body?.duration_seconds || 8) })',
+    'vertexRouter.generateVideo({ prompt, aspectRatio: String(req.body?.aspect_ratio || "16:9"), durationSeconds: Number(req.body?.duration_seconds || 8), context: { requestId: req.requestId } })',
+  );
+  text = text.replace('vertexRouter.generateAudio({ prompt })', 'vertexRouter.generateAudio({ prompt, context: { requestId: req.requestId } })');
+  text = text.replace('vertexRouter.embed({ content })', 'vertexRouter.embed({ content, context: { requestId: req.requestId } })');
   return text;
 });
 
@@ -29,7 +58,7 @@ rewrite('vertex-model-router.js', (source) => source.replace(
 
 rewrite('scripts/normalize-gateway-startup.mjs', (source) => {
   let text = source.replace(/\s*'const geminiModel = .*?\\n' \+\n/g, '');
-  text = text.replace('const routed = await withProviderRetry(() => router.generateContent({ modelClass, contents, config }));', 'const routed = await router.generateContent({ modelClass, contents, config });');
+  text = text.replace('const routed = await withProviderRetry(() => router.generateContent({ modelClass, contents, config }));', 'const routed = await router.generateContent({ modelClass, contents, config, context: { requestId } });');
   return text;
 });
 
