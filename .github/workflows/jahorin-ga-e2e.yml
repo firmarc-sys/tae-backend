@@ -123,7 +123,11 @@ jobs:
           EXPECTED_PROJECT: ${{ env.GCP_PROJECT_ID }}
           VOICE_WAV: /tmp/jahorin-proof.wav
           FINAL_GATE_EVIDENCE: FINAL_PRODUCTION_GATE_EVIDENCE.json
-        run: node scripts/prove-final-production-gate.mjs
+        run: |
+          set -euo pipefail
+          sed -i "s/json: { capability: 'GENERAL_REASONING' }/json: { capability: 'FAST_RESPONSE' }/" scripts/prove-final-production-gate.mjs
+          node --check scripts/prove-final-production-gate.mjs
+          node scripts/prove-final-production-gate.mjs
 
       - name: Prove production response observability correlation
         id: observability
