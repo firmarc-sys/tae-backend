@@ -18,5 +18,5 @@ EXPOSE 8080
 
 USER node
 # Vedic runtime dependencies are locked by package-lock.json.
-# Nested gateway, authorization-edge, capability-driven Vertex model policy, and final Ma'at proof contracts are enforced during image build.
+# Nested gateway, authorization-edge, capability-driven Vertex model policy, and corrected Ma'at final proof contracts are enforced during image build.
 CMD ["npm", "start"]
