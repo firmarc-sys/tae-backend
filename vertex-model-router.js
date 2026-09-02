@@ -32,8 +32,8 @@ export const VERTEX_MODELS = Object.freeze({
     { id: env("VERTEX_VIDEO_QUALITY_FALLBACK", "veo-3.1-generate-001"), lifecycle: "GA", location: "us-central1" },
   ]),
   AUDIO: Object.freeze([
-    { id: env("VERTEX_AUDIO_MODEL", "lyria-3-pro-preview"), lifecycle: "PREVIEW" },
-    { id: env("VERTEX_AUDIO_FALLBACK", "lyria-3-clip-preview"), lifecycle: "PREVIEW" },
+    { id: env("VERTEX_AUDIO_MODEL", "lyria-3-pro-preview"), lifecycle: "PREVIEW", location: "global" },
+    { id: env("VERTEX_AUDIO_FALLBACK", "lyria-3-clip-preview"), lifecycle: "PREVIEW", location: "global" },
   ]),
   LIVE: Object.freeze([
     { id: env("VERTEX_LIVE_MODEL", "gemini-live-2.5-flash-native-audio"), lifecycle: "GA" },
@@ -89,6 +89,7 @@ export class VertexModelRouter {
     this.location = String(location || "global").trim() || "global";
     if (!this.project) throw makeError("GOOGLE_CLOUD_PROJECT is required for Vertex AI", "VERTEX_PROJECT_REQUIRED");
     this.clients = new Map();
+    this.token = null;
   }
 
   client(location = this.location) {
@@ -104,6 +105,22 @@ export class VertexModelRouter {
     const entries = VERTEX_MODELS[key];
     if (!entries) throw makeError(`Unknown Vertex model class ${key}`, "VERTEX_MODEL_CLASS_UNKNOWN");
     return uniqueModels(entries);
+  }
+
+  async accessToken() {
+    if (this.token && this.token.expiresAt > Date.now() + 60_000) return this.token.value;
+    const response = await fetch("http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token", {
+      headers: { "Metadata-Flavor": "Google" },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) throw makeError(`Cloud Run ADC token request failed with HTTP ${response.status}`, "VERTEX_ADC_UNAVAILABLE");
+    const payload = await response.json();
+    if (!payload?.access_token) throw makeError("Cloud Run ADC returned no access token", "VERTEX_ADC_EMPTY");
+    this.token = {
+      value: payload.access_token,
+      expiresAt: Date.now() + Math.max(60, Number(payload.expires_in || 300)) * 1000,
+    };
+    return this.token.value;
   }
 
   async generateContent({ modelClass = "FAST", contents, config = {} } = {}) {
@@ -198,6 +215,84 @@ export class VertexModelRouter {
       }
     }
     const error = makeError("No accessible Google Vertex video model remained", "VERTEX_VIDEO_UNAVAILABLE", lastError);
+    error.attemptedModels = attempted;
+    throw error;
+  }
+
+  async generateAudio({ prompt } = {}) {
+    let lastError = null;
+    const attempted = [];
+    const token = await this.accessToken();
+    for (const entry of this.models("AUDIO")) {
+      attempted.push(entry.id);
+      try {
+        const response = await fetch(`https://aiplatform.googleapis.com/v1beta1/projects/${encodeURIComponent(this.project)}/locations/global/interactions`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json; charset=utf-8",
+          },
+          body: JSON.stringify({
+            model: entry.id,
+            input: [{ type: "text", text: String(prompt || "").trim() }],
+          }),
+          signal: AbortSignal.timeout(240000),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          const error = makeError(payload?.error?.message || `Vertex Lyria HTTP ${response.status}`, payload?.error?.status || "VERTEX_AUDIO_ERROR");
+          error.status = response.status;
+          throw error;
+        }
+        const output = Array.isArray(payload?.outputs) ? payload.outputs.find((item) => item?.type === "audio" && item?.data) : null;
+        if (!output?.data) throw makeError("Vertex Lyria returned no audio payload", "VERTEX_AUDIO_EMPTY");
+        return {
+          provider: VERTEX_PROVIDER,
+          model: payload?.model || entry.id,
+          lifecycle: entry.lifecycle,
+          modelClass: "AUDIO",
+          location: "global",
+          fallbackUsed: attempted.length > 1,
+          attempted,
+          mimeType: output.mime_type || "audio/mpeg",
+          data: output.data,
+          outputs: payload.outputs,
+        };
+      } catch (error) {
+        lastError = error;
+        if (quotaLimited(error)) throw error;
+        if (!providerUnavailable(error)) throw error;
+      }
+    }
+    const error = makeError("No accessible Google Vertex Lyria model remained", "VERTEX_AUDIO_UNAVAILABLE", lastError);
+    error.attemptedModels = attempted;
+    throw error;
+  }
+
+  async embed({ content } = {}) {
+    let lastError = null;
+    const attempted = [];
+    for (const entry of this.models("EMBEDDING")) {
+      attempted.push(entry.id);
+      try {
+        const response = await this.client(entry.location).models.embedContent({ model: entry.id, contents: String(content || "") });
+        return {
+          provider: VERTEX_PROVIDER,
+          model: entry.id,
+          lifecycle: entry.lifecycle,
+          modelClass: "EMBEDDING",
+          location: entry.location || this.location,
+          fallbackUsed: attempted.length > 1,
+          attempted,
+          embeddings: response.embeddings || [],
+        };
+      } catch (error) {
+        lastError = error;
+        if (quotaLimited(error)) throw error;
+        if (!providerUnavailable(error)) throw error;
+      }
+    }
+    const error = makeError("No accessible Google Vertex embedding model remained", "VERTEX_EMBEDDING_UNAVAILABLE", lastError);
     error.attemptedModels = attempted;
     throw error;
   }
