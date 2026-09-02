@@ -1,21 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROJECT_ID="${PROJECT_ID:-689058655022}"
+PROJECT_ID="${PROJECT_ID:-project-7e6f2720-0291-4c91-8c3}"
 REGION="${REGION:-us-west1}"
 SERVICE="${SERVICE:-ari}"
-SITE="${SITE:-https://jahorin-mercury.netlify.app}"
+SITE="${SITE:-https://jtrismegistus-ga-689058655022.us-west1.run.app}"
 OWNER_GID="${OWNER_GID:-399152573423}"
 SESSION_SECRET_NAME="${SESSION_SECRET_NAME:-ari-session-secret}"
 ACCESS_CODE_SECRET_NAME="${ACCESS_CODE_SECRET_NAME:-ari-owner-access-code}"
-MODEL="${MODEL:-gemini-2.5-flash}"
 VERTEX_LOCATION="${VERTEX_LOCATION:-global}"
 
 command -v gcloud >/dev/null || { echo 'gcloud is required. Run this from Google Cloud Shell.' >&2; exit 1; }
 command -v curl >/dev/null || { echo 'curl is required.' >&2; exit 1; }
 command -v openssl >/dev/null || { echo 'openssl is required.' >&2; exit 1; }
 
-printf 'Configuring Agentic Mercury Time Runner ARI\n'
+printf 'Configuring Jahorin ARI Vertex production authority\n'
 printf 'Project: %s\nRegion: %s\nService: %s\n' "$PROJECT_ID" "$REGION" "$SERVICE"
 
 gcloud config set project "$PROJECT_ID" >/dev/null
@@ -81,7 +80,7 @@ unset SESSION_SECRET
 gcloud run services update "$SERVICE" \
   --project "$PROJECT_ID" \
   --region "$REGION" \
-  --update-env-vars="ARI_REQUIRE_AUTH=true,JAHORIN_FREE_ACCESS=false,SIOS_OWNER_GID=${OWNER_GID},VERTEX_PROJECT=${PROJECT_ID},VERTEX_LOCATION=${VERTEX_LOCATION},GEMINI_MODEL=${MODEL}" \
+  --update-env-vars="ARI_REQUIRE_AUTH=true,JAHORIN_FREE_ACCESS=false,SIOS_OWNER_GID=${OWNER_GID},GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GOOGLE_CLOUD_LOCATION=${VERTEX_LOCATION},GOOGLE_GENAI_USE_VERTEXAI=true" \
   --update-secrets="ARI_SESSION_SECRET=${SESSION_SECRET_NAME}:latest,OWNER_ACCESS_CODE=${ACCESS_CODE_SECRET_NAME}:latest" \
   --quiet >/dev/null
 
@@ -105,6 +104,7 @@ ok=(
     body.get('ok') is True
     and body.get('service') == 'ARI'
     and body.get('runtime') == 'Mercury'
+    and body.get('provider') == 'google-vertex-ai'
     and body.get('provider_configured') is True
     and body.get('auth_configured') is True
     and body.get('auth_required') is True
@@ -126,7 +126,7 @@ PY
 }
 
 wait_ready "$ARI_URL" 'direct ARI'
-wait_ready "$SITE" 'Netlify ARI proxy'
+wait_ready "$SITE" 'Trismegistus same-origin ARI proxy'
 
 bad_code="$(curl -sS --connect-timeout 5 --max-time 15 \
   -o /tmp/ari-bad-auth.json -w '%{http_code}' \
@@ -134,7 +134,7 @@ bad_code="$(curl -sS --connect-timeout 5 --max-time 15 \
   -d '{"access_code":"__invalid_production_probe__"}' \
   "${SITE}/api/identity/session")"
 if [ "$bad_code" != '401' ]; then
-  echo "Expected invalid GID code to return 401 through Netlify; got ${bad_code}." >&2
+  echo "Expected invalid GID code to return 401 through Trismegistus; got ${bad_code}." >&2
   cat /tmp/ari-bad-auth.json >&2 || true
   exit 1
 fi
@@ -155,13 +155,13 @@ import json
 body=json.load(open('/tmp/ari-identity.json'))
 assert body.get('authenticated') is True, body
 assert str(body.get('gid')) == '399152573423', body
-print('PASS authenticated GID session through Netlify')
+print('PASS authenticated GID session through Trismegistus')
 PY
 
 curl -fsS -b "$COOKIE_JAR" \
   -H 'content-type: application/json' \
   -H 'x-request-id: production-jahorin-provider-probe' \
-  -d '{"capability":"text","intent":"Reply with exactly: JAHORIN ONLINE","request_id":"production-jahorin-provider-probe"}' \
+  -d '{"capability":"jahorin","intent":"Reply with exactly: JAHORIN ONLINE","request_id":"production-jahorin-provider-probe"}' \
   "${SITE}/api/runtime" -o /tmp/ari-runtime.json
 
 python3 - <<'PY'
@@ -169,10 +169,12 @@ import json
 body=json.load(open('/tmp/ari-runtime.json'))
 result=body.get('result') or {}
 text=str(result.get('text') or '').strip()
-provider=str(result.get('provider') or body.get('provider',{}).get('name') or '')
+provider=str(result.get('provider') or (body.get('provider') or {}).get('name') or '')
+model=str(result.get('model') or (body.get('provider') or {}).get('model') or '')
 assert text, body
-assert provider in ('google-vertex-ai','google-gemini-api'), body
-print('PASS Jahorin provider generation through Netlify:', provider, text[:160])
+assert provider == 'google-vertex-ai', body
+assert model, body
+print('PASS Jahorin Vertex generation through Trismegistus:', model, text[:160])
 PY
 
 curl -fsS -b "$COOKIE_JAR" -X DELETE "${SITE}/api/identity/session" -o /tmp/ari-logout.json
@@ -186,4 +188,4 @@ PY
 
 unset OWNER_ACCESS_CODE
 
-echo 'AGENTIC MERCURY TIME RUNNER — ARI PRODUCTION CONFIGURATION PASS'
+echo 'JAHORIN ARI — VERTEX PRODUCTION CONFIGURATION PASS'
