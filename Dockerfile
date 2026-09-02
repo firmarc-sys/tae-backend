@@ -8,6 +8,7 @@ RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 COPY . .
 RUN node scripts/normalize-gateway-startup.mjs \
   && node scripts/enforce-vertex-model-policy.mjs \
+  && node scripts/enforce-final-production-gate.mjs \
   && node scripts/verify-vertex-model-policy.mjs
 
 ENV NODE_ENV=production
@@ -17,5 +18,5 @@ EXPOSE 8080
 
 USER node
 # Vedic runtime dependencies are locked by package-lock.json.
-# Nested gateway, authorization-edge, and capability-driven Vertex model policy are enforced during image build.
+# Nested gateway, authorization-edge, capability-driven Vertex model policy, and final Ma'at proof contracts are enforced during image build.
 CMD ["npm", "start"]
