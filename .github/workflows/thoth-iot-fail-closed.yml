@@ -1,0 +1,70 @@
+name: THOTH IoT GA Fail Closed
+
+on:
+  push:
+    branches: [thoth/ga-iot-fail-closed]
+    paths:
+      - 'scripts/thoth-iot-fail-closed.trigger'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fail close bridge-required IoT authority
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const path = 'authorization-gateway.js';
+          let source = fs.readFileSync(path, 'utf8');
+          const anchor = `    if (req.method === "POST" && (pathname === "/api/runtime" || pathname === "/runtime")) {
+      return await authorizeRuntime(req, res);
+    }`;
+          const replacement = `    if (pathname === "/api/iot" || pathname === "/iot") {
+      const gid = sessionGid(req);
+      if (!gid) {
+        return json(req, res, 401, {
+          ok: false,
+          code: "AUTH_REQUIRED",
+          capability: "iot",
+          status: "unavailable",
+          error: "Authenticated GID required for device access",
+        });
+      }
+      if (req.method !== "GET" && req.method !== "POST") {
+        return json(req, res, 405, {
+          ok: false,
+          code: "METHOD_NOT_ALLOWED",
+          capability: "iot",
+          status: "unavailable",
+        });
+      }
+      return json(req, res, 503, {
+        ok: false,
+        code: "BRIDGE_REQUIRED",
+        capability: "iot",
+        status: "bridge_required",
+        authenticated: true,
+        gid,
+        error: "Device field telemetry requires an authorized native or companion bridge.",
+      });
+    }
+
+${anchor}`;
+          if (!source.includes(anchor)) throw new Error('IoT authorization patch anchor missing');
+          source = source.replace(anchor, replacement);
+          fs.writeFileSync(path, source);
+          NODE
+          node --check authorization-gateway.js
+          git diff --check
+      - name: Commit only the real authority correction
+        run: |
+          rm -f .github/workflows/thoth-iot-fail-closed.yml scripts/thoth-iot-fail-closed.trigger
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'MAAT: fail close bridge-required IoT device authority'
+          git push origin HEAD:thoth/ga-iot-fail-closed
