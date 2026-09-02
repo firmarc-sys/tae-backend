@@ -84,9 +84,9 @@ function sanitizedUsage(response) {
   return Object.keys(safe).length ? safe : null;
 }
 
-function sanitizeConfigForModel(modelId, config = {}) {
+function sanitizeConfigForModel(modelSpec, config = {}) {
   const next = { ...config };
-  if (/^gemini-3\.(?:7|6)-flash$/.test(modelId) || modelId === "gemini-3.5-flash-lite") {
+  if (modelSpec.stripUnsupportedSampling) {
     for (const key of ["temperature", "topP", "topK", "candidateCount", "frequencyPenalty", "presencePenalty", "thinkingBudget"]) delete next[key];
   }
   return next;
@@ -225,7 +225,7 @@ export class VertexModelRouter {
       for (let retry = 0; retry <= this.retryLimit; retry += 1) {
         attempted.push({ model: candidate.id, attempt: retry + 1, location: candidate.location });
         try {
-          const modelConfig = sanitizeConfigForModel(candidate.id, config);
+          const modelConfig = sanitizeConfigForModel(candidate, config);
           const response = await invoke(candidate, modelConfig);
           if (validateOutput && !await validateOutput(response)) throw makeError("Vertex model output failed the required response contract", "STRUCTURED_OUTPUT_INVALID");
           this.access.set(`${candidate.id}@${candidate.location}`, { project: this.project, location: candidate.location, verifiedAt: new Date().toISOString(), status: "ACCESS_CONFIRMED" });

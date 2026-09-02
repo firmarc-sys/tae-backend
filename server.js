@@ -18,9 +18,9 @@ const CANONICAL_LINE = "This is not an app. This is me.";
 
 const vertexProject = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCP_PROJECT || process.env.VERTEX_PROJECT || "project-7e6f2720-0291-4c91-8c3";
 const vertexLocation = process.env.GOOGLE_CLOUD_LOCATION || process.env.VERTEX_LOCATION || "global";
-const geminiModel = process.env.VERTEX_ORCHESTRATOR_MODEL || "gemini-3.1-pro-preview";
 const provider = VERTEX_PROVIDER;
 const vertexRouter = new VertexModelRouter({ project: vertexProject, location: vertexLocation });
+const primaryOrchestrationModel = vertexRouter.primaryModel("ORCHESTRATION");
 const mercuryRuntimeUrl = (process.env.MERCURY_RUNTIME_URL || "https://agentic-mercury-runtime-689058655022.us-west1.run.app").replace(/\/$/, "");
 const legacyJwtSecret = process.env.JWT_SECRET || "";
 const sessionSecret = process.env.ARI_SESSION_SECRET || (legacyJwtSecret && legacyJwtSecret !== "CHANGE-ME-IN-PROD" ? legacyJwtSecret : "");
@@ -670,7 +670,7 @@ async function generateWithGoogle({ prompt, systemInstruction, temperature = 0.7
     ...(deepSearch ? { tools: [{ googleSearch: {} }] } : {}),
   };
   const modelClass = modelClassForCapability(capability, { image: Boolean(image), deepSearch });
-  const routed = await withProviderRetry(() => router.generateContent({ modelClass, contents, config }));
+  const routed = await router.generateContent({ modelClass, contents, config });
   const response = routed.response;
   const text = String(response.text || "").trim();
   if (!text) throw httpError(502, "Google Vertex AI returned no generated text.");
@@ -793,7 +793,7 @@ api.get("/ready", async (_req, res) => {
       runtime: "Mercury",
       provider,
       provider_configured: providerConfigured,
-      model: geminiModel,
+      model: primaryOrchestrationModel,
       vertex_project: provider === "google-vertex-ai" ? vertexProject : null,
       vertex_location: provider === "google-vertex-ai" ? vertexLocation : null,
       auth_required: authRequired,

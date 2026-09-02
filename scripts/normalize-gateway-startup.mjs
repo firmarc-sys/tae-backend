@@ -142,9 +142,7 @@ function normalizeVertexServer(source) {
   text = text.replace(
     /const runtimeGeminiApiKey = [\s\S]*?const vertexLocation = .*?;\n/,
     'const vertexProject = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCP_PROJECT || process.env.VERTEX_PROJECT || "project-7e6f2720-0291-4c91-8c3";\n' +
-    'const vertexLocation = process.env.GOOGLE_CLOUD_LOCATION || process.env.VERTEX_LOCATION || "global";\n' +
-    'const geminiModel = process.env.VERTEX_ORCHESTRATOR_MODEL || "gemini-3.1-pro-preview";\n' +
-    'const provider = VERTEX_PROVIDER;\n' +
+    'const vertexLocation = process.env.GOOGLE_CLOUD_LOCATION || process.env.VERTEX_LOCATION || "global";\n' +    'const provider = VERTEX_PROVIDER;\n' +
     'const vertexRouter = new VertexModelRouter({ project: vertexProject, location: vertexLocation });\n',
   );
   text = text.replace(/const provider = geminiApiKey \? "google-gemini-api"[\s\S]*?\n    : null;\n/, '');
@@ -167,7 +165,7 @@ function normalizeVertexServer(source) {
     ...(deepSearch ? { tools: [{ googleSearch: {} }] } : {}),
   };
   const modelClass = modelClassForCapability(capability, { image: Boolean(image), deepSearch });
-  const routed = await withProviderRetry(() => router.generateContent({ modelClass, contents, config }));
+  const routed = await router.generateContent({ modelClass, contents, config });
   const response = routed.response;
   const text = String(response.text || "").trim();
   if (!text) throw httpError(502, "Google Vertex AI returned no generated text.");
