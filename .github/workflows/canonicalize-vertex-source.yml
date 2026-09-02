@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - '.vertex-source-trigger'
+      - '.github/workflows/canonicalize-vertex-source.yml'
   workflow_dispatch:
 
 permissions:
