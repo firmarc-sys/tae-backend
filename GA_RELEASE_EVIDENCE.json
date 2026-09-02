@@ -1,9 +1,9 @@
 {
   "release": "ga",
   "ga_status": "VERIFIED",
-  "backend_commit": "27d5a263071ff194d290445419971928243c06b0",
-  "cloud_run_revision": "ari-00339-l5k",
-  "verified_at": "2026-09-02T12:54:45.240Z",
+  "backend_commit": "e5682f46206ffd279dbe74f801abe3bdc141be5b",
+  "cloud_run_revision": "ari-00352-jtl",
+  "verified_at": "2026-09-02T14:12:42.125Z",
   "checks": {
     "backend_clean_install": true,
     "secret_manager": true,
@@ -23,6 +23,8 @@
     "stripe_lifecycle": true,
     "credential_gate": true,
     "prime_owner_gid_authorized": true,
-    "member_credential_required": true
+    "member_credential_required": true,
+    "vertex_only_runtime": true,
+    "legacy_provider_credentials_absent": true
   }
 }
