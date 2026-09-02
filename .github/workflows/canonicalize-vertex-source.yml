@@ -62,4 +62,4 @@ jobs:
           git commit -m 'THOTH: canonicalize capability-driven Vertex routing'
           git push origin HEAD:main
 
-# model-policy canonicalizer revision: 2026-09-02T12:59Z
+# model-policy canonicalizer revision: 2026-09-02T13:03Z
