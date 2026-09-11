@@ -150,7 +150,7 @@ function canonicalCapability(value = "") {
 }
 
 function canonicalOperation(capability, body = {}) {
-  const raw = String(body.operation || body?.payload?.action || body?.payload?.operation || "").trim().toLowerCase();
+  const raw = String(body.operation || body.action || body.intent || body?.payload?.action || body?.payload?.operation || "").trim().toLowerCase();
   const normalized = raw.replace(/-/g, "_");
   const aliases = {
     image_generate: "image.generate",
@@ -246,7 +246,7 @@ function auditGovernance(decision) {
   }));
 }
 
-async function evaluateRuntime(req, res, { execute }) {
+async function evaluateRuntime(req, res, { execute, capabilityOverride = "" }) {
   const id = requestId(req);
   const raw = await readRawBody(req);
   let body = {};
@@ -264,7 +264,7 @@ async function evaluateRuntime(req, res, { execute }) {
     });
   }
 
-  const capability = canonicalCapability(body.capability || body?.payload?.capability || "");
+  const capability = canonicalCapability(capabilityOverride || body.capability || body?.payload?.capability || "");
   const operation = canonicalOperation(capability, body);
   const governance = evaluateUaeGovernance({
     gid,
@@ -328,6 +328,10 @@ async function handle(req, res) {
 
     if (req.method === "POST" && (pathname === "/api/runtime" || pathname === "/runtime")) {
       return await evaluateRuntime(req, res, { execute: true });
+    }
+
+    if (req.method === "POST" && (pathname === "/api/iot" || pathname === "/iot")) {
+      return await evaluateRuntime(req, res, { execute: true, capabilityOverride: "iot" });
     }
 
     if (!childReady) {

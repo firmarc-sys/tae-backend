@@ -102,7 +102,7 @@ function hasExecutionAuthMaterial(req) {
 
 function requiresExecutionAuth(pathname, method) {
   if (String(method || "GET").toUpperCase() !== "POST") return false;
-  return new Set(["/api/runtime", "/runtime", "/api/tae", "/tae", "/api/generate", "/generate"]).has(pathname);
+  return new Set(["/api/runtime", "/runtime", "/api/tae", "/tae", "/api/generate", "/generate", "/api/iot", "/iot"]).has(pathname);
 }
 
 function originFor(req) {
@@ -174,6 +174,7 @@ function rateClass(pathname, method) {
   if (pathname.startsWith("/api/devices/") && method !== "GET") return { name: "device-mutation", limit: 60 };
   if (method === "POST" && pathname === "/api/tae") return { name: "tae-generation", limit: 60 };
   if (method === "POST" && pathname === "/api/runtime") return { name: "runtime-execution", limit: 90 };
+  if (method === "POST" && ["/api/iot", "/iot"].includes(pathname)) return { name: "iot-command", limit: 30 };
   if (pathname.startsWith("/api/billing/") && method !== "GET") return { name: "billing-mutation", limit: 30 };
   return null;
 }
@@ -246,7 +247,7 @@ async function handle(req, res) {
         ...SECURITY_HEADERS,
         ...corsHeaders(req),
         "access-control-allow-methods": "GET,POST,DELETE,OPTIONS",
-        "access-control-allow-headers": "content-type,authorization,x-request-id,x-device-id,x-device-timestamp,x-device-nonce,x-device-signature",
+        "access-control-allow-headers": "content-type,authorization,x-request-id,x-gid,x-siaas-app,idempotency-key,x-device-id,x-device-timestamp,x-device-nonce,x-device-signature",
         "access-control-max-age": "600",
       };
       res.writeHead(204, headers);
