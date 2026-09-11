@@ -11,6 +11,9 @@ assert.equal(classifyGovernanceRisk("interweb", "search"), "low");
 assert.equal(classifyGovernanceRisk("code", "deploy"), "high");
 assert.equal(classifyGovernanceRisk("novafin", "transfer"), "high");
 assert.equal(classifyGovernanceRisk("novalife", "execute"), "moderate");
+assert.equal(classifyGovernanceRisk("iot", "glasses.state.inspect"), "low");
+assert.equal(classifyGovernanceRisk("iot", "glasses.firmware.inspect"), "low");
+assert.equal(classifyGovernanceRisk("iot", "glasses.media.sync"), "high");
 
 const lowRisk = evaluateUaeGovernance({
   gid: "399152573423",
@@ -53,6 +56,24 @@ const highRiskConfirmed = evaluateUaeGovernance({
 });
 assert.equal(highRiskConfirmed.allowed, true);
 assert.equal(highRiskConfirmed.human_confirmed, true);
+
+const heyCyanSyncDenied = evaluateUaeGovernance({
+  gid: "399152573423",
+  capability: "iot",
+  operation: "glasses.media.sync",
+  body: { request_id: "req-heycyan-sync" },
+});
+assert.equal(heyCyanSyncDenied.allowed, false);
+assert.equal(heyCyanSyncDenied.reason_code, "HUMAN_CONFIRMATION_REQUIRED");
+
+const heyCyanSyncConfirmed = evaluateUaeGovernance({
+  gid: "399152573423",
+  capability: "iot",
+  operation: "glasses.media.sync",
+  body: { request_id: "req-heycyan-sync", confirmed: true },
+});
+assert.equal(heyCyanSyncConfirmed.allowed, true);
+assert.equal(heyCyanSyncConfirmed.jurisdiction.primary, "hephaestus");
 
 const jurisdictionDenied = evaluateUaeGovernance({
   gid: "399152573423",

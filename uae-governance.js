@@ -145,6 +145,7 @@ const CAPABILITY_JURISDICTION = Object.freeze({
 const READ_ONLY_OPERATIONS = new Set([
   "read", "get", "list", "search", "discover", "analyze", "explain", "preview",
   "plan", "simulate", "status", "health", "inspect", "query", "retrieve", "compare",
+  "glasses.state.inspect", "glasses.firmware.inspect",
 ]);
 
 const HIGH_RISK_TERMS = [

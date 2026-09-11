@@ -6,6 +6,8 @@ This repository is the currently deployed Cloud Run implementation behind the ca
 
 Public product: **Jahorin Trismegistus / Agentic Mercury Time Runner**
 
+Market category: **System Intelligence as a Service (S.I.aaS)**
+
 Architecture:
 
 - Mercury — persistent runtime / living shell
@@ -57,6 +59,10 @@ The gateway mounts its compatibility router at both `/api/*` and direct paths. B
 - `POST /api/generate`
 
 Provider-backed generation is performed server-side. No Google credentials belong in browser-delivered code.
+
+`GET /api/iot` publishes the authoritative Jahorin Optics Bridge policy for the HeyCyan device lane. `POST /api/iot` accepts only typed, expiring and idempotent device commands. Mutations require authenticated GID context and explicit human confirmation. Acceptance means `awaiting_companion`; ARI never reports a glasses action as executed until an authenticated Android companion supplies device evidence.
+
+TAE resolves natural-language HeyCyan requests to Horus Optics and a typed `/api/iot` proposal. Firmware updating is disabled. Local glasses IP addresses, credentials and cleartext media URLs are rejected at the ARI boundary. See [HEYCYAN_OPTICS_BRIDGE.md](HEYCYAN_OPTICS_BRIDGE.md) for the complete contract.
 
 ## Google provider
 

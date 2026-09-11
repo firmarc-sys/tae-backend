@@ -6,6 +6,16 @@ import helmet from "helmet";
 import Stripe from "stripe";
 import { VertexModelRouter, VERTEX_PROVIDER, modelClassForCapability } from "./vertex-model-router.js";
 import { installThothVoiceRoutes, thothVoiceReadiness } from "./thoth-voice.js";
+import { hasExplicitHumanConfirmation } from "./uae-governance.js";
+import {
+  HEYCYAN_DEVICE_LANE,
+  HEYCYAN_POLICY_VERSION,
+  SIAAS_MARKET_CATEGORY,
+  inferHeyCyanOperation,
+  isHeyCyanIntent,
+  normalizeHeyCyanCommand,
+  publicHeyCyanPolicy,
+} from "./heycyan-policy.js";
 
 const app = express();
 const port = Number(process.env.PORT || 8080);
@@ -121,6 +131,7 @@ function responseBase(extra = {}) {
     ok: true,
     gid: OWNER_GID,
     mode: OWNER_MODE,
+    market_category: SIAAS_MARKET_CATEGORY,
     timestamp: new Date().toISOString(),
     ...extra,
   };
@@ -693,24 +704,32 @@ async function generateWithGoogle({ prompt, systemInstruction, temperature = 0.7
 function inferManifest(intent = "", requestedCapability = "", context = {}) {
   const text = String(intent || "").toLowerCase();
   const requested = String(requestedCapability || "").toLowerCase();
+  const heyCyanIntent = isHeyCyanIntent(text);
   const rules = [
     ["interweb", /search|find|web|research|discover|forecast|weather|news|look up|traverse/],
     ["augment", /music|audio|sound|beat|mix|syncori|song|loop|keys|drums|sample/],
     ["code", /code|build|deploy|terminal|function|html|javascript|repo|runtime|debug|fix|ship/],
     ["thoth", /write|scribe|explain|document|notes|file|summar|draft|memory|recall/],
     ["optics", /camera|image|video|see|capture|analy|optic|horus|xr|visual|photo/],
+    ["iot", /internet of things|connected device|device status|device control/],
     ["novalife", /home|novalife|garden|sanctum|project|continue|next|timeline|routine/],
   ];
-  let capability = rules.find(([,rx]) => rx.test(text))?.[0] || (["interweb","augment","code","thoth","optics","novalife"].includes(requested) ? requested : "novalife");
+  let capability = heyCyanIntent
+    ? "optics"
+    : rules.find(([,rx]) => rx.test(text))?.[0] || (["interweb","augment","code","thoth","optics","iot","novalife"].includes(requested) ? requested : "novalife");
   let page = "home";
   if (capability === "interweb") page = /forecast|weather/.test(text) ? "search" : "search";
   if (capability === "augment") page = /keys/.test(text) ? "keys" : /drum/.test(text) ? "drums" : /sample/.test(text) ? "sample" : /loop/.test(text) ? "loop" : "mix";
   if (capability === "code") page = /deploy|ship|publish/.test(text) ? "deploy" : /runtime|debug|test/.test(text) ? "runtime" : "intent";
   if (capability === "thoth") page = /explain/.test(text) ? "explain" : /file/.test(text) ? "files" : /sketch/.test(text) ? "sketch" : "scribe";
-  if (capability === "optics") page = /capture|photo/.test(text) ? "capture" : /analy/.test(text) ? "analyze" : "see";
+  if (capability === "optics") page = heyCyanIntent ? "bridge" : /capture|photo/.test(text) ? "capture" : /analy/.test(text) ? "analyze" : "see";
+  if (capability === "iot") page = "devices";
   if (capability === "novalife") page = /weather|forecast/.test(text) ? "weather" : /project|continue|unfinished/.test(text) ? "projects" : /timeline|next|now/.test(text) ? "timeline" : "home-room";
-  const requires_confirmation = /(send|publish|deploy|delete|purchase|buy|pay|subscribe|cancel|message|email|post|transfer|book|order)/.test(text);
-  const matched = rules.some(([,rx]) => rx.test(text));
+  const heyCyanOperation = heyCyanIntent ? inferHeyCyanOperation(text) : null;
+  const requires_confirmation = heyCyanIntent
+    ? HEYCYAN_DEVICE_LANE.operations[heyCyanOperation]?.confirmation_required !== false
+    : /\b(send|publish|deploy|delete|purchase|buy|pay|subscribe|cancel|message|email|post|transfer|book|order)\b/.test(text);
+  const matched = heyCyanIntent || rules.some(([,rx]) => rx.test(text));
   return {
     capability,
     page,
@@ -718,6 +737,15 @@ function inferManifest(intent = "", requestedCapability = "", context = {}) {
     reason: matched ? `Jahorin mapped this intention to ${capability.toUpperCase()} · ${page.toUpperCase()}.` : `Jahorin kept the current context and selected ${capability.toUpperCase()} · ${page.toUpperCase()}.`,
     requires_confirmation,
     context_source: context?.scene || null,
+    ...(heyCyanIntent ? {
+      execution_capability: "iot",
+      device_lane: {
+        id: "heycyan",
+        module: "jahorin-optics-bridge",
+        operation: heyCyanOperation,
+        policy_version: HEYCYAN_POLICY_VERSION,
+      },
+    } : {}),
   };
 }
 
@@ -726,7 +754,7 @@ const api = express.Router();
 // Cost protection for consumer guest sessions.
 const rateBuckets = new Map();
 api.use((req, res, next) => {
-  if (req.method !== "POST" || !["/runtime", "/generate", "/tae"].includes(req.path)) return next();
+  if (req.method !== "POST" || !["/runtime", "/generate", "/tae", "/iot"].includes(req.path)) return next();
   const key = String(req.get("x-forwarded-for") || req.ip || "unknown").split(",")[0].trim();
   const now = Date.now();
   const windowMs = 60_000;
@@ -1111,12 +1139,16 @@ api.post("/render-state", async (req, res, next) => {
 
 api.get("/iot", async (req, res, next) => {
   try {
-    const runtime = await orchestrateWithMercury(req, {
+    res.json(responseBase({
       capability: "iot",
-      intent: "inspect devices",
-      requestId: req.requestId,
-    });
-    res.json(responseBase({ capability: "iot", status: "online", devices: [], orchestration: runtime.orchestration, render_state: runtime.renderState }));
+      module: "jahorin-optics-bridge",
+      device_lane: "heycyan",
+      status: "companion_required",
+      execution: "android_companion_required",
+      executed: false,
+      devices: [],
+      policy: publicHeyCyanPolicy(),
+    }));
   } catch (error) {
     next(error);
   }
@@ -1124,13 +1156,35 @@ api.get("/iot", async (req, res, next) => {
 
 api.post("/iot", async (req, res, next) => {
   try {
+    const principal = await requireProviderAccess(req);
+    const command = normalizeHeyCyanCommand(req.body || {}, {
+      requestId: req.requestId,
+      idempotencyKey: req.get("idempotency-key"),
+      gid: principal.gid || sessionGid(req),
+      humanConfirmed: hasExplicitHumanConfirmation(req.body || {}),
+    });
     const runtime = await orchestrateWithMercury(req, {
       capability: "iot",
-      intent: String(req.body?.action || "device command"),
-      requestId: req.requestId,
-      payload: req.body || {},
+      intent: command.operation,
+      requestId: command.request_id,
+      payload: {
+        command,
+        execution_boundary: "authenticated_android_companion",
+      },
     });
-    res.json(responseBase({ capability: "iot", accepted: true, payload: req.body || {}, orchestration: runtime.orchestration, render_state: runtime.renderState }));
+    res.status(202).json(responseBase({
+      request_id: command.request_id,
+      capability: "iot",
+      module: "jahorin-optics-bridge",
+      device_lane: "heycyan",
+      accepted: true,
+      status: "awaiting_companion",
+      executed: false,
+      command,
+      permission_gate: HEYCYAN_DEVICE_LANE.permissions,
+      orchestration: runtime.orchestration,
+      render_state: runtime.renderState,
+    }));
   } catch (error) {
     next(error);
   }
@@ -1195,13 +1249,62 @@ api.post("/tae", async (req, res, next) => {
         }),
       );
     }
+    const manifest = inferManifest(prompt, req.body?.capability || "tae", req.body?.context || {});
+    if (manifest.device_lane?.id === "heycyan") {
+      const operation = manifest.device_lane.operation;
+      const operationPolicy = HEYCYAN_DEVICE_LANE.operations[operation];
+      const firmwareUpdateBlocked = operation === "glasses.firmware.update";
+      const experimentalOperationBlocked = operationPolicy?.mode === "experimental";
+      const operationBlocked = firmwareUpdateBlocked || experimentalOperationBlocked;
+      const runtime = operationBlocked
+        ? {
+            orchestration: { execution: "blocked", reason: firmwareUpdateBlocked ? "firmware_update_disabled" : "verified_firmware_profile_required" },
+            renderState: renderState("idle"),
+          }
+        : await orchestrateWithMercury(req, {
+            capability: "iot",
+            intent: operation,
+            requestId: req.body?.request_id || req.requestId,
+            payload: {
+              device_lane: "heycyan",
+              operation,
+              proposal_only: true,
+            },
+          });
+      return res.json(responseBase({
+        request_id: req.body?.request_id || req.requestId,
+        manifest,
+        orchestration: runtime.orchestration,
+        render_state: runtime.renderState,
+        reply: {
+          kind: "device_route",
+          text: firmwareUpdateBlocked
+            ? "HeyCyan firmware updating remains disabled because no verified vendor manifest and recovery contract exist. No device action was executed."
+            : experimentalOperationBlocked
+              ? "This experimental HeyCyan operation is disabled until the companion supplies a verified firmware capability profile. No device action was executed."
+            : `Resolved to ${operation}. Submit the typed command through the authenticated Optics Bridge${operationPolicy?.confirmation_required ? " after explicit confirmation" : ""}; no device action has executed.`,
+          tokens: 0,
+        },
+        device_route: {
+          module: "jahorin-optics-bridge",
+          device_lane: "heycyan",
+          operation,
+          endpoint: "/api/iot",
+          method: "POST",
+          confirmation_required: operationPolicy?.confirmation_required ?? true,
+          status: operationBlocked ? "blocked" : "proposal",
+          executed: false,
+          policy_version: HEYCYAN_POLICY_VERSION,
+        },
+      }));
+    }
     const deepSearch = String(req.body?.mode || "").toLowerCase() === "deepsearch" || deepSearchRequested(prompt);
-  const runtime = await orchestrateWithMercury(req, {
-    capability: deepSearch ? "interweb" : "tae",
-    intent: prompt,
-    requestId: req.body?.request_id || req.requestId,
-    payload: req.body || {},
-  });
+    const runtime = await orchestrateWithMercury(req, {
+      capability: deepSearch ? "interweb" : "tae",
+      intent: prompt,
+      requestId: req.body?.request_id || req.requestId,
+      payload: req.body || {},
+    });
     await requireProviderAccess(req);
     const result = await generateWithGoogle({
       prompt,
@@ -1248,6 +1351,47 @@ api.post("/runtime", async (req, res, next) => {
     const inlineImage = normalizeInlineImage(req.body?.payload || {});
     await requireProviderAccess(req);
 
+    if (manifest.device_lane?.id === "heycyan" && !inlineImage) {
+      const operation = manifest.device_lane.operation;
+      const operationPolicy = HEYCYAN_DEVICE_LANE.operations[operation];
+      const firmwareUpdateBlocked = operation === "glasses.firmware.update";
+      const experimentalOperationBlocked = operationPolicy?.mode === "experimental";
+      const operationBlocked = firmwareUpdateBlocked || experimentalOperationBlocked;
+      const runtime = operationBlocked
+        ? {
+            orchestration: { execution: "blocked", reason: firmwareUpdateBlocked ? "firmware_update_disabled" : "verified_firmware_profile_required" },
+            renderState: renderState("idle"),
+          }
+        : await orchestrateWithMercury(req, {
+            capability: "iot",
+            intent: operation,
+            requestId,
+            payload: { device_lane: "heycyan", operation, proposal_only: true },
+          });
+      return res.json(responseBase({
+        request_id: requestId,
+        manifest,
+        capability: manifest.capability,
+        page: manifest.page,
+        confidence: manifest.confidence,
+        reason: manifest.reason,
+        requires_confirmation: manifest.requires_confirmation,
+        orchestration: runtime.orchestration,
+        render_state: runtime.renderState,
+        result: {
+          kind: "device_route",
+          module: "jahorin-optics-bridge",
+          device_lane: "heycyan",
+          operation,
+          endpoint: "/api/iot",
+          method: "POST",
+          status: operationBlocked ? "blocked" : "proposal",
+          executed: false,
+          policy_version: HEYCYAN_POLICY_VERSION,
+        },
+      }));
+    }
+
     const runtime = await orchestrateWithMercury(req, {
       capability,
       intent,
@@ -1289,7 +1433,7 @@ api.post("/runtime", async (req, res, next) => {
       return res.json(responseBase({ request_id: requestId, manifest, capability: manifest.capability, page: manifest.page, confidence: manifest.confidence, reason: manifest.reason, requires_confirmation: manifest.requires_confirmation, orchestration, render_state: runtime.renderState, result: { status: "online", engine: "SYNCORI Infinite Audio" } }));
     }
     if (capability === "iot") {
-      return res.json(responseBase({ request_id: requestId, manifest, capability: manifest.capability, page: manifest.page, confidence: manifest.confidence, reason: manifest.reason, requires_confirmation: manifest.requires_confirmation, orchestration, render_state: runtime.renderState, result: { status: "online", devices: [] } }));
+      return res.json(responseBase({ request_id: requestId, manifest, capability: manifest.capability, page: manifest.page, confidence: manifest.confidence, reason: manifest.reason, requires_confirmation: manifest.requires_confirmation, orchestration, render_state: runtime.renderState, result: { status: "companion_required", execution: "android_companion_required", executed: false, devices: [], policy_version: HEYCYAN_POLICY_VERSION } }));
     }
     if (["tae", "demo"].includes(capability) && intent.replace(/\.$/, "").toLowerCase() === DEMO_PHRASE.toLowerCase()) {
       return res.json(responseBase({ request_id: requestId, manifest, capability: manifest.capability, page: manifest.page, confidence: manifest.confidence, reason: manifest.reason, requires_confirmation: manifest.requires_confirmation, orchestration, render_state: runtime.renderState, result: { demo: true, message: CANONICAL_LINE } }));

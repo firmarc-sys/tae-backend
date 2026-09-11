@@ -20,6 +20,8 @@ jobs:
       - run: npm install --omit=dev
       - name: Check gateway syntax
         run: node --check server.js
+      - name: Verify HeyCyan Optics policy
+        run: npm run verify:heycyan
       - name: Run local ARI contract smoke
         shell: bash
         env:
@@ -58,17 +60,30 @@ jobs:
           unauth_runtime="$(curl -sS -o /tmp/unauth-runtime.json -w '%{http_code}' -H 'content-type: application/json' -d '{"capability":"text","intent":"test"}' http://127.0.0.1:8080/api/runtime)"
           test "$unauth_runtime" = '401'
 
+          unauth_iot="$(curl -sS -o /tmp/unauth-iot.json -w '%{http_code}' -H 'content-type: application/json' -d '{"operation":"glasses.connect"}' http://127.0.0.1:8080/api/iot)"
+          test "$unauth_iot" = '401'
+
+          blocked_firmware="$(curl -sS -b /tmp/cookies.txt -o /tmp/blocked-firmware.json -w '%{http_code}' -H 'content-type: application/json' -d '{"operation":"glasses.firmware.update"}' http://127.0.0.1:8080/api/iot)"
+          test "$blocked_firmware" = '409'
+
           python3 - <<'PY'
           import json
           health=json.load(open('/tmp/health.json'))
           ready=json.load(open('/tmp/ready.json'))
           identity=json.load(open('/tmp/identity.json'))
+          iot=json.load(open('/tmp/iot.json'))
           demo=json.load(open('/tmp/demo.json'))
           authenticated=json.load(open('/tmp/authenticated.json'))
+          blocked_firmware=json.load(open('/tmp/blocked-firmware.json'))
           assert health['service']=='ARI' and health['runtime']=='Mercury'
           assert ready['ok'] is True and ready['provider_configured'] is True
           assert ready['auth_configured'] is True and ready['auth_required'] is True
           assert identity['authenticated'] is False
+          assert iot['market_category']['abbreviation']=='S.I.aaS'
+          assert iot['status']=='companion_required' and iot['executed'] is False
+          assert iot['policy']['android_companion']['target_sdk']==36
+          assert iot['policy']['firmware']['update_enabled'] is False
+          assert blocked_firmware['code']=='FIRMWARE_UPDATE_DISABLED'
           assert demo['demo'] is True and demo['message']=='This is not an app. This is me.'
           assert authenticated['authenticated'] is True
           print('ARI gateway contract: PASS')
