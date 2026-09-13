@@ -1,0 +1,191 @@
+name: Jahorin Persistent Intelligence Live Proof
+
+on:
+  workflow_dispatch:
+    inputs:
+      frontend_sha:
+        description: Optional deployed frontend SHA to bind into the evidence bundle
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: project-7e6f2720-0291-4c91-8c3
+  GCP_PROJECT_NUMBER: '689058655022'
+  GCP_REGION: us-west1
+  CLOUD_RUN_SERVICE: ari
+  OWNER_GID: '399152573423'
+
+jobs:
+  prove:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/${{ env.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github/providers/github
+          service_account: github-actions@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com
+
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Resolve live ARI revision and owner session authority
+        shell: bash
+        run: |
+          set -euo pipefail
+          service_json="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json)"
+          session_secret="$(printf '%s' "$service_json" | python3 -c '
+          import json,sys
+          obj=json.load(sys.stdin)
+          def walk(v):
+              if isinstance(v,dict):
+                  if v.get("name")=="ARI_SESSION_SECRET" and isinstance(v.get("value"),str) and v.get("value"):
+                      return v["value"]
+                  for child in v.values():
+                      found=walk(child)
+                      if found: return found
+              elif isinstance(v,list):
+                  for child in v:
+                      found=walk(child)
+                      if found: return found
+              return ""
+          print(walk(obj))
+          ')"
+          test -n "$session_secret"
+          echo "::add-mask::$session_secret"
+          printf 'ARI_SESSION_SECRET=%s\n' "$session_secret" >> "$GITHUB_ENV"
+          revision="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format='value(status.latestReadyRevisionName)')"
+          printf 'CLOUD_RUN_REVISION=%s\n' "$revision" >> "$GITHUB_ENV"
+          printf 'PROOF_REQUEST_ID=jahorin-proof-%s-%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+
+      - name: Prove health, governance, execution persistence and read-back
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARI="https://ari-${GCP_PROJECT_NUMBER}.${GCP_REGION}.run.app"
+          OWNER_COOKIE="$(node - <<'NODE'
+          const crypto=require('crypto');
+          const gid=process.env.OWNER_GID;
+          const expires=Math.floor(Date.now()/1000)+900;
+          const sig=crypto.createHmac('sha256',process.env.ARI_SESSION_SECRET).update(`${gid}.${expires}`).digest('hex');
+          process.stdout.write(`ari_session=${gid}.${expires}.${sig}`);
+          NODE
+          )"
+
+          curl -fsS "$ARI/api/health" -o /tmp/health.json
+          curl -fsS "$ARI/api/ready" -o /tmp/ready.json
+          node - <<'NODE'
+          const fs=require('fs');
+          const health=JSON.parse(fs.readFileSync('/tmp/health.json'));
+          const ready=JSON.parse(fs.readFileSync('/tmp/ready.json'));
+          if(health.ok!==true) throw new Error('ARI health is not ok');
+          if(!(ready.ok===true && ready.ready===true)) throw new Error('ARI is not ready');
+          NODE
+
+          deny_code="$(curl -sS -o /tmp/maat-deny.json -w '%{http_code}' \
+            -H "cookie: $OWNER_COOKIE" \
+            -H 'content-type: application/json' \
+            -H "x-request-id: ${PROOF_REQUEST_ID}-maat" \
+            -d "{\"capability\":\"code\",\"operation\":\"deploy\",\"intent\":\"Deploy production proof fixture\",\"request_id\":\"${PROOF_REQUEST_ID}-maat\"}" \
+            "$ARI/api/governance/evaluate")"
+          test "$deny_code" = 428
+          node - <<'NODE'
+          const fs=require('fs');
+          const j=JSON.parse(fs.readFileSync('/tmp/maat-deny.json'));
+          if(!(j.ok===false && j.code==='HUMAN_CONFIRMATION_REQUIRED' && j.governance?.confirmation_required===true && j.governance?.human_confirmed===false)) throw new Error('Ma’at denial proof failed');
+          NODE
+
+          curl -fsS \
+            -H "cookie: $OWNER_COOKIE" \
+            -H 'content-type: application/json' \
+            -H "x-request-id: ${PROOF_REQUEST_ID}-maat" \
+            -d "{\"capability\":\"code\",\"operation\":\"deploy\",\"intent\":\"Deploy production proof fixture\",\"request_id\":\"${PROOF_REQUEST_ID}-maat\",\"payload\":{\"confirmed\":true}}" \
+            "$ARI/api/governance/evaluate" -o /tmp/maat-allow.json
+          node - <<'NODE'
+          const fs=require('fs');
+          const j=JSON.parse(fs.readFileSync('/tmp/maat-allow.json'));
+          if(!(j.ok===true && j.governance?.result==='allow' && j.governance?.human_confirmed===true && j.governance?.request_id===process.env.PROOF_REQUEST_ID+'-maat')) throw new Error('Ma’at approval proof failed');
+          NODE
+
+          curl -fsS \
+            -H "cookie: $OWNER_COOKIE" \
+            -H 'content-type: application/json' \
+            -H "x-request-id: $PROOF_REQUEST_ID" \
+            -d "{\"capability\":\"interweb\",\"operation\":\"search\",\"intent\":\"Research one public source for Jahorin persistent intelligence production proof.\",\"request_id\":\"$PROOF_REQUEST_ID\",\"payload\":{\"proof_only\":true},\"context\":{\"proof\":\"persistent-intelligence\"}}" \
+            "$ARI/api/runtime" -o /tmp/runtime.json
+          node - <<'NODE'
+          const fs=require('fs');
+          const j=JSON.parse(fs.readFileSync('/tmp/runtime.json'));
+          if(j.ok===false) throw new Error(j.error||'ARI runtime proof failed');
+          if((j.request_id||'')!==process.env.PROOF_REQUEST_ID) throw new Error('runtime request_id did not survive');
+          NODE
+
+          curl -fsS \
+            -H "cookie: $OWNER_COOKIE" \
+            -H "x-request-id: ${PROOF_REQUEST_ID}-read" \
+            "$ARI/api/state/$OWNER_GID" -o /tmp/state.json
+          node - <<'NODE'
+          const fs=require('fs');
+          const j=JSON.parse(fs.readFileSync('/tmp/state.json'));
+          const turns=j?.state?.timeline;
+          if(!(j.ok===true && j.persistence==='neon' && Array.isArray(turns))) throw new Error('durable state read-back failed');
+          const match=turns.find(t=>t.request_id===process.env.PROOF_REQUEST_ID);
+          if(!match) throw new Error('correlated runtime turn is absent from Neon read-back');
+          if(!String(match.intent||'').includes('persistent intelligence production proof')) throw new Error('restored intent mismatch');
+          if(!['interweb','wepwawet'].includes(String(match.capability||'').toLowerCase())) throw new Error('restored capability mismatch');
+          fs.writeFileSync('/tmp/restored-turn.json',JSON.stringify(match,null,2));
+          NODE
+
+          echo 'PASS Ma’at denial and approval evaluation'
+          echo 'PASS correlated ARI runtime execution'
+          echo 'PASS Neon temporal write and state read-back'
+
+      - name: Build production proof evidence bundle
+        shell: bash
+        env:
+          FRONTEND_SHA: ${{ inputs.frontend_sha }}
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs=require('fs');
+          const read=(path)=>JSON.parse(fs.readFileSync(path));
+          const health=read('/tmp/health.json');
+          const ready=read('/tmp/ready.json');
+          const deny=read('/tmp/maat-deny.json');
+          const allow=read('/tmp/maat-allow.json');
+          const runtime=read('/tmp/runtime.json');
+          const restored=read('/tmp/restored-turn.json');
+          const proof={
+            ok:true,
+            claim:'backend-persistent-intelligence-proof-passed',
+            verified_at:new Date().toISOString(),
+            request_id:process.env.PROOF_REQUEST_ID,
+            frontend_sha:process.env.FRONTEND_SHA||null,
+            tae_backend_sha:process.env.GITHUB_SHA,
+            cloud_run_revision:process.env.CLOUD_RUN_REVISION,
+            health:{ok:health.ok===true},
+            ready:{ok:ready.ok===true,ready:ready.ready===true,neon_ready:ready.neon_ready===true,twin_persistence_ready:ready.twin_persistence_ready===true},
+            maat:{denied_without_confirmation:deny.code==='HUMAN_CONFIRMATION_REQUIRED',allowed_after_confirmation:allow.governance?.human_confirmed===true,request_id:allow.governance?.request_id||null},
+            ari:{request_id:runtime.request_id||null,provider:runtime.provider||runtime.result?.provider||null},
+            tae:{persistence:'neon',read_back:true,restored_turn:restored}
+          };
+          fs.writeFileSync('PERSISTENT_INTELLIGENCE_LIVE_PROOF.json',JSON.stringify(proof,null,2)+'\n');
+          NODE
+          cat PERSISTENT_INTELLIGENCE_LIVE_PROOF.json
+
+      - name: Record live proof evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add PERSISTENT_INTELLIGENCE_LIVE_PROOF.json
+          git commit -m "THOTH: record persistent intelligence live proof"
+          git pull --rebase origin main
+          git push origin HEAD:main
