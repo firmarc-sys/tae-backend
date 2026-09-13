@@ -1,0 +1,70 @@
+{
+  "ok": true,
+  "claim": "backend-persistent-intelligence-proof-passed",
+  "verified_at": "2026-09-13T12:11:28.564Z",
+  "request_id": "jahorin-proof-34756385826-1",
+  "frontend_sha": null,
+  "tae_backend_sha": "edd1deba4ef9d060db27e4533cff5bd768e087ab",
+  "cloud_run_revision": "ari-00365-q6z",
+  "health": {
+    "ok": true
+  },
+  "ready": {
+    "ok": true,
+    "ready": true,
+    "neon_ready": true,
+    "twin_persistence_ready": true
+  },
+  "maat": {
+    "denied_without_confirmation": true,
+    "allowed_after_confirmation": true,
+    "request_id": "jahorin-proof-34756385826-1-maat"
+  },
+  "ari": {
+    "request_id": "jahorin-proof-34756385826-1",
+    "provider": {
+      "name": "google-vertex-ai",
+      "model": "gemini-3.7-flash",
+      "model_class": "INTERWEB",
+      "lifecycle": "GA",
+      "location": "global",
+      "fallback_used": false,
+      "fallback_reason": null,
+      "attempted_models": [
+        {
+          "model": "gemini-3.7-flash",
+          "attempt": 1,
+          "location": "global"
+        }
+      ]
+    }
+  },
+  "tae": {
+    "persistence": "neon",
+    "read_back": true,
+    "restored_turn": {
+      "id": "266",
+      "intent": "Research one public source for Jahorin persistent intelligence production proof.",
+      "capability": "interweb",
+      "page": "search",
+      "request_id": "jahorin-proof-34756385826-1",
+      "state": {
+        "source": null,
+        "manifest": {
+          "page": "search",
+          "intent": "Research one public source for Jahorin persistent intelligence production proof.",
+          "reason": "Jahorin mapped this intention to INTERWEB · SEARCH.",
+          "capability": "interweb",
+          "confidence": 0.91,
+          "requires_confirmation": false
+        },
+        "authorization": {
+          "tier": "owner",
+          "operation": "search",
+          "capability": "interweb"
+        }
+      },
+      "created_at": "2026-09-13T12:11:27.837Z"
+    }
+  }
+}
