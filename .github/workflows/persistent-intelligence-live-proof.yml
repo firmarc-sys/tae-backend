@@ -21,6 +21,7 @@ env:
   GCP_PROJECT_NUMBER: '689058655022'
   GCP_REGION: us-west1
   CLOUD_RUN_SERVICE: ari
+  SESSION_SECRET: ari-session-secret
   OWNER_GID: '399152573423'
 
 jobs:
@@ -43,28 +44,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          service_json="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json)"
-          session_secret="$(printf '%s' "$service_json" | python3 -c '
-          import json,sys
-          obj=json.load(sys.stdin)
-          def walk(v):
-              if isinstance(v,dict):
-                  if v.get("name")=="ARI_SESSION_SECRET" and isinstance(v.get("value"),str) and v.get("value"):
-                      return v["value"]
-                  for child in v.values():
-                      found=walk(child)
-                      if found: return found
-              elif isinstance(v,list):
-                  for child in v:
-                      found=walk(child)
-                      if found: return found
-              return ""
-          print(walk(obj))
-          ')"
-          test -n "$session_secret"
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" >/dev/null
+          gcloud secrets versions access latest --secret="$SESSION_SECRET" --project="$GCP_PROJECT_ID" > /tmp/ari-session-secret
+          test -s /tmp/ari-session-secret
+          session_secret="$(cat /tmp/ari-session-secret)"
           echo "::add-mask::$session_secret"
           printf 'ARI_SESSION_SECRET=%s\n' "$session_secret" >> "$GITHUB_ENV"
           revision="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format='value(status.latestReadyRevisionName)')"
+          test -n "$revision"
           printf 'CLOUD_RUN_REVISION=%s\n' "$revision" >> "$GITHUB_ENV"
           printf 'PROOF_REQUEST_ID=jahorin-proof-%s-%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
 
