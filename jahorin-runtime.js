@@ -110,7 +110,7 @@ export function installJahorinRuntimeRoutes(api, {
       await writeEvent({ supabaseRequest, gid, executionId, type: "execution.accepted", payload: { capability, intent }, requestId });
 
       // Fire-and-track: the HTTP request only acknowledges durable acceptance.
-      void runExecution({ supabaseRequest, execute, gid, executionId, requestId, execution }).catch((error) => {
+      void runExecution({ supabaseRequest, execute, req, gid, executionId, requestId, execution }).catch((error) => {
         console.error("Jahorin execution worker failed", error);
       });
 
@@ -210,7 +210,7 @@ export function installJahorinRuntimeRoutes(api, {
   });
 }
 
-async function runExecution({ supabaseRequest, execute, gid, executionId, requestId, execution }) {
+async function runExecution({ supabaseRequest, execute, req, gid, executionId, requestId, execution }) {
   const started = await setExecution({
     supabaseRequest, gid, executionId,
     patch: { state: "running", started_at: now() },
@@ -219,6 +219,7 @@ async function runExecution({ supabaseRequest, execute, gid, executionId, reques
 
   try {
     const result = await execute({
+      req,
       gid,
       executionId,
       requestId,
