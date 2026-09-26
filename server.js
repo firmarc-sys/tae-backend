@@ -6,6 +6,7 @@ import helmet from "helmet";
 import Stripe from "stripe";
 import { VertexModelRouter, VERTEX_PROVIDER, modelClassForCapability } from "./vertex-model-router.js";
 import { installThothVoiceRoutes, thothVoiceReadiness } from "./thoth-voice.js";
+import { installJahorinRuntimeRoutes } from "./jahorin-runtime.js";
 import { hasExplicitHumanConfirmation } from "./uae-governance.js";
 import {
   HEYCYAN_DEVICE_LANE,
@@ -750,6 +751,27 @@ function inferManifest(intent = "", requestedCapability = "", context = {}) {
 }
 
 const api = express.Router();
+
+installJahorinRuntimeRoutes(api, {
+  authorize: requireProviderAccess,
+  supabaseRequest,
+  responseBase,
+  execute: async ({ gid, executionId, requestId, capability, intent, payload, context }) => {
+    const runtime = await orchestrateWithMercury({
+      requestId,
+      capability,
+      intent,
+      payload: { ...(payload || {}), execution_id: executionId },
+      context: { ...(context || {}), gid },
+    });
+    return {
+      execution_id: executionId,
+      capability,
+      orchestration: runtime?.orchestration || null,
+      render_state: runtime?.renderState || null,
+    };
+  },
+});
 
 // Cost protection for consumer guest sessions.
 const rateBuckets = new Map();
