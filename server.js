@@ -756,13 +756,12 @@ installJahorinRuntimeRoutes(api, {
   authorize: requireProviderAccess,
   supabaseRequest,
   responseBase,
-  execute: async ({ gid, executionId, requestId, capability, intent, payload, context }) => {
-    const runtime = await orchestrateWithMercury({
+  execute: async ({ req, gid, executionId, requestId, capability, intent, payload, context }) => {
+    const runtime = await orchestrateWithMercury(req, {
       requestId,
       capability,
       intent,
       payload: { ...(payload || {}), execution_id: executionId },
-      context: { ...(context || {}), gid },
     });
     return {
       execution_id: executionId,
