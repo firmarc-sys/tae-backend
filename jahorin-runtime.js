@@ -85,7 +85,7 @@ export function installJahorinRuntimeRoutes(api, {
       const requestId = String(req.body?.request_id || req.requestId || crypto.randomUUID());
 
       const existing = await findIdempotent({ supabaseRequest, gid, key });
-      if (existing) return res.status(200).json(responseBase({ request_id: requestId, execution: existing, idempotent_replay: true }));
+      if (existing) return res.status(200).json(responseBase({ gid, request_id: requestId, execution: existing, idempotent_replay: true }));
 
       const executionId = crypto.randomUUID();
       const created = await supabaseRequest("/rest/v1/jahorin_executions", {
@@ -115,6 +115,7 @@ export function installJahorinRuntimeRoutes(api, {
       });
 
       return res.status(202).json(responseBase({
+        gid,
         request_id: requestId,
         execution: { ...execution, state: "accepted" },
       }));
@@ -130,7 +131,7 @@ export function installJahorinRuntimeRoutes(api, {
       if (!gid) throw httpError(401, "Authenticated GID required", "AUTH_REQUIRED");
       const execution = await loadExecution({ supabaseRequest, gid, executionId: req.params.id });
       if (!execution) throw httpError(404, "Execution not found", "EXECUTION_NOT_FOUND");
-      return res.json(responseBase({ execution }));
+      return res.json(responseBase({ gid, execution }));
     } catch (error) {
       next(error);
     }
@@ -152,7 +153,7 @@ export function installJahorinRuntimeRoutes(api, {
         patch: { state: "cancel_requested" },
       });
       await writeEvent({ supabaseRequest, gid, executionId: req.params.id, type: "execution.cancel_requested", payload: {}, requestId: req.requestId });
-      return res.json(responseBase({ execution: updated }));
+      return res.json(responseBase({ gid, execution: updated }));
     } catch (error) {
       next(error);
     }
