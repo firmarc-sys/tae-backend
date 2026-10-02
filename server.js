@@ -757,18 +757,58 @@ installJahorinRuntimeRoutes(api, {
   supabaseRequest,
   responseBase,
   execute: async ({ req, gid, executionId, requestId, capability, intent, payload, context }) => {
-    const runtime = await orchestrateWithMercury(req, {
-      requestId,
+    const { executeJahorinCapability } = await import("./jahorin-capability-dispatch.js");
+    const providers = {
+      generateText: async ({ capability: modelCapability, prompt, systemInstruction, groundWithSearch = false, context: modelContext = {} }) => {
+        const generated = await generateWithGoogle({
+          prompt,
+          systemInstruction,
+          groundWithSearch,
+          capability: modelCapability,
+          requestId: requestId || modelContext.requestId,
+        });
+        return {
+          text: generated.text,
+          provider: generated.provider,
+          model: generated.model,
+          model_class: generated.model_class,
+          model_lifecycle: generated.model_lifecycle,
+          location: generated.location,
+          fallback_used: generated.fallback_used,
+          attempted_models: generated.attempted_models,
+          tokens: generated.tokens,
+          usage: generated.usage,
+          sources: generated.deepsearch?.sources || [],
+          grounding: generated.deepsearch || null,
+        };
+      },
+      generateImage: ({ prompt, context: modelContext = {} }) => vertexRouter.generateImage({ prompt, context: { requestId: requestId || modelContext.requestId } }),
+      generateVideo: ({ prompt, aspectRatio, durationSeconds, context: modelContext = {} }) => vertexRouter.generateVideo({ prompt, aspectRatio, durationSeconds, context: { requestId: requestId || modelContext.requestId } }),
+      generateAudio: ({ prompt, context: modelContext = {} }) => vertexRouter.generateAudio({ prompt, context: { requestId: requestId || modelContext.requestId } }),
+    };
+    const result = await executeJahorinCapability({
       capability,
+      operation: payload?.operation || payload?.action || "",
       intent,
       payload: { ...(payload || {}), execution_id: executionId },
+      context: { ...(context || {}), gid, requestId, request_id: requestId },
+      providers,
+      legacyOrchestrate: async ({ capability: selectedCapability, intent: selectedIntent, payload: selectedPayload }) => {
+        const runtime = await orchestrateWithMercury(req, {
+          requestId,
+          capability: selectedCapability,
+          intent: selectedIntent,
+          payload: { ...(selectedPayload || {}), execution_id: executionId },
+        });
+        return {
+          execution_id: executionId,
+          capability: selectedCapability,
+          orchestration: runtime?.orchestration || null,
+          render_state: runtime?.renderState || null,
+        };
+      },
     });
-    return {
-      execution_id: executionId,
-      capability,
-      orchestration: runtime?.orchestration || null,
-      render_state: runtime?.renderState || null,
-    };
+    return { execution_id: executionId, gid, request_id: requestId, ...result };
   },
 });
 
