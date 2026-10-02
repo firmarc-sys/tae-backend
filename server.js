@@ -7,6 +7,7 @@ import Stripe from "stripe";
 import { VertexModelRouter, VERTEX_PROVIDER, modelClassForCapability } from "./vertex-model-router.js";
 import { installThothVoiceRoutes, thothVoiceReadiness } from "./thoth-voice.js";
 import { installJahorinRuntimeRoutes } from "./jahorin-runtime.js";
+import { installJahorinPersistenceRoutes } from "./jahorin-persistence-routes.js";
 import { hasExplicitHumanConfirmation } from "./uae-governance.js";
 import {
   HEYCYAN_DEVICE_LANE,
@@ -757,19 +758,65 @@ installJahorinRuntimeRoutes(api, {
   supabaseRequest,
   responseBase,
   execute: async ({ req, gid, executionId, requestId, capability, intent, payload, context }) => {
-    const runtime = await orchestrateWithMercury(req, {
-      requestId,
+    const { executeJahorinCapability } = await import("./jahorin-capability-dispatch.js");
+    const providers = {
+      generateText: async ({ capability: modelCapability, prompt, systemInstruction, groundWithSearch = false, context: modelContext = {} }) => {
+        const generated = await generateWithGoogle({
+          prompt,
+          systemInstruction,
+          groundWithSearch,
+          capability: modelCapability,
+          requestId: requestId || modelContext.requestId,
+        });
+        return {
+          text: generated.text,
+          provider: generated.provider,
+          model: generated.model,
+          model_class: generated.model_class,
+          model_lifecycle: generated.model_lifecycle,
+          location: generated.location,
+          fallback_used: generated.fallback_used,
+          attempted_models: generated.attempted_models,
+          tokens: generated.tokens,
+          usage: generated.usage,
+          sources: generated.deepsearch?.sources || [],
+          grounding: generated.deepsearch || null,
+        };
+      },
+      generateImage: ({ prompt, context: modelContext = {} }) => vertexRouter.generateImage({ prompt, context: { requestId: requestId || modelContext.requestId } }),
+      generateVideo: ({ prompt, aspectRatio, durationSeconds, context: modelContext = {} }) => vertexRouter.generateVideo({ prompt, aspectRatio, durationSeconds, context: { requestId: requestId || modelContext.requestId } }),
+      generateAudio: ({ prompt, context: modelContext = {} }) => vertexRouter.generateAudio({ prompt, context: { requestId: requestId || modelContext.requestId } }),
+    };
+    const result = await executeJahorinCapability({
       capability,
+      operation: payload?.operation || payload?.action || "",
       intent,
       payload: { ...(payload || {}), execution_id: executionId },
+      context: { ...(context || {}), gid, requestId, request_id: requestId },
+      providers,
+      legacyOrchestrate: async ({ capability: selectedCapability, intent: selectedIntent, payload: selectedPayload }) => {
+        const runtime = await orchestrateWithMercury(req, {
+          requestId,
+          capability: selectedCapability,
+          intent: selectedIntent,
+          payload: { ...(selectedPayload || {}), execution_id: executionId },
+        });
+        return {
+          execution_id: executionId,
+          capability: selectedCapability,
+          orchestration: runtime?.orchestration || null,
+          render_state: runtime?.renderState || null,
+        };
+      },
     });
-    return {
-      execution_id: executionId,
-      capability,
-      orchestration: runtime?.orchestration || null,
-      render_state: runtime?.renderState || null,
-    };
+    return { execution_id: executionId, gid, request_id: requestId, ...result };
   },
+});
+
+installJahorinPersistenceRoutes(api, {
+  authorize: requireProviderAccess,
+  supabaseRequest,
+  responseBase,
 });
 
 // Cost protection for consumer guest sessions.
@@ -1491,6 +1538,70 @@ api.post("/generate", async (req, res, next) => {
       temperature: req.body?.temperature,
     });
     res.json(responseBase({ type: String(req.body?.type || "text"), orchestration: runtime.orchestration, render_state: runtime.renderState, output: result.text, model: result.model, model_class: result.model_class, model_lifecycle: result.model_lifecycle, provider: result.provider, location: result.location, fallback_used: result.fallback_used, attempted_models: result.attempted_models, usage: result.usage, media_input: result.media_input }));
+  } catch (error) {
+    next(error);
+  }
+});
+
+api.post("/jahorin/invoke", async (req, res, next) => {
+  try {
+    const body = req.body || {};
+    const prompt = String(body.input || body.prompt || body.command || "").trim();
+    if (!prompt) return res.status(400).json({ ok: false, error: "input or prompt is required", request_id: req.requestId });
+    if (prompt.length > 20000) return res.status(413).json({ ok: false, error: "input is too long", request_id: req.requestId });
+
+    const requested = String(body.capability || body.module || body.type || "jahorin").trim().toLowerCase();
+    const aliases = {
+      jahorin: "jahorin", general: "jahorin", root: "jahorin",
+      interweb: "interweb", web: "interweb", wepwawet: "interweb",
+      ptah: "code", code: "code", "intent to code": "code",
+      thoth: "thoth", scribe: "thoth",
+      horus: "optics", optics: "optics",
+      hathor: "augment", augment: "augment", audio: "augment",
+    };
+    const capability = aliases[requested] || "jahorin";
+    const image = normalizeInlineImage(body);
+    await requireProviderAccess(req);
+
+    const runtime = await orchestrateWithMercury(req, {
+      capability,
+      intent: prompt,
+      requestId: body.request_id || req.requestId,
+      payload: body,
+    });
+    const systemInstructions = {
+      jahorin: "You are Jahorin, the core intelligence and orchestrator. Fulfill the user's request directly and truthfully.",
+      interweb: "You are Interweb/Wepwawet. Research carefully, distinguish verified facts from uncertainty, and cite or return available search grounding.",
+      code: "You are Ptah, Jahorin's software architect. Produce correct, secure, executable code and implementation guidance.",
+      thoth: "You are Thoth, Jahorin's scribe. Create clear, structured, reusable documents and knowledge artifacts.",
+      optics: "You are Horus, Jahorin's visual intelligence. Analyze supplied images and provide actionable visual understanding.",
+      augment: "You are Hathor, Jahorin's creative augmentation capability. Help create and refine creative, audio, and media concepts; do not claim to render media unless a rendering tool actually ran.",
+    };
+    const result = await generateWithGoogle({
+      prompt,
+      capability: capability === "interweb" ? "INTERWEB" : capability === "optics" && image ? "OPTICS" : capability.toUpperCase(),
+      image,
+      groundWithSearch: capability === "interweb",
+      systemInstruction: String(body.systemInstruction || systemInstructions[capability]),
+      temperature: body.temperature,
+    });
+    return res.json(responseBase({
+      request_id: body.request_id || req.requestId,
+      capability,
+      runtime: "TAE/ARI",
+      orchestration: runtime.orchestration,
+      render_state: runtime.renderState,
+      text: result.text,
+      output: result.text,
+      model: result.model,
+      model_class: result.model_class,
+      provider: result.provider,
+      location: result.location,
+      fallback_used: result.fallback_used,
+      attempted_models: result.attempted_models,
+      usage: result.usage,
+      sources: result.deepsearch?.sources || result.deepsearch || null,
+    }));
   } catch (error) {
     next(error);
   }
