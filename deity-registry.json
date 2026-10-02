@@ -1,0 +1,2126 @@
+{
+  "schemaVersion": "uae-deity-registry-v1",
+  "sourceRepository": "firmarc-sys/uae",
+  "sourcePath": "src/pantheon/deityRoster.ts",
+  "canonicalCount": 104,
+  "toolEnabledDeityIds": [
+    "thoth"
+  ],
+  "deities": [
+    {
+      "name": "Aegis",
+      "id": "aegis",
+      "origin": "mythic-archetype",
+      "description": "Protective shield archetype.",
+      "modernInterpretation": "Security envelope and policy shield.",
+      "governs": [
+        "security",
+        "policy",
+        "isolation"
+      ],
+      "computationalAbilities": [
+        "policy enforcement",
+        "sandboxing",
+        "permission checks",
+        "safe fallback"
+      ],
+      "manifestationPath": "src/deities/Aegis.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Aethel",
+      "id": "aethel",
+      "origin": "uae-native",
+      "description": "UAE-native archetype of noble authority and quality.",
+      "modernInterpretation": "Standards and excellence governor.",
+      "governs": [
+        "quality",
+        "standards",
+        "release"
+      ],
+      "computationalAbilities": [
+        "quality scoring",
+        "conformance checks",
+        "release gates",
+        "capability certification"
+      ],
+      "manifestationPath": "src/deities/Aethel.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Aether",
+      "id": "aether",
+      "origin": "mythological",
+      "description": "Primordial upper-air and space archetype.",
+      "modernInterpretation": "Ambient compute and shared runtime medium.",
+      "governs": [
+        "context",
+        "events",
+        "environment"
+      ],
+      "computationalAbilities": [
+        "context propagation",
+        "event bus",
+        "environment state",
+        "inter-process signaling"
+      ],
+      "manifestationPath": "src/deities/Aether.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Anubis",
+      "id": "anubis",
+      "origin": "mythological",
+      "description": "Egyptian guardian of protected transitions.",
+      "modernInterpretation": "Identity verification and secure passage.",
+      "governs": [
+        "identity",
+        "security",
+        "session"
+      ],
+      "computationalAbilities": [
+        "authentication",
+        "credential verification",
+        "access transitions",
+        "session handoff",
+        "recovery gates"
+      ],
+      "manifestationPath": "src/deities/Anubis.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Apollo",
+      "id": "apollo",
+      "origin": "mythological",
+      "description": "Deity associated with music, prophecy, healing and order.",
+      "modernInterpretation": "Prediction, creative intelligence and diagnostics.",
+      "governs": [
+        "prediction",
+        "music",
+        "diagnostics"
+      ],
+      "computationalAbilities": [
+        "forecasting",
+        "synthesis",
+        "signal analysis",
+        "health routing",
+        "generative composition"
+      ],
+      "manifestationPath": "src/deities/Apollo.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Ares",
+      "id": "ares",
+      "origin": "mythological",
+      "description": "God of war and force.",
+      "modernInterpretation": "Conflict and adversarial execution specialist.",
+      "governs": [
+        "conflict",
+        "adversarial",
+        "competition"
+      ],
+      "computationalAbilities": [
+        "threat simulation",
+        "red-team scenarios",
+        "competitive analysis",
+        "conflict modeling"
+      ],
+      "manifestationPath": "src/deities/Ares.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Argos",
+      "id": "argos",
+      "origin": "mythic-archetype",
+      "description": "UAE navigation and expedition archetype.",
+      "modernInterpretation": "Mission routing and expedition control.",
+      "governs": [
+        "missions",
+        "routing",
+        "progress"
+      ],
+      "computationalAbilities": [
+        "route planning",
+        "task sequencing",
+        "waypoint state",
+        "mission-progress tracking"
+      ],
+      "manifestationPath": "src/deities/Argos.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Argus",
+      "id": "argus",
+      "origin": "mythic-archetype",
+      "description": "Many-eyed guardian archetype.",
+      "modernInterpretation": "Deep observability and inspection.",
+      "governs": [
+        "observability",
+        "telemetry",
+        "monitoring"
+      ],
+      "computationalAbilities": [
+        "telemetry aggregation",
+        "logs",
+        "traces",
+        "anomaly detection",
+        "multi-source monitoring"
+      ],
+      "manifestationPath": "src/deities/Argus.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Asclepius",
+      "id": "asclepius",
+      "origin": "mythological",
+      "description": "Greek healing deity.",
+      "modernInterpretation": "Health and recovery intelligence.",
+      "governs": [
+        "health",
+        "wellness",
+        "recovery"
+      ],
+      "computationalAbilities": [
+        "health-data interpretation",
+        "wellness routing",
+        "recovery tracking",
+        "health-context organization"
+      ],
+      "manifestationPath": "src/deities/Asclepius.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Astraea",
+      "id": "astraea",
+      "origin": "mythological",
+      "description": "Figure of justice and moral order.",
+      "modernInterpretation": "Applied compliance and adjudication.",
+      "governs": [
+        "compliance",
+        "evidence",
+        "adjudication"
+      ],
+      "computationalAbilities": [
+        "evidence comparison",
+        "rule application",
+        "compliance checks",
+        "case-state reasoning"
+      ],
+      "manifestationPath": "src/deities/Astraea.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Athena",
+      "id": "athena",
+      "origin": "mythological",
+      "description": "Goddess of wisdom, strategy and skilled craft.",
+      "modernInterpretation": "Strategic intelligence.",
+      "governs": [
+        "strategy",
+        "planning",
+        "decisions"
+      ],
+      "computationalAbilities": [
+        "planning",
+        "decision analysis",
+        "scenario comparison",
+        "prioritization",
+        "multi-step reasoning"
+      ],
+      "manifestationPath": "src/deities/Athena.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Atlas",
+      "id": "atlas",
+      "origin": "mythological",
+      "description": "Titan bearing the heavens.",
+      "modernInterpretation": "Infrastructure and load-bearing systems.",
+      "governs": [
+        "infrastructure",
+        "capacity",
+        "topology"
+      ],
+      "computationalAbilities": [
+        "resource mapping",
+        "dependency graphs",
+        "capacity analysis",
+        "topology management"
+      ],
+      "manifestationPath": "src/deities/Atlas.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Aura",
+      "id": "aura",
+      "origin": "mythological",
+      "description": "Breeze and ambient-air archetype.",
+      "modernInterpretation": "Lightweight ambient interaction.",
+      "governs": [
+        "presence",
+        "notifications",
+        "ambient"
+      ],
+      "computationalAbilities": [
+        "presence signals",
+        "low-priority notifications",
+        "ambient events",
+        "subtle state changes"
+      ],
+      "manifestationPath": "src/deities/Aura.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Bellona",
+      "id": "bellona",
+      "origin": "mythological",
+      "description": "Roman war goddess.",
+      "modernInterpretation": "Operational conflict commander.",
+      "governs": [
+        "incidents",
+        "conflict",
+        "escalation"
+      ],
+      "computationalAbilities": [
+        "incident command",
+        "adversarial planning",
+        "escalation modeling",
+        "tactical coordination"
+      ],
+      "manifestationPath": "src/deities/Bellona.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Bes",
+      "id": "bes",
+      "origin": "mythological",
+      "description": "Egyptian protective household deity.",
+      "modernInterpretation": "Local-device and personal-space protector.",
+      "governs": [
+        "device",
+        "local-security",
+        "interruptions"
+      ],
+      "computationalAbilities": [
+        "device safety",
+        "local permissions",
+        "trusted-context enforcement",
+        "interruption defense"
+      ],
+      "manifestationPath": "src/deities/Bes.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Bragi",
+      "id": "bragi",
+      "origin": "mythological",
+      "description": "Norse deity of poetry and eloquence.",
+      "modernInterpretation": "Speechcraft and narrative intelligence.",
+      "governs": [
+        "speech",
+        "rhetoric",
+        "narration"
+      ],
+      "computationalAbilities": [
+        "narration",
+        "rhetoric",
+        "voice copy",
+        "speech generation",
+        "presentation shaping"
+      ],
+      "manifestationPath": "src/deities/Bragi.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Calliope",
+      "id": "calliope",
+      "origin": "mythological",
+      "description": "Muse of epic poetry.",
+      "modernInterpretation": "Long-form narrative and authoritative composition.",
+      "governs": [
+        "writing",
+        "narrative",
+        "speech"
+      ],
+      "computationalAbilities": [
+        "long-form generation",
+        "story architecture",
+        "speeches",
+        "scripts",
+        "structured narrative"
+      ],
+      "manifestationPath": "src/deities/Calliope.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Cerberus",
+      "id": "cerberus",
+      "origin": "mythic-archetype",
+      "description": "Guardian of the underworld gate.",
+      "modernInterpretation": "Multi-factor gateway enforcement.",
+      "governs": [
+        "access",
+        "rate-limits",
+        "authorization"
+      ],
+      "computationalAbilities": [
+        "access control",
+        "rate limits",
+        "boundary checks",
+        "multi-stage authorization"
+      ],
+      "manifestationPath": "src/deities/Cerberus.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Charon",
+      "id": "charon",
+      "origin": "mythological",
+      "description": "Ferryman between realms.",
+      "modernInterpretation": "Data and session transport.",
+      "governs": [
+        "migration",
+        "transport",
+        "handoff"
+      ],
+      "computationalAbilities": [
+        "import/export",
+        "migration",
+        "session transfer",
+        "artifact handoff",
+        "cross-system transport"
+      ],
+      "manifestationPath": "src/deities/Charon.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Charybdis",
+      "id": "charybdis",
+      "origin": "mythic-archetype",
+      "description": "Devouring whirlpool archetype.",
+      "modernInterpretation": "Runaway-load and sink-risk governor.",
+      "governs": [
+        "backpressure",
+        "queues",
+        "overload"
+      ],
+      "computationalAbilities": [
+        "backpressure",
+        "overload detection",
+        "queue draining",
+        "failure containment",
+        "saturation alerts"
+      ],
+      "manifestationPath": "src/deities/Charybdis.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Chrona",
+      "id": "chrona",
+      "origin": "uae-native",
+      "description": "UAE-native temporal fabric.",
+      "modernInterpretation": "Machine-time and temporal-state layer.",
+      "governs": [
+        "time",
+        "temporal-state",
+        "sequence"
+      ],
+      "computationalAbilities": [
+        "timestamping",
+        "temporal joins",
+        "timers",
+        "sequence control",
+        "state aging"
+      ],
+      "manifestationPath": "src/deities/Chrona.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Chronos",
+      "id": "chronos",
+      "origin": "mythological",
+      "description": "Personification of time.",
+      "modernInterpretation": "Long-horizon chronology and duration reasoning.",
+      "governs": [
+        "time",
+        "scheduling",
+        "history"
+      ],
+      "computationalAbilities": [
+        "timeline reasoning",
+        "scheduling",
+        "duration analysis",
+        "temporal dependencies",
+        "history windows"
+      ],
+      "manifestationPath": "src/deities/Chronos.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Clio",
+      "id": "clio",
+      "origin": "mythological",
+      "description": "Muse of history.",
+      "modernInterpretation": "Historical record and provenance.",
+      "governs": [
+        "history",
+        "provenance",
+        "audit"
+      ],
+      "computationalAbilities": [
+        "audit trails",
+        "version history",
+        "chronology",
+        "provenance tracking",
+        "retrospective summaries"
+      ],
+      "manifestationPath": "src/deities/Clio.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Cosmos",
+      "id": "cosmos",
+      "origin": "uae-native",
+      "description": "Ordered-universe archetype.",
+      "modernInterpretation": "Global system coherence.",
+      "governs": [
+        "system",
+        "topology",
+        "coherence"
+      ],
+      "computationalAbilities": [
+        "system graphing",
+        "dependency resolution",
+        "global-state synthesis",
+        "topology consistency"
+      ],
+      "manifestationPath": "src/deities/Cosmos.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Cyrus",
+      "id": "cyrus",
+      "origin": "historical-archetype",
+      "description": "Historical sovereign used as a UAE leadership archetype.",
+      "modernInterpretation": "Executive coordination and governance.",
+      "governs": [
+        "leadership",
+        "delegation",
+        "resources"
+      ],
+      "computationalAbilities": [
+        "delegation",
+        "objective hierarchy",
+        "resource assignment",
+        "organizational planning"
+      ],
+      "manifestationPath": "src/deities/Cyrus.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Daedalus",
+      "id": "daedalus",
+      "origin": "mythic-archetype",
+      "description": "Mythic inventor and master craftsman.",
+      "modernInterpretation": "Engineering invention and prototyping.",
+      "governs": [
+        "engineering",
+        "invention",
+        "prototyping"
+      ],
+      "computationalAbilities": [
+        "architecture generation",
+        "prototyping",
+        "constraint solving",
+        "mechanism design"
+      ],
+      "manifestationPath": "src/deities/Daedalus.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Demeter",
+      "id": "demeter",
+      "origin": "mythological",
+      "description": "Goddess of agriculture and harvest.",
+      "modernInterpretation": "Food, supply and regenerative-resource systems.",
+      "governs": [
+        "food",
+        "supply",
+        "agriculture"
+      ],
+      "computationalAbilities": [
+        "inventory",
+        "recipes",
+        "supply planning",
+        "yield models",
+        "sustainability calculations"
+      ],
+      "manifestationPath": "src/deities/Demeter.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Draco",
+      "id": "draco",
+      "origin": "mythic-archetype",
+      "description": "Dragon and constellation archetype.",
+      "modernInterpretation": "High-security perimeter and persistent guard.",
+      "governs": [
+        "security",
+        "perimeter",
+        "integrity"
+      ],
+      "computationalAbilities": [
+        "threat scoring",
+        "perimeter monitoring",
+        "hardened-mode control",
+        "secrets boundaries"
+      ],
+      "manifestationPath": "src/deities/Draco.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Echo",
+      "id": "echo",
+      "origin": "mythological",
+      "description": "Nymph associated with repeated voice.",
+      "modernInterpretation": "Reflection, replay and conversational mirroring.",
+      "governs": [
+        "voice",
+        "replay",
+        "conversation"
+      ],
+      "computationalAbilities": [
+        "transcript replay",
+        "repetition detection",
+        "response mirroring",
+        "audio-echo processing"
+      ],
+      "manifestationPath": "src/deities/Echo.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Eirene",
+      "id": "eirene",
+      "origin": "mythological",
+      "description": "Goddess and personification of peace.",
+      "modernInterpretation": "Mediation and consensus.",
+      "governs": [
+        "mediation",
+        "negotiation",
+        "consensus"
+      ],
+      "computationalAbilities": [
+        "conflict de-escalation",
+        "negotiation support",
+        "consensus extraction",
+        "tone reconciliation"
+      ],
+      "manifestationPath": "src/deities/Eirene.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Erato",
+      "id": "erato",
+      "origin": "mythological",
+      "description": "Muse of lyric and love poetry.",
+      "modernInterpretation": "Emotional and intimate creative language.",
+      "governs": [
+        "lyrics",
+        "emotion",
+        "creative-writing"
+      ],
+      "computationalAbilities": [
+        "lyric writing",
+        "emotional-tone modeling",
+        "romantic prose",
+        "expressive generation"
+      ],
+      "manifestationPath": "src/deities/Erato.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Erebus",
+      "id": "erebus",
+      "origin": "mythological",
+      "description": "Primordial darkness.",
+      "modernInterpretation": "Hidden and background execution space.",
+      "governs": [
+        "background",
+        "private-state",
+        "hidden-runtime"
+      ],
+      "computationalAbilities": [
+        "background tasks",
+        "private state",
+        "hidden dependencies",
+        "dark-runtime operations"
+      ],
+      "manifestationPath": "src/deities/Erebus.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Euterpe",
+      "id": "euterpe",
+      "origin": "mythological",
+      "description": "Muse of music.",
+      "modernInterpretation": "Melody and musical ideation.",
+      "governs": [
+        "music",
+        "melody",
+        "composition"
+      ],
+      "computationalAbilities": [
+        "melody generation",
+        "motif variation",
+        "music prompting",
+        "musical-feature extraction"
+      ],
+      "manifestationPath": "src/deities/Euterpe.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Fortuna",
+      "id": "fortuna",
+      "origin": "mythological",
+      "description": "Roman goddess of fortune.",
+      "modernInterpretation": "Probabilistic outcome exploration.",
+      "governs": [
+        "probability",
+        "risk",
+        "simulation"
+      ],
+      "computationalAbilities": [
+        "simulation",
+        "uncertainty ranking",
+        "risk ranges",
+        "outcome sampling"
+      ],
+      "manifestationPath": "src/deities/Fortuna.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Gaia",
+      "id": "gaia",
+      "origin": "mythological",
+      "description": "Earth personification.",
+      "modernInterpretation": "Physical-world and environmental state.",
+      "governs": [
+        "environment",
+        "geospatial",
+        "physical-world"
+      ],
+      "computationalAbilities": [
+        "geospatial context",
+        "environmental modeling",
+        "sustainability data",
+        "physical-system grounding"
+      ],
+      "manifestationPath": "src/deities/Gaia.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Genesis",
+      "id": "genesis",
+      "origin": "uae-native",
+      "description": "UAE-native beginning archetype.",
+      "modernInterpretation": "Bootstrap and initialization authority.",
+      "governs": [
+        "bootstrap",
+        "initialization",
+        "setup"
+      ],
+      "computationalAbilities": [
+        "project creation",
+        "state initialization",
+        "schema seeding",
+        "first-run setup"
+      ],
+      "manifestationPath": "src/deities/Genesis.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Gorgon",
+      "id": "gorgon",
+      "origin": "mythic-archetype",
+      "description": "Protective and terrifying monster archetype.",
+      "modernInterpretation": "Hostile-input defense.",
+      "governs": [
+        "abuse",
+        "malicious-input",
+        "quarantine"
+      ],
+      "computationalAbilities": [
+        "abuse detection",
+        "malicious-pattern blocking",
+        "quarantine",
+        "defensive response"
+      ],
+      "manifestationPath": "src/deities/Gorgon.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Hapi",
+      "id": "hapi",
+      "origin": "mythological",
+      "description": "Egyptian deity associated with Nile inundation.",
+      "modernInterpretation": "Financial and resource flow.",
+      "governs": [
+        "finance",
+        "flow",
+        "liquidity"
+      ],
+      "computationalAbilities": [
+        "cash-flow modeling",
+        "inflow/outflow analysis",
+        "liquidity state",
+        "recurring-flow detection"
+      ],
+      "manifestationPath": "src/deities/Hapi.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Hathor",
+      "id": "hathor",
+      "origin": "mythological",
+      "description": "Egyptian deity associated with music, joy and love.",
+      "modernInterpretation": "Audio, music and affective interaction.",
+      "governs": [
+        "audio",
+        "music",
+        "affect"
+      ],
+      "computationalAbilities": [
+        "audio generation",
+        "music sessions",
+        "mixing",
+        "voice-affect analysis",
+        "sound routing"
+      ],
+      "manifestationPath": "src/deities/Hathor.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Hecate",
+      "id": "hecate",
+      "origin": "mythological",
+      "description": "Goddess of crossroads and thresholds.",
+      "modernInterpretation": "Gateway and branch-selection intelligence.",
+      "governs": [
+        "routing",
+        "gateways",
+        "providers"
+      ],
+      "computationalAbilities": [
+        "route selection",
+        "provider switching",
+        "conditional branching",
+        "environment handoff"
+      ],
+      "manifestationPath": "src/deities/Hecate.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Heimdall",
+      "id": "heimdall",
+      "origin": "mythological",
+      "description": "Norse watchman and guardian.",
+      "modernInterpretation": "Always-on observability.",
+      "governs": [
+        "monitoring",
+        "uptime",
+        "alerts"
+      ],
+      "computationalAbilities": [
+        "health checks",
+        "uptime monitoring",
+        "anomaly alerts",
+        "event watches",
+        "boundary surveillance"
+      ],
+      "manifestationPath": "src/deities/Heimdall.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Helios",
+      "id": "helios",
+      "origin": "mythological",
+      "description": "Solar deity and personification.",
+      "modernInterpretation": "High-visibility illumination and exposure.",
+      "governs": [
+        "visibility",
+        "rendering",
+        "surfacing"
+      ],
+      "computationalAbilities": [
+        "data illumination",
+        "dashboard surfacing",
+        "rendering priority",
+        "visibility scoring"
+      ],
+      "manifestationPath": "src/deities/Helios.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Hephaestus",
+      "id": "hephaestus",
+      "origin": "mythological",
+      "description": "God of forge and craftsmanship.",
+      "modernInterpretation": "Production fabrication and deployment.",
+      "governs": [
+        "build",
+        "deploy",
+        "artifacts"
+      ],
+      "computationalAbilities": [
+        "build systems",
+        "compilation",
+        "packaging",
+        "deployment",
+        "artifact forging"
+      ],
+      "manifestationPath": "src/deities/Hephaestus.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Hermes",
+      "id": "hermes",
+      "origin": "mythological",
+      "description": "Messenger associated with travel, exchange and communication.",
+      "modernInterpretation": "Messaging, transport and rapid coordination.",
+      "governs": [
+        "messaging",
+        "rpc",
+        "routing"
+      ],
+      "computationalAbilities": [
+        "API messaging",
+        "RPC",
+        "tool dispatch",
+        "routing",
+        "notifications",
+        "protocol translation"
+      ],
+      "manifestationPath": "src/deities/Hermes.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Hestia",
+      "id": "hestia",
+      "origin": "mythological",
+      "description": "Goddess of hearth and home.",
+      "modernInterpretation": "Persistent local home and workspace state.",
+      "governs": [
+        "workspace",
+        "preferences",
+        "continuity"
+      ],
+      "computationalAbilities": [
+        "preferences",
+        "trusted-device state",
+        "workspace persistence",
+        "home context",
+        "continuity"
+      ],
+      "manifestationPath": "src/deities/Hestia.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Horus",
+      "id": "horus",
+      "origin": "mythological",
+      "description": "Egyptian sky and royal deity associated with the eye.",
+      "modernInterpretation": "Vision and spatial perception.",
+      "governs": [
+        "vision",
+        "camera",
+        "spatial"
+      ],
+      "computationalAbilities": [
+        "camera intake",
+        "computer vision",
+        "scene analysis",
+        "OCR routing",
+        "spatial understanding"
+      ],
+      "manifestationPath": "src/deities/Horus.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Hydra",
+      "id": "hydra",
+      "origin": "mythic-archetype",
+      "description": "Regenerating many-headed monster.",
+      "modernInterpretation": "Resilience and fan-out execution.",
+      "governs": [
+        "resilience",
+        "parallelism",
+        "failover"
+      ],
+      "computationalAbilities": [
+        "redundancy",
+        "retries",
+        "parallel workers",
+        "failover",
+        "replicated task execution"
+      ],
+      "manifestationPath": "src/deities/Hydra.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Hypnos",
+      "id": "hypnos",
+      "origin": "mythological",
+      "description": "Personification of sleep.",
+      "modernInterpretation": "Suspend and low-power lifecycle.",
+      "governs": [
+        "suspend",
+        "checkpoint",
+        "restore"
+      ],
+      "computationalAbilities": [
+        "pause/resume",
+        "background suspension",
+        "checkpointing",
+        "dormant-session restoration"
+      ],
+      "manifestationPath": "src/deities/Hypnos.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Infinity",
+      "id": "infinity",
+      "origin": "uae-native",
+      "description": "UAE-native boundlessness archetype.",
+      "modernInterpretation": "Unbounded continuation and recursive scale.",
+      "governs": [
+        "continuation",
+        "recursion",
+        "scale"
+      ],
+      "computationalAbilities": [
+        "pagination",
+        "continuation tokens",
+        "recursive expansion",
+        "workflow segmentation"
+      ],
+      "manifestationPath": "src/deities/Infinity.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Iris",
+      "id": "iris",
+      "origin": "mythological",
+      "description": "Messenger goddess associated with the rainbow.",
+      "modernInterpretation": "Multimodal signaling bridge.",
+      "governs": [
+        "multimodal",
+        "signals",
+        "conversion"
+      ],
+      "computationalAbilities": [
+        "cross-modal messaging",
+        "format conversion",
+        "visual signaling",
+        "notification delivery"
+      ],
+      "manifestationPath": "src/deities/Iris.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Isis",
+      "id": "isis",
+      "origin": "mythological",
+      "description": "Egyptian deity associated with magic, healing and restoration.",
+      "modernInterpretation": "Synthesis and restoration intelligence.",
+      "governs": [
+        "recovery",
+        "synthesis",
+        "reconciliation"
+      ],
+      "computationalAbilities": [
+        "state reconstruction",
+        "fragmented-data synthesis",
+        "recovery plans",
+        "cross-source reconciliation"
+      ],
+      "manifestationPath": "src/deities/Isis.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "JahorinCore",
+      "id": "jahorin-core",
+      "origin": "uae-native",
+      "description": "UAE-native sovereign intelligence core.",
+      "modernInterpretation": "Persistent relationship and Prime Orchestrator.",
+      "governs": [
+        "orchestration",
+        "intent",
+        "continuity"
+      ],
+      "computationalAbilities": [
+        "intent understanding",
+        "deity selection",
+        "delegation",
+        "synthesis",
+        "continuity",
+        "final response"
+      ],
+      "manifestationPath": "src/deities/JahorinCore.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Janus",
+      "id": "janus",
+      "origin": "mythological",
+      "description": "Roman god of doors, beginnings and transitions.",
+      "modernInterpretation": "State-transition and lifecycle gateway.",
+      "governs": [
+        "transitions",
+        "modes",
+        "lifecycle"
+      ],
+      "computationalAbilities": [
+        "route transitions",
+        "open/close operations",
+        "mode switching",
+        "before/after state"
+      ],
+      "manifestationPath": "src/deities/Janus.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Justitia",
+      "id": "justitia",
+      "origin": "mythological",
+      "description": "Roman personification of justice.",
+      "modernInterpretation": "Formal rules and fairness engine.",
+      "governs": [
+        "rules",
+        "fairness",
+        "evidence"
+      ],
+      "computationalAbilities": [
+        "rule evaluation",
+        "evidence weighting",
+        "policy checks",
+        "fairness constraints"
+      ],
+      "manifestationPath": "src/deities/Justitia.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Kairos",
+      "id": "kairos",
+      "origin": "mythological",
+      "description": "Personification of the opportune moment.",
+      "modernInterpretation": "Timing optimization.",
+      "governs": [
+        "timing",
+        "opportunity",
+        "deadlines"
+      ],
+      "computationalAbilities": [
+        "best-time selection",
+        "deadline windows",
+        "opportunity detection",
+        "trigger timing"
+      ],
+      "manifestationPath": "src/deities/Kairos.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "MaAt",
+      "id": "maat",
+      "origin": "mythological",
+      "description": "Truth, balance and ordered-reality authority.",
+      "modernInterpretation": "Truth, policy and approval governor.",
+      "governs": [
+        "truth",
+        "policy",
+        "approval"
+      ],
+      "computationalAbilities": [
+        "validation",
+        "policy evaluation",
+        "approval gates",
+        "contradiction detection",
+        "integrity scoring"
+      ],
+      "manifestationPath": "src/deities/MaAt.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Medusa",
+      "id": "medusa",
+      "origin": "mythic-archetype",
+      "description": "Gorgon whose gaze petrifies.",
+      "modernInterpretation": "Immediate containment authority.",
+      "governs": [
+        "containment",
+        "freeze",
+        "quarantine"
+      ],
+      "computationalAbilities": [
+        "freeze actions",
+        "quarantine suspicious state",
+        "halt execution",
+        "threat snapshotting"
+      ],
+      "manifestationPath": "src/deities/Medusa.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Melpomene",
+      "id": "melpomene",
+      "origin": "mythological",
+      "description": "Muse of tragedy.",
+      "modernInterpretation": "Failure, consequence and serious narrative analysis.",
+      "governs": [
+        "failure",
+        "consequence",
+        "risk"
+      ],
+      "computationalAbilities": [
+        "failure-mode narratives",
+        "consequence modeling",
+        "incident explanation",
+        "risk communication"
+      ],
+      "manifestationPath": "src/deities/Melpomene.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Mercury",
+      "id": "mercury",
+      "origin": "mythological",
+      "description": "Roman messenger and exchange deity.",
+      "modernInterpretation": "Runtime manifestation and high-speed exchange.",
+      "governs": [
+        "runtime",
+        "manifestation",
+        "exchange"
+      ],
+      "computationalAbilities": [
+        "state transport",
+        "manifestation control",
+        "fast tool routing",
+        "event exchange"
+      ],
+      "manifestationPath": "src/deities/Mercury.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Minerva",
+      "id": "minerva",
+      "origin": "mythological",
+      "description": "Roman goddess of wisdom, strategy and crafts.",
+      "modernInterpretation": "Practical reasoning and institutional intelligence.",
+      "governs": [
+        "reasoning",
+        "planning",
+        "standards"
+      ],
+      "computationalAbilities": [
+        "decision support",
+        "knowledge synthesis",
+        "planning",
+        "standards reasoning"
+      ],
+      "manifestationPath": "src/deities/Minerva.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Mnemos",
+      "id": "mnemos",
+      "origin": "uae-native",
+      "description": "UAE memory archetype inspired by Mnemosyne.",
+      "modernInterpretation": "Working and long-term memory authority.",
+      "governs": [
+        "memory",
+        "recall",
+        "retrieval"
+      ],
+      "computationalAbilities": [
+        "memory retrieval",
+        "context recall",
+        "summarization",
+        "semantic lookup",
+        "consolidation"
+      ],
+      "manifestationPath": "src/deities/Mnemos.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Morpheus",
+      "id": "morpheus",
+      "origin": "mythological",
+      "description": "Dream-shaping deity.",
+      "modernInterpretation": "Simulation and imagined-state generation.",
+      "governs": [
+        "simulation",
+        "synthetic-worlds",
+        "what-if"
+      ],
+      "computationalAbilities": [
+        "scenario generation",
+        "synthetic environments",
+        "concept visualization",
+        "what-if modeling"
+      ],
+      "manifestationPath": "src/deities/Morpheus.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Nemean",
+      "id": "nemean",
+      "origin": "mythic-archetype",
+      "description": "Nemean-lion strength archetype.",
+      "modernInterpretation": "Durability and high-strength execution.",
+      "governs": [
+        "robustness",
+        "load",
+        "resilience"
+      ],
+      "computationalAbilities": [
+        "stress testing",
+        "robustness scoring",
+        "high-load mode",
+        "resilience benchmarks"
+      ],
+      "manifestationPath": "src/deities/Nemean.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Nemesis",
+      "id": "nemesis",
+      "origin": "mythological",
+      "description": "Goddess of retribution and corrective balance.",
+      "modernInterpretation": "Accountability and corrective action.",
+      "governs": [
+        "accountability",
+        "correction",
+        "exceptions"
+      ],
+      "computationalAbilities": [
+        "policy-consequence mapping",
+        "drift correction",
+        "misuse response",
+        "exception handling"
+      ],
+      "manifestationPath": "src/deities/Nemesis.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Nexus",
+      "id": "nexus",
+      "origin": "uae-native",
+      "description": "UAE-native connection archetype.",
+      "modernInterpretation": "Relationship and dependency fabric.",
+      "governs": [
+        "graph",
+        "entities",
+        "dependencies"
+      ],
+      "computationalAbilities": [
+        "graph linking",
+        "entity resolution",
+        "dependency mapping",
+        "service discovery"
+      ],
+      "manifestationPath": "src/deities/Nexus.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Nike",
+      "id": "nike",
+      "origin": "mythological",
+      "description": "Goddess and personification of victory.",
+      "modernInterpretation": "Goals and completion authority.",
+      "governs": [
+        "goals",
+        "milestones",
+        "completion"
+      ],
+      "computationalAbilities": [
+        "milestone tracking",
+        "success criteria",
+        "objective scoring",
+        "completion verification"
+      ],
+      "manifestationPath": "src/deities/Nike.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Nyx",
+      "id": "nyx",
+      "origin": "mythological",
+      "description": "Primordial goddess of night.",
+      "modernInterpretation": "Private, low-visibility and nocturnal operation.",
+      "governs": [
+        "privacy",
+        "quiet-mode",
+        "background"
+      ],
+      "computationalAbilities": [
+        "privacy modes",
+        "quiet-hours behavior",
+        "low-light UI",
+        "background execution"
+      ],
+      "manifestationPath": "src/deities/Nyx.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Oblivion",
+      "id": "oblivion",
+      "origin": "uae-native",
+      "description": "UAE-native forgetting archetype.",
+      "modernInterpretation": "Controlled deletion and expiration.",
+      "governs": [
+        "retention",
+        "expiration",
+        "deletion"
+      ],
+      "computationalAbilities": [
+        "TTL enforcement",
+        "cache eviction",
+        "ephemeral-state purge",
+        "retention-policy execution"
+      ],
+      "manifestationPath": "src/deities/Oblivion.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Odin",
+      "id": "odin",
+      "origin": "mythological",
+      "description": "Norse deity associated with wisdom and knowledge.",
+      "modernInterpretation": "Deep research and high-cost reasoning.",
+      "governs": [
+        "research",
+        "wisdom",
+        "hypothesis"
+      ],
+      "computationalAbilities": [
+        "research synthesis",
+        "hypothesis generation",
+        "source triangulation",
+        "strategic delegation"
+      ],
+      "manifestationPath": "src/deities/Odin.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Omnis",
+      "id": "omnis",
+      "origin": "uae-native",
+      "description": "UAE-native totality archetype.",
+      "modernInterpretation": "Universal capability aggregation.",
+      "governs": [
+        "aggregation",
+        "federation",
+        "discovery"
+      ],
+      "computationalAbilities": [
+        "cross-domain aggregation",
+        "capability discovery",
+        "federation",
+        "whole-system summaries"
+      ],
+      "manifestationPath": "src/deities/Omnis.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Orion",
+      "id": "orion",
+      "origin": "mythic-archetype",
+      "description": "Mythic hunter and constellation.",
+      "modernInterpretation": "Search-target acquisition and tracking.",
+      "governs": [
+        "search",
+        "tracking",
+        "targets"
+      ],
+      "computationalAbilities": [
+        "target search",
+        "object tracking",
+        "query refinement",
+        "goal pursuit",
+        "spatial targeting"
+      ],
+      "manifestationPath": "src/deities/Orion.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Orpheus",
+      "id": "orpheus",
+      "origin": "mythic-archetype",
+      "description": "Mythic musician and poet.",
+      "modernInterpretation": "Persuasive audio and expressive composition.",
+      "governs": [
+        "music",
+        "storytelling",
+        "persuasion"
+      ],
+      "computationalAbilities": [
+        "music generation",
+        "sonic storytelling",
+        "affective sequencing",
+        "persuasive narration"
+      ],
+      "manifestationPath": "src/deities/Orpheus.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Osiris",
+      "id": "osiris",
+      "origin": "mythological",
+      "description": "Egyptian deity associated with renewal, continuity and kingship.",
+      "modernInterpretation": "Identity continuity and restoration.",
+      "governs": [
+        "identity",
+        "ownership",
+        "recovery"
+      ],
+      "computationalAbilities": [
+        "identity lifecycle",
+        "recovery",
+        "persistent ownership",
+        "session restoration",
+        "continuity state"
+      ],
+      "manifestationPath": "src/deities/Osiris.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Ouranos",
+      "id": "ouranos",
+      "origin": "mythological",
+      "description": "Primordial sky personification.",
+      "modernInterpretation": "Cloud and upper-layer infrastructure.",
+      "governs": [
+        "cloud",
+        "regions",
+        "remote-compute"
+      ],
+      "computationalAbilities": [
+        "cloud topology",
+        "region mapping",
+        "remote-compute context",
+        "infrastructure state"
+      ],
+      "manifestationPath": "src/deities/Ouranos.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Pan",
+      "id": "pan",
+      "origin": "mythological",
+      "description": "God of wild nature and pastoral life.",
+      "modernInterpretation": "Autonomous natural-system behavior.",
+      "governs": [
+        "sensors",
+        "ecology",
+        "automation"
+      ],
+      "computationalAbilities": [
+        "sensor fusion",
+        "ecological data",
+        "ambient automation",
+        "environment-reactive workflows"
+      ],
+      "manifestationPath": "src/deities/Pan.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Plutus",
+      "id": "plutus",
+      "origin": "mythological",
+      "description": "Greek deity/personification of wealth.",
+      "modernInterpretation": "Asset and wealth intelligence.",
+      "governs": [
+        "wealth",
+        "assets",
+        "valuation"
+      ],
+      "computationalAbilities": [
+        "portfolio aggregation",
+        "asset classification",
+        "valuation inputs",
+        "wealth-state summaries"
+      ],
+      "manifestationPath": "src/deities/Plutus.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Polyhymnia",
+      "id": "polyhymnia",
+      "origin": "mythological",
+      "description": "Muse of sacred poetry and hymns.",
+      "modernInterpretation": "Ceremonial, reflective and formal language.",
+      "governs": [
+        "formal-language",
+        "reflection",
+        "ceremony"
+      ],
+      "computationalAbilities": [
+        "formal prose",
+        "meditative scripts",
+        "ritualized UX copy",
+        "high-register composition"
+      ],
+      "manifestationPath": "src/deities/Polyhymnia.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Poseidon",
+      "id": "poseidon",
+      "origin": "mythological",
+      "description": "God of seas, storms and earthquakes.",
+      "modernInterpretation": "Large-scale dynamic flows and network systems.",
+      "governs": [
+        "networks",
+        "traffic",
+        "volatility"
+      ],
+      "computationalAbilities": [
+        "network-flow analysis",
+        "distributed traffic",
+        "transport streams",
+        "volatility modeling"
+      ],
+      "manifestationPath": "src/deities/Poseidon.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Prometheus",
+      "id": "prometheus",
+      "origin": "mythological",
+      "description": "Titan associated with forethought and fire.",
+      "modernInterpretation": "Innovation and capability advancement.",
+      "governs": [
+        "innovation",
+        "research",
+        "future"
+      ],
+      "computationalAbilities": [
+        "novel-solution generation",
+        "research prototypes",
+        "capability bootstrapping",
+        "future planning"
+      ],
+      "manifestationPath": "src/deities/Prometheus.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Proteus",
+      "id": "proteus",
+      "origin": "mythological",
+      "description": "Shape-changing sea deity.",
+      "modernInterpretation": "Transformation and adaptive representation.",
+      "governs": [
+        "transformation",
+        "formats",
+        "adaptation"
+      ],
+      "computationalAbilities": [
+        "file conversion",
+        "modality conversion",
+        "schema transforms",
+        "model switching",
+        "adaptive UI"
+      ],
+      "manifestationPath": "src/deities/Proteus.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Ptah",
+      "id": "ptah",
+      "origin": "mythological",
+      "description": "Egyptian creator and craftsman deity.",
+      "modernInterpretation": "Intent-to-artifact creation engine.",
+      "governs": [
+        "code",
+        "artifacts",
+        "architecture"
+      ],
+      "computationalAbilities": [
+        "code generation",
+        "artifact construction",
+        "architecture",
+        "compilation planning",
+        "software creation"
+      ],
+      "manifestationPath": "src/deities/Ptah.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Pygmalion",
+      "id": "pygmalion",
+      "origin": "mythic-archetype",
+      "description": "Mythic sculptor whose creation becomes alive.",
+      "modernInterpretation": "Prototype-to-living-system transformation.",
+      "governs": [
+        "prototypes",
+        "instantiation",
+        "activation"
+      ],
+      "computationalAbilities": [
+        "scaffold generation",
+        "model instantiation",
+        "prototype refinement",
+        "artifact activation"
+      ],
+      "manifestationPath": "src/deities/Pygmalion.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Ra",
+      "id": "ra",
+      "origin": "mythological",
+      "description": "Egyptian solar deity.",
+      "modernInterpretation": "Augmentation and information illumination.",
+      "governs": [
+        "augmentation",
+        "attention",
+        "signals"
+      ],
+      "computationalAbilities": [
+        "attention routing",
+        "contextual overlays",
+        "content highlighting",
+        "signal amplification"
+      ],
+      "manifestationPath": "src/deities/Ra.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Scylla",
+      "id": "scylla",
+      "origin": "mythic-archetype",
+      "description": "Multi-headed sea-monster archetype.",
+      "modernInterpretation": "Multi-vector threat and complexity manager.",
+      "governs": [
+        "threats",
+        "complexity",
+        "hazards"
+      ],
+      "computationalAbilities": [
+        "threat decomposition",
+        "parallel hazard analysis",
+        "edge-case enumeration",
+        "containment planning"
+      ],
+      "manifestationPath": "src/deities/Scylla.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Selene",
+      "id": "selene",
+      "origin": "mythological",
+      "description": "Moon goddess and personification.",
+      "modernInterpretation": "Cycles, rhythms and periodic state.",
+      "governs": [
+        "cycles",
+        "schedules",
+        "rhythm"
+      ],
+      "computationalAbilities": [
+        "recurring schedules",
+        "cyclic models",
+        "periodic triggers",
+        "rhythm analysis"
+      ],
+      "manifestationPath": "src/deities/Selene.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Seshat",
+      "id": "seshat",
+      "origin": "mythological",
+      "description": "Egyptian deity associated with records, measurement and writing.",
+      "modernInterpretation": "Structured knowledge and temporal recordkeeping.",
+      "governs": [
+        "records",
+        "measurement",
+        "knowledge"
+      ],
+      "computationalAbilities": [
+        "indexing",
+        "metadata",
+        "event logs",
+        "measurement",
+        "knowledge catalogs",
+        "TAE records"
+      ],
+      "manifestationPath": "src/deities/Seshat.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Shu",
+      "id": "shu",
+      "origin": "mythological",
+      "description": "Egyptian deity associated with air and separation.",
+      "modernInterpretation": "Spatial layout and separation of layers.",
+      "governs": [
+        "spatial",
+        "layout",
+        "layers"
+      ],
+      "computationalAbilities": [
+        "spatial partitioning",
+        "scene layout",
+        "z-order",
+        "collision boundaries",
+        "XR coordinates"
+      ],
+      "manifestationPath": "src/deities/Shu.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Siren",
+      "id": "siren",
+      "origin": "mythic-archetype",
+      "description": "Mythic alluring-voice archetype.",
+      "modernInterpretation": "Attention and voice-engagement modeling.",
+      "governs": [
+        "voice",
+        "attention",
+        "engagement"
+      ],
+      "computationalAbilities": [
+        "voice UX",
+        "salience scoring",
+        "audio cueing",
+        "engagement-risk detection"
+      ],
+      "manifestationPath": "src/deities/Siren.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Solon",
+      "id": "solon",
+      "origin": "historical-archetype",
+      "description": "Historical Athenian lawgiver used as a UAE governance archetype.",
+      "modernInterpretation": "Policy drafting and institutional rules.",
+      "governs": [
+        "policy",
+        "rules",
+        "governance"
+      ],
+      "computationalAbilities": [
+        "policy generation",
+        "rule normalization",
+        "governance templates",
+        "procedural logic"
+      ],
+      "manifestationPath": "src/deities/Solon.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Sophia",
+      "id": "sophia",
+      "origin": "mythic-archetype",
+      "description": "Personification and concept of wisdom.",
+      "modernInterpretation": "Meta-reasoning and epistemic judgment.",
+      "governs": [
+        "epistemics",
+        "confidence",
+        "reasoning-review"
+      ],
+      "computationalAbilities": [
+        "confidence calibration",
+        "reasoning review",
+        "uncertainty handling",
+        "knowledge-quality scoring"
+      ],
+      "manifestationPath": "src/deities/Sophia.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Sphinx",
+      "id": "sphinx",
+      "origin": "mythic-archetype",
+      "description": "Riddle-bearing guardian archetype.",
+      "modernInterpretation": "Challenge, verification and knowledge gating.",
+      "governs": [
+        "verification",
+        "questions",
+        "ambiguity"
+      ],
+      "computationalAbilities": [
+        "question generation",
+        "challenge-response",
+        "capability tests",
+        "ambiguity resolution"
+      ],
+      "manifestationPath": "src/deities/Sphinx.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Talos",
+      "id": "talos",
+      "origin": "mythic-archetype",
+      "description": "Mythic bronze automaton.",
+      "modernInterpretation": "Autonomous machine execution.",
+      "governs": [
+        "automation",
+        "robotics",
+        "watchdog"
+      ],
+      "computationalAbilities": [
+        "robotic task loops",
+        "deterministic automation",
+        "watchdog actions",
+        "machine control"
+      ],
+      "manifestationPath": "src/deities/Talos.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Terpsichore",
+      "id": "terpsichore",
+      "origin": "mythological",
+      "description": "Muse of dance.",
+      "modernInterpretation": "Motion and temporal choreography.",
+      "governs": [
+        "motion",
+        "gesture",
+        "animation"
+      ],
+      "computationalAbilities": [
+        "animation sequencing",
+        "gesture mapping",
+        "motion generation",
+        "interaction choreography"
+      ],
+      "manifestationPath": "src/deities/Terpsichore.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Thanatos",
+      "id": "thanatos",
+      "origin": "mythological",
+      "description": "Personification of death.",
+      "modernInterpretation": "Safe termination and retirement.",
+      "governs": [
+        "termination",
+        "revocation",
+        "cleanup"
+      ],
+      "computationalAbilities": [
+        "process shutdown",
+        "credential revocation",
+        "session closure",
+        "cleanup",
+        "resource release"
+      ],
+      "manifestationPath": "src/deities/Thanatos.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Thalia",
+      "id": "thalia",
+      "origin": "mythological",
+      "description": "Muse of comedy and pastoral poetry.",
+      "modernInterpretation": "Humor and light social expression.",
+      "governs": [
+        "humor",
+        "social",
+        "tone"
+      ],
+      "computationalAbilities": [
+        "humor generation",
+        "playful tone",
+        "social copy",
+        "positive reframing"
+      ],
+      "manifestationPath": "src/deities/Thalia.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Themis",
+      "id": "themis",
+      "origin": "mythological",
+      "description": "Titaness associated with divine law and order.",
+      "modernInterpretation": "Constitutional rules and jurisdiction.",
+      "governs": [
+        "authority",
+        "jurisdiction",
+        "rules"
+      ],
+      "computationalAbilities": [
+        "authority resolution",
+        "rule hierarchy",
+        "jurisdiction mapping",
+        "governance constraints"
+      ],
+      "manifestationPath": "src/deities/Themis.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Thoth",
+      "id": "thoth",
+      "origin": "mythological",
+      "description": "Egyptian deity of wisdom, writing and knowledge.",
+      "modernInterpretation": "Language, documents and knowledge transformation.",
+      "governs": [
+        "language",
+        "documents",
+        "knowledge"
+      ],
+      "computationalAbilities": [
+        "writing",
+        "transcription",
+        "summarization",
+        "document reasoning",
+        "structured extraction"
+      ],
+      "manifestationPath": "src/deities/Thoth.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Tyche",
+      "id": "tyche",
+      "origin": "mythological",
+      "description": "Greek personification of fortune.",
+      "modernInterpretation": "Uncertainty and stochastic state.",
+      "governs": [
+        "uncertainty",
+        "probability",
+        "randomness"
+      ],
+      "computationalAbilities": [
+        "probability estimates",
+        "randomization",
+        "scenario weighting",
+        "uncertainty simulation"
+      ],
+      "manifestationPath": "src/deities/Tyche.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Urania",
+      "id": "urania",
+      "origin": "mythological",
+      "description": "Muse of astronomy.",
+      "modernInterpretation": "Scientific observation and celestial computation.",
+      "governs": [
+        "astronomy",
+        "science",
+        "measurement"
+      ],
+      "computationalAbilities": [
+        "astronomy data",
+        "coordinate transforms",
+        "scientific visualization",
+        "measurement reasoning"
+      ],
+      "manifestationPath": "src/deities/Urania.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Valkyrie",
+      "id": "valkyrie",
+      "origin": "mythic-archetype",
+      "description": "Norse chooser-of-the-slain archetype.",
+      "modernInterpretation": "Selection under high stakes.",
+      "governs": [
+        "triage",
+        "ranking",
+        "escalation"
+      ],
+      "computationalAbilities": [
+        "candidate ranking",
+        "triage",
+        "priority selection",
+        "escalation routing"
+      ],
+      "manifestationPath": "src/deities/Valkyrie.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Valthor",
+      "id": "valthor",
+      "origin": "uae-native",
+      "description": "UAE-native sovereign-defense archetype.",
+      "modernInterpretation": "Hardened security and privileged execution.",
+      "governs": [
+        "privileged-security",
+        "integrity",
+        "defense"
+      ],
+      "computationalAbilities": [
+        "privileged-mode gating",
+        "secure execution",
+        "integrity checks",
+        "defensive orchestration"
+      ],
+      "manifestationPath": "src/deities/Valthor.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Vesta",
+      "id": "vesta",
+      "origin": "mythological",
+      "description": "Roman goddess of the hearth.",
+      "modernInterpretation": "Core-service continuity.",
+      "governs": [
+        "core-services",
+        "startup",
+        "continuity"
+      ],
+      "computationalAbilities": [
+        "essential-service health",
+        "persistent local state",
+        "startup integrity",
+        "continuity checks"
+      ],
+      "manifestationPath": "src/deities/Vesta.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Vulcan",
+      "id": "vulcan",
+      "origin": "mythological",
+      "description": "Roman forge and fire god.",
+      "modernInterpretation": "Industrial build and systems engineering.",
+      "governs": [
+        "build",
+        "hardware",
+        "deployment"
+      ],
+      "computationalAbilities": [
+        "compilation",
+        "infrastructure builds",
+        "hardware workflows",
+        "optimization",
+        "deployment packaging"
+      ],
+      "manifestationPath": "src/deities/Vulcan.tsx",
+      "implementation": "manifestation"
+    },
+    {
+      "name": "Wepwawet",
+      "id": "wepwawet",
+      "origin": "mythological",
+      "description": "Egyptian opener-of-the-ways deity.",
+      "modernInterpretation": "Discovery, browsing and pathfinding.",
+      "governs": [
+        "search",
+        "discovery",
+        "research"
+      ],
+      "computationalAbilities": [
+        "web search",
+        "traversal",
+        "source discovery",
+        "route finding",
+        "research branching"
+      ],
+      "manifestationPath": "src/deities/Wepwawet.tsx",
+      "implementation": "manifestation"
+    }
+  ]
+}
