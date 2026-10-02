@@ -1,7 +1,7 @@
 # TAE API scaffold
 
-This reserves the target location for a separately deployed, versioned TAE control-plane API. It is not wired into the root ARI deployment.
+A separate Node/Express service entry point exists at `server.js`; it is not wired into the root ARI Dockerfile or Cloud Run deployment. `/healthz` only confirms process liveness. `/readyz` remains 503 until real identity, tenant, audit and durable-workflow adapters exist. All `/api/*` routes return a structured 503 rather than pretending unfinished features work.
 
-Before adding a production entry point: inventory route/auth contracts; choose the framework; implement verified identity and tenant context; enforce authorization, validation, rate limiting and redacted audit logs; use the existing authoritative database; add truthful readiness checks; create a separate build/deploy workflow and staging service; add contract, integration and tenant-isolation tests.
+Run locally from the repository root with `node apps/tae-api/server.js` (requires root dependencies installed). Default port is 8081; override with `TAE_API_PORT`.
 
-Do not point the live frontend or production hostname at this scaffold.
+Before any staging exposure, implement verified Supabase identity and tenant membership, tenant-scoped repositories/RLS, authorization, rate limiting, audit persistence, schema validation, durable workflow dispatch, and integration tests. Do not point the live frontend or production hostname at this scaffold.
