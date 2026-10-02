@@ -1,0 +1,241 @@
+{
+  "registry_version": "1.0.0",
+  "governor": "AOS-000",
+  "skills": [
+    {
+      "id": "AOS-000",
+      "name": "Agentic OS Platform Governor",
+      "path": "00-governance/AOS-000-platform-governor.md",
+      "strength": "governing",
+      "depends_on": []
+    },
+    {
+      "id": "REP-001",
+      "name": "Repository Governor",
+      "path": "00-governance/REP-001-repository-governor.md",
+      "strength": "governing",
+      "depends_on": [
+        "AOS-000"
+      ]
+    },
+    {
+      "id": "API-001",
+      "name": "API Governor",
+      "path": "00-governance/API-001-api-governor.md",
+      "strength": "governing",
+      "depends_on": [
+        "AOS-000",
+        "SEC-001"
+      ]
+    },
+    {
+      "id": "CORE-001",
+      "name": "Agentic OS Core Runtime",
+      "path": "01-platform/CORE-001-core-runtime.md",
+      "strength": "expert",
+      "depends_on": [
+        "AOS-000"
+      ]
+    },
+    {
+      "id": "STA-001",
+      "name": "Runtime State Machine",
+      "path": "01-platform/STA-001-runtime-state-machine.md",
+      "strength": "expert",
+      "depends_on": [
+        "AOS-000"
+      ]
+    },
+    {
+      "id": "PWA-001",
+      "name": "Progressive Web App Architect",
+      "path": "01-platform/PWA-001-pwa-runtime.md",
+      "strength": "expert",
+      "depends_on": [
+        "AOS-000"
+      ]
+    },
+    {
+      "id": "FRA-001",
+      "name": "Front-End Runtime Architect",
+      "path": "02-frontend/FRA-001-frontend-runtime-architect.md",
+      "strength": "expert",
+      "depends_on": [
+        "AOS-000",
+        "DSA-001",
+        "MOT-001",
+        "GFX-001",
+        "STA-001"
+      ]
+    },
+    {
+      "id": "DSA-001",
+      "name": "Agentic OS Design System Architect",
+      "path": "02-frontend/DSA-001-design-system-architect.md",
+      "strength": "expert",
+      "depends_on": [
+        "AOS-000"
+      ]
+    },
+    {
+      "id": "MOT-001",
+      "name": "Motion and Cinematic Continuity Engine",
+      "path": "02-frontend/MOT-001-motion-cinematic-engine.md",
+      "strength": "expert",
+      "depends_on": [
+        "AOS-000"
+      ]
+    },
+    {
+      "id": "GFX-001",
+      "name": "Living Chrome Graphics System",
+      "path": "02-frontend/GFX-001-living-chrome-renderer.md",
+      "strength": "expert",
+      "depends_on": [
+        "AOS-000"
+      ]
+    },
+    {
+      "id": "UIX-001",
+      "name": "Interaction Experience Engine",
+      "path": "02-frontend/UIX-001-interaction-engine.md",
+      "strength": "expert",
+      "depends_on": [
+        "AOS-000"
+      ]
+    },
+    {
+      "id": "BFF-001",
+      "name": "Backend-for-Frontend Architect",
+      "path": "03-backend/BFF-001-backend-for-frontend.md",
+      "strength": "expert",
+      "depends_on": [
+        "AOS-000",
+        "API-001",
+        "SEC-001",
+        "IDN-001"
+      ]
+    },
+    {
+      "id": "IDN-001",
+      "name": "GID Identity Engine",
+      "path": "03-backend/IDN-001-gid-identity-engine.md",
+      "strength": "expert",
+      "depends_on": [
+        "AOS-000"
+      ]
+    },
+    {
+      "id": "DAT-001",
+      "name": "Data and Synchronization Engine",
+      "path": "03-backend/DAT-001-data-sync-engine.md",
+      "strength": "expert",
+      "depends_on": [
+        "AOS-000"
+      ]
+    },
+    {
+      "id": "SEC-001",
+      "name": "Security Architect",
+      "path": "03-backend/SEC-001-security-architect.md",
+      "strength": "expert",
+      "depends_on": [
+        "AOS-000"
+      ]
+    },
+    {
+      "id": "TAE-001",
+      "name": "TAE Orchestrator",
+      "path": "04-agent-runtime/TAE-001-tae-orchestrator.md",
+      "strength": "expert",
+      "depends_on": [
+        "AOS-000",
+        "AGT-001",
+        "MEM-001",
+        "PLN-001",
+        "API-001"
+      ]
+    },
+    {
+      "id": "AGT-001",
+      "name": "Agent Runtime",
+      "path": "04-agent-runtime/AGT-001-agent-runtime.md",
+      "strength": "expert",
+      "depends_on": [
+        "AOS-000"
+      ]
+    },
+    {
+      "id": "MEM-001",
+      "name": "Memory and Context Engine",
+      "path": "04-agent-runtime/MEM-001-memory-context-engine.md",
+      "strength": "expert",
+      "depends_on": [
+        "AOS-000"
+      ]
+    },
+    {
+      "id": "PLN-001",
+      "name": "Planning and Workflow Engine",
+      "path": "04-agent-runtime/PLN-001-planning-workflow-engine.md",
+      "strength": "expert",
+      "depends_on": [
+        "AOS-000"
+      ]
+    },
+    {
+      "id": "QAT-001",
+      "name": "Quality and Testing Engine",
+      "path": "05-quality/QAT-001-quality-testing-engine.md",
+      "strength": "expert",
+      "depends_on": [
+        "AOS-000"
+      ]
+    },
+    {
+      "id": "OBS-001",
+      "name": "Observability Engine",
+      "path": "05-quality/OBS-001-observability-engine.md",
+      "strength": "expert",
+      "depends_on": [
+        "AOS-000"
+      ]
+    },
+    {
+      "id": "ACC-001",
+      "name": "Accessibility Auditor",
+      "path": "05-quality/ACC-001-accessibility-auditor.md",
+      "strength": "expert",
+      "depends_on": [
+        "AOS-000"
+      ]
+    },
+    {
+      "id": "DEP-001",
+      "name": "Deployment and Release Architect",
+      "path": "06-delivery/DEP-001-deployment-release-architect.md",
+      "strength": "expert",
+      "depends_on": [
+        "AOS-000"
+      ]
+    },
+    {
+      "id": "DOC-001",
+      "name": "Canonical Documentation Engine",
+      "path": "06-delivery/DOC-001-documentation-engine.md",
+      "strength": "expert",
+      "depends_on": [
+        "AOS-000"
+      ]
+    },
+    {
+      "id": "DEV-001",
+      "name": "Developer Experience Engineer",
+      "path": "06-delivery/DEV-001-developer-experience.md",
+      "strength": "expert",
+      "depends_on": [
+        "AOS-000"
+      ]
+    }
+  ]
+}
