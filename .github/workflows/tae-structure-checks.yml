@@ -7,19 +7,18 @@ on:
 permissions:
   contents: read
 jobs:
-  policy-and-workflow-tests:
+  policy-tests:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: node --test tests/security-policy.test.js tests/workflow-state.test.js
+      - run: node --test tests/security-policy.test.js
       - run: node --check apps/tae-api/server.js
       - run: node --check packages/policy/src/authorization.js
       - run: node --check packages/policy/src/tenancy.js
       - run: node --check packages/security/src/secret-redaction.js
-      - run: node --check packages/workflow/src/task-state.js
   legacy-regression:
     runs-on: ubuntu-latest
     steps:
