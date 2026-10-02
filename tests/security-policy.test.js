@@ -24,7 +24,7 @@ test("tenant guard returns matching records", () => {
 });
 test("secret redaction removes bearer tokens and common secret assignments", () => {
   const output = redactSecrets("Authorization: Bearer abc.def_123 api_key=supersecret password: hunter2");
-  assert.doesNotMatch(output, /abc\.def_123|supersecret|hunter2/);
+  assert.doesNotMatch(output, /abc[.]def_123|supersecret|hunter2/);
   assert.match(output, /\[REDACTED\]/);
 });
 test("redaction tolerates non-string input", () => {

@@ -1,11 +1,7 @@
 const TRANSITIONS = Object.freeze({
-  queued: new Set(["running", "cancelled"]),
-  running: new Set(["waiting_approval", "succeeded", "failed", "cancel_requested"]),
-  waiting_approval: new Set(["queued", "cancelled"]),
-  cancel_requested: new Set(["cancelled", "failed"]),
-  succeeded: new Set(),
-  failed: new Set(["queued"]),
-  cancelled: new Set(),
+  queued: new Set(["running", "cancelled"]), running: new Set(["waiting_approval", "succeeded", "failed", "cancel_requested"]),
+  waiting_approval: new Set(["queued", "cancelled"]), cancel_requested: new Set(["cancelled", "failed"]),
+  succeeded: new Set(), failed: new Set(["queued"]), cancelled: new Set(),
 });
 export function canTransitionTask(from, to) { return Boolean(TRANSITIONS[from]?.has(to)); }
 export function transitionTask(task, nextStatus, { expectedVersion, now = new Date().toISOString() } = {}) {
