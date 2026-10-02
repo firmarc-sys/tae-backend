@@ -7,6 +7,7 @@ import Stripe from "stripe";
 import { VertexModelRouter, VERTEX_PROVIDER, modelClassForCapability } from "./vertex-model-router.js";
 import { installThothVoiceRoutes, thothVoiceReadiness } from "./thoth-voice.js";
 import { installJahorinRuntimeRoutes } from "./jahorin-runtime.js";
+import { installJahorinPersistenceRoutes } from "./jahorin-persistence-routes.js";
 import { hasExplicitHumanConfirmation } from "./uae-governance.js";
 import {
   HEYCYAN_DEVICE_LANE,
@@ -810,6 +811,12 @@ installJahorinRuntimeRoutes(api, {
     });
     return { execution_id: executionId, gid, request_id: requestId, ...result };
   },
+});
+
+installJahorinPersistenceRoutes(api, {
+  authorize: requireProviderAccess,
+  supabaseRequest,
+  responseBase,
 });
 
 // Cost protection for consumer guest sessions.
