@@ -67,6 +67,8 @@ export async function resolveRuntimeAuthorization(gid,capability,operation){
 }
 export async function recordRuntimeAuthorizationEvent(event={}) { return recordContinuityEvent(event.gid,"runtime_authorization",event); }
 
+export async function recordTwinEvent(gid, eventType, payload = {}) { return recordContinuityEvent(gid, eventType, payload); }
+
 export async function recordContinuityEvent(gid,eventType,payload={},objective_id=null,request_id=null){
   const rows=await request("/rest/v1/continuity_events",{method:"POST",body:{gid,event_type:eventType,payload,objective_id,request_id}});
   return rows?.[0]||null;
