@@ -26,7 +26,7 @@ test("every capability declares operations and classifies side effects", () => {
 test("catalog filtering is complete and unknown capabilities stay unknown", () => {
   const available = listJahorinCapabilities({ status: "available" });
   const required = listJahorinCapabilities({ status: "adapter_required" });
-  assert.ok(available.length >= 7);
+  assert.ok(available.length >= 9);
   assert.ok(required.length >= 15);
   assert.equal(available.length + required.length, Object.keys(JAHORIN_CAPABILITY_CATALOG).length);
   assert.equal(getJahorinCapability("not.real"), null);
