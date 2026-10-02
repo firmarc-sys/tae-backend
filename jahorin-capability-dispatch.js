@@ -15,6 +15,13 @@ export function capabilityUnavailable(capability, operation) {
 }
 
 const ALIASES = Object.freeze({
+  chat: "system.orchestrate",
+  core: "system.orchestrate",
+  jahorin: "system.orchestrate",
+  "jahorin core": "system.orchestrate",
+  general: "system.orchestrate",
+  text: "system.orchestrate",
+  runtime: "system.orchestrate",
   code: "software.code",
   ptah: "software.code",
   "intent-to-code": "software.code",
