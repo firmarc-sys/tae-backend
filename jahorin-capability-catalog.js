@@ -8,12 +8,12 @@
  */
 export const JAHORIN_CAPABILITY_CATALOG = Object.freeze({
   "system.orchestrate": { label: "Jahorin Core", deity: "Jahorin", adapter: "legacyOrchestrate", status: "available", operations: ["invoke", "plan", "status"], sideEffects: "none" },
-  "web.research": { label: "Interweb", deity: "Wepwawet", adapter: "vertex-grounded-text", status: "available", operations: ["research", "search", "summarize", "compare"], sideEffects: "external-read" },
+  "web.research": { label: "Interweb", deity: "Wepwawet", adapter: "vertex-grounded-text", status: "available", operations: ["research"], sideEffects: "external-read" },
   "software.code": { label: "Intent to Code", deity: "Ptah", adapter: "vertex-code-generation", status: "available", operations: ["generate", "explain", "inspect", "refactor", "debug"], sideEffects: "none" },
-  "documents.scribe": { label: "Scribe", deity: "Thoth", adapter: "vertex-document-generation", status: "available", operations: ["draft", "summarize", "rewrite", "extract", "translate", "ocr"], sideEffects: "none" },
-  "media.image": { label: "Augmented Optics", deity: "Horus", adapter: "vertex-image-generation", status: "available", operations: ["generate", "edit", "analyze"], sideEffects: "none" },
-  "media.audio": { label: "Augmented Audio", deity: "Hathor", adapter: "vertex-audio-generation", status: "available", operations: ["generate", "music", "sound-design"], sideEffects: "none" },
-  "media.video": { label: "Video Studio", deity: "Horus", adapter: "vertex-video-generation", status: "available", operations: ["generate", "storyboard"], sideEffects: "none" },
+  "documents.scribe": { label: "Scribe", deity: "Thoth", adapter: "vertex-document-generation", status: "available", operations: ["draft", "summarize", "rewrite", "extract"], sideEffects: "none" },
+  "media.image": { label: "Augmented Optics", deity: "Horus", adapter: "vertex-image-generation", status: "available", operations: ["generate"], sideEffects: "none" },
+  "media.audio": { label: "Augmented Audio", deity: "Hathor", adapter: "vertex-audio-generation", status: "available", operations: ["generate"], sideEffects: "none" },
+  "media.video": { label: "Video Studio", deity: "Horus", adapter: "vertex-video-generation", status: "available", operations: ["generate"], sideEffects: "none" },
   "files.manage": { label: "Files and Artifacts", deity: "Thoth", adapter: "tenant-file-store", status: "adapter_required", operations: ["create", "read", "update", "list", "delete", "version", "export"], sideEffects: "persistent-write" },
   "documents.ingest": { label: "Document Intelligence", deity: "Thoth", adapter: "document-ingestion", status: "adapter_required", operations: ["ocr", "parse", "classify", "extract", "translate", "redact"], sideEffects: "persistent-write" },
   "compute.code": { label: "Code Execution", deity: "Ptah", adapter: "isolated-code-sandbox", status: "adapter_required", operations: ["run", "test", "build", "lint", "package"], sideEffects: "isolated-compute" },
