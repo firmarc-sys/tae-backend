@@ -1,0 +1,16 @@
+name: Skill adapter continuity contract
+on:
+  pull_request:
+  push:
+    branches: [main, "feat/skill-adapter-tae-continuity-contract"]
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: node --check skill-adapter-runtime.js
+      - run: node --check manifest-runtime-gateway.js
+      - run: node --test tests/skill-adapter-runtime.test.mjs
