@@ -1,0 +1,35 @@
+name: Skill adapter continuity contract
+on:
+  pull_request:
+  push:
+    branches: [main, "feat/skill-adapter-tae-continuity-contract"]
+jobs:
+  contract-and-postgres-integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: tae_test
+          POSTGRES_PASSWORD: tae_test
+          POSTGRES_DB: tae_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tae_test -d tae_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      SKILL_TAE_DATABASE_URL: postgres://tae_test:tae_test@localhost:5432/tae_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci
+      - run: node --check skill-adapter-runtime.js
+      - run: node --check skill-continuity-postgres.js
+      - run: node --check manifest-runtime-gateway.js
+      - run: node --test tests/skill-adapter-runtime.test.mjs tests/skill-continuity-postgres.integration.test.mjs

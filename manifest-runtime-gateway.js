@@ -4,6 +4,9 @@ import net from "node:net";
 import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { createAutonomyRuntime } from "./autonomy-runtime.js";
+import { createSkillAdapterRuntime } from "./skill-adapter-runtime.js";
+import { createPostgresContinuityStore } from "./skill-continuity-postgres.js";
+import { installedSkillAdapters } from "./skill-adapters.js";
 
 const port = Number(process.env.PORT || 8080);
 const innerPort = Number(process.env.ARI_IDENTITY_PORT || 8081);
@@ -16,6 +19,10 @@ const child = spawn(process.execPath,["identity-runtime-gateway.js"],{env:{...pr
 child.on("exit",code=>process.exit(code||1));
 
 const autonomy = createAutonomyRuntime({ innerPort });
+// Fail closed unless a registry and PostgreSQL-backed durable continuity store are configured.
+// The installed probe adapter is deterministic and side-effect-free; production skills remain unverified.
+const skillPersistence = createPostgresContinuityStore();
+const skillRuntime = createSkillAdapterRuntime({ adapters: installedSkillAdapters, persistence: skillPersistence });
 const rid=req=>String(req.headers["x-request-id"]||crypto.randomUUID());
 function json(res,status,body,id){const data=Buffer.from(JSON.stringify(body));res.writeHead(status,{"content-type":"application/json; charset=utf-8","content-length":String(data.length),"cache-control":"no-store","x-runtime":"ARI",...(id?{"x-request-id":id}:{})});res.end(data)}
 function read(req,cap=12*1024*1024){return new Promise((resolve,reject)=>{const a=[];let n=0;req.on("data",c=>{n+=c.length;if(n>cap){reject(Object.assign(new Error("request body too large"),{status:413}));req.destroy();return}a.push(c)});req.on("end",()=>resolve(Buffer.concat(a)));req.on("error",reject)})}
@@ -44,6 +51,7 @@ async function handle(req,res){
   const id=rid(req),url=new URL(req.url||"/","http://localhost"),runtime=req.method==="POST"&&(url.pathname==="/api/runtime"||url.pathname==="/runtime"),autonomyRoute=autonomy.matches(url.pathname);
   if(!url.pathname.startsWith("/api/")&&url.pathname!=="/runtime"&&!autonomyRoute){const u=http.request({hostname:"127.0.0.1",port:innerPort,path:req.url,method:req.method,headers:{...req.headers,host:`127.0.0.1:${innerPort}`}},r=>{res.writeHead(r.statusCode||502,r.headers);r.pipe(res)});u.on("error",e=>json(res,503,err(503,{error:e.message},id),id));req.pipe(u);return}
   let raw;try{raw=await read(req)}catch(e){return json(res,e.status||400,err(e.status||400,{error:e.message},id),id)}
+  if(skillRuntime.matches(url.pathname)) { const handled = await skillRuntime.handle(req,res,{pathname:url.pathname,raw,requestId:id}); if(handled !== false) return; }
   if(autonomyRoute)return autonomy.handle(req,res,{pathname:url.pathname,raw,requestId:id});
   if(runtime){if(!allowed(req))return json(res,429,err(429,{error:"Free runtime request limit reached for this hour."},id),id);let b={};try{b=raw.length?JSON.parse(raw.toString("utf8")): {}}catch{return json(res,400,err(400,{error:"Invalid JSON body."},id),id)}const c=String(b?.capability||"").trim().toLowerCase(),auto=b?.context?.auto_route===true||b?.payload?.auto_route===true;if(!c||auto||["intent","orchestration","orchestrate","trismegistus","jahorin"].includes(c))return manifest(req,res,b,id)}
   return proxy(req,res,raw,id)
