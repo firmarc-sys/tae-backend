@@ -13,7 +13,18 @@ CREATE TABLE IF NOT EXISTS public.tae_skill_continuity (
 );
 CREATE INDEX IF NOT EXISTS tae_skill_continuity_session_idx
   ON public.tae_skill_continuity (gid, session_id, created_at);
--- Server-side service role only. Never expose this table through a browser client.
 ALTER TABLE public.tae_skill_continuity ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON public.tae_skill_continuity FROM anon, authenticated;
-GRANT SELECT, INSERT ON public.tae_skill_continuity TO service_role;
+REVOKE ALL ON public.tae_skill_continuity FROM PUBLIC;
+-- Supabase roles exist only on Supabase; keep the migration usable with isolated vanilla PostgreSQL CI.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+    EXECUTE 'REVOKE ALL ON public.tae_skill_continuity FROM anon';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+    EXECUTE 'REVOKE ALL ON public.tae_skill_continuity FROM authenticated';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+    EXECUTE 'GRANT SELECT, INSERT ON public.tae_skill_continuity TO service_role';
+  END IF;
+END $$;
