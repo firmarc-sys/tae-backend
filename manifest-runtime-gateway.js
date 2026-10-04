@@ -5,6 +5,8 @@ import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { createAutonomyRuntime } from "./autonomy-runtime.js";
 import { createSkillAdapterRuntime } from "./skill-adapter-runtime.js";
+import { createPostgresContinuityStore } from "./skill-continuity-postgres.js";
+import { installedSkillAdapters } from "./skill-adapters.js";
 
 const port = Number(process.env.PORT || 8080);
 const innerPort = Number(process.env.ARI_IDENTITY_PORT || 8081);
@@ -17,9 +19,10 @@ const child = spawn(process.execPath,["identity-runtime-gateway.js"],{env:{...pr
 child.on("exit",code=>process.exit(code||1));
 
 const autonomy = createAutonomyRuntime({ innerPort });
-// Fail closed until a tenant-scoped durable TAE persistence adapter and verified
-// skill adapters are explicitly installed by the server deployment configuration.
-const skillRuntime = createSkillAdapterRuntime({ adapters: new Map(), persistence: null });
+// Fail closed unless a registry and PostgreSQL-backed durable continuity store are configured.
+// The installed probe adapter is deterministic and side-effect-free; production skills remain unverified.
+const skillPersistence = createPostgresContinuityStore();
+const skillRuntime = createSkillAdapterRuntime({ adapters: installedSkillAdapters, persistence: skillPersistence });
 const rid=req=>String(req.headers["x-request-id"]||crypto.randomUUID());
 function json(res,status,body,id){const data=Buffer.from(JSON.stringify(body));res.writeHead(status,{"content-type":"application/json; charset=utf-8","content-length":String(data.length),"cache-control":"no-store","x-runtime":"ARI",...(id?{"x-request-id":id}:{})});res.end(data)}
 function read(req,cap=12*1024*1024){return new Promise((resolve,reject)=>{const a=[];let n=0;req.on("data",c=>{n+=c.length;if(n>cap){reject(Object.assign(new Error("request body too large"),{status:413}));req.destroy();return}a.push(c)});req.on("end",()=>resolve(Buffer.concat(a)));req.on("error",reject)})}
