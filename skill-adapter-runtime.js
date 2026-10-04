@@ -50,6 +50,7 @@ export function createSkillAdapterRuntime({ registryPath = process.env.JAHORIN_S
     }
     if (req.method!=="GET") return send(405,{ok:false,error:"GET required",code:"METHOD_NOT_ALLOWED"});
     if (cm[1]!==identity.session_id) return send(403,{ok:false,error:"Session does not belong to authenticated identity",code:"SESSION_SCOPE_MISMATCH"});
+    if (!identity.permissions.includes("tae:read")) return send(403,{ok:false,error:"TAE read permission denied",code:"PERMISSION_DENIED"});
     if (!persistence || typeof persistence.readSession!=="function") return send(503,{ok:false,error:"Durable TAE persistence is not configured",code:"PERSISTENCE_UNAVAILABLE"});
     try { return send(200,{ok:true,durable:true,schema_version:1,records:await persistence.readSession({gid:identity.gid,session_id:identity.session_id})}); }
     catch { return send(503,{ok:false,error:"TAE continuity read failed",code:"PERSISTENCE_READ_FAILED"}); }
