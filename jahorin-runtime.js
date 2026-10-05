@@ -184,7 +184,7 @@ export function installJahorinRuntimeRoutes(api, {
       delete metadata.profile;
       await supabaseRequest(`/rest/v1/jahorin_accounts?gid=eq.${encodeURIComponent(gid)}`, {
         method: "PATCH", service: true, prefer: "return=minimal",
-        body: { metadata, updated_at: now() },
+        body: { metadata, display_name: null, updated_at: now() },
       });
       return res.json(responseBase({ gid, deleted: true }));
     } catch (error) {
