@@ -1,4 +1,6 @@
 import "dotenv/config";
+import { trustedGidFromUser, setTrustedGid } from "./trusted-gid.js";
+import { gidForAuthUser } from "./supabase-runtime-store.js";
 import crypto from "node:crypto";
 import express from "express";
 import cors from "cors";
@@ -130,7 +132,7 @@ app.use((req, res, next) => {
 function responseBase(extra = {}) {
   return {
     ok: true,
-    gid: OWNER_GID,
+    gid: null,
     mode: OWNER_MODE,
     market_category: SIAAS_MARKET_CATEGORY,
     timestamp: new Date().toISOString(),
@@ -210,7 +212,7 @@ function renderState(state = "idle") {
     runtime: "Mercury",
     state,
     alive: true,
-    gid: OWNER_GID,
+    gid: null,
     mode: OWNER_MODE,
     timestamp_ms: Date.now(),
   };
@@ -281,6 +283,16 @@ async function supabaseUserFromToken(token) {
   return user;
 }
 
+async function bindMemberGid(user) {
+  const gid = await gidForAuthUser(user);
+  // Mirror to server-only app_metadata so gateways that only see the Supabase user agree on the GID.
+  if (trustedGidFromUser(user) !== gid) {
+    await setTrustedGid({ supabaseUrl, serverKey: supabaseServerKey, userId: user.id, gid })
+      .catch((error) => console.error("ARI app_metadata GID mirror failed", error?.message));
+  }
+  return gid;
+}
+
 async function authenticatedPrincipal(req) {
   if (sessionGid(req) === OWNER_GID) {
     return {
@@ -295,11 +307,12 @@ async function authenticatedPrincipal(req) {
 
   const token = bearerToken(req);
   const user = await supabaseUserFromToken(token);
+  const gid = await bindMemberGid(user);
   return {
     kind: "user",
     id: user.id,
     email: user.email || null,
-    gid: user.user_metadata?.gid || null,
+    gid,
     tier: null,
     accessToken: token,
     user,
@@ -671,7 +684,7 @@ async function withProviderRetry(operation, attempts = 3) {
   throw lastError;
 }
 
-async function generateWithGoogle({ prompt, systemInstruction, temperature = 0.7, image = null, groundWithSearch = false, capability = "jahorin" }) {
+async function generateWithGoogle({ prompt, systemInstruction, temperature = 0.7, image = null, groundWithSearch = false, capability = "jahorin", requestId = null }) {
   const router = requireProvider();
   const contents = image ? [{ role: "user", parts: [{ text: prompt }, { inlineData: { mimeType: image.mimeType, data: image.data } }] }] : prompt;
   const deepSearch = groundWithSearch || deepSearchRequested(prompt);
@@ -682,7 +695,7 @@ async function generateWithGoogle({ prompt, systemInstruction, temperature = 0.7
     ...(deepSearch ? { tools: [{ googleSearch: {} }] } : {}),
   };
   const modelClass = modelClassForCapability(capability, { image: Boolean(image), deepSearch });
-  const routed = await router.generateContent({ modelClass, contents, config });
+  const routed = await router.generateContent({ modelClass, contents, config, context: { requestId } });
   const response = routed.response;
   const text = String(response.text || "").trim();
   if (!text) throw httpError(502, "Google Vertex AI returned no generated text.");
@@ -695,6 +708,8 @@ async function generateWithGoogle({ prompt, systemInstruction, temperature = 0.7
     location: routed.location,
     fallback_used: routed.fallbackUsed,
     attempted_models: routed.attempted,
+    fallback_reason: routed.metadata?.fallbackReason || null,
+    observability: routed.metadata || null,
     tokens: response.usageMetadata?.totalTokenCount ?? null,
     usage: response.usageMetadata || null,
     media_input: image ? { type: "image", mime_type: image.mimeType, bytes: image.bytes } : null,
@@ -863,7 +878,7 @@ api.get("/ready", async (_req, res) => {
 api.get("/identity", async (req, res) => {
   const gid = sessionGid(req);
   if (gid === OWNER_GID) {
-    return res.json(responseBase({ authenticated: true, identity_scope: "prime", clearance: OWNER_MODE, tier: "owner", entitlements: ["*"] }));
+    return res.json(responseBase({ gid: OWNER_GID, authenticated: true, identity_scope: "prime", clearance: OWNER_MODE, tier: "owner", entitlements: ["*"] }));
   }
   if (gid) {
     return res.json(responseBase({ gid, mode: "consumer", authenticated: true, identity_scope: "consumer", clearance: "member", tier: "free", entitlements: TIER_CONFIG.free.entitlements }));
@@ -876,7 +891,7 @@ api.get("/identity", async (req, res) => {
       const subscription = await ensureFreeSubscription(user.id);
       return res.json(
         responseBase({
-          gid: user.user_metadata?.gid || null,
+          gid: await bindMemberGid(user),
           mode: "member",
           authenticated: true,
           identity_scope: "member",
@@ -936,7 +951,7 @@ api.post("/identity/session", (req, res, next) => {
       "Set-Cookie",
       `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; Max-Age=${Math.max(60, expires - Math.floor(Date.now() / 1000))}; HttpOnly; Secure; SameSite=Strict`,
     );
-    res.json(responseBase({ authenticated: true, expires, tier: "owner", entitlements: ["*"] }));
+    res.json(responseBase({ gid: OWNER_GID, authenticated: true, expires, tier: "owner", entitlements: ["*"] }));
   } catch (error) {
     next(error);
   }
@@ -978,13 +993,19 @@ api.post("/auth/signup", async (req, res, next) => {
       body: {
         email,
         password,
-        data: { ...(displayName ? { display_name: displayName } : {}), gid: generateMemberGid() },
+        data: { ...(displayName ? { display_name: displayName } : {}) },
       },
     });
-    if (result?.user?.id) await ensureFreeSubscription(result.user.id);
+    let gid = null;
+    if (result?.user?.id) {
+      // Supabase returns an obfuscated, non-existent user for duplicate signups; binding fails and must not reveal that.
+      gid = await bindMemberGid(result.user).catch(() => null);
+      await ensureFreeSubscription(result.user.id);
+    }
     res.status(201).json({
       ok: true,
-      user: result?.user || null,
+      gid,
+      user: result?.user ? { ...result.user, app_metadata: { ...(result.user.app_metadata || {}), ...(gid ? { gid } : {}) } } : null,
       access_token: result?.access_token || null,
       refresh_token: result?.refresh_token || null,
       expires_in: result?.expires_in || null,
@@ -1039,7 +1060,7 @@ api.post("/auth/refresh", async (req, res, next) => {
 api.get("/auth/me", async (req, res, next) => {
   try {
     const principal = await authenticatedPrincipal(req);
-    if (principal.kind === "owner") return res.json(responseBase({ authenticated: true, tier: "owner", entitlements: ["*"] }));
+    if (principal.kind === "owner") return res.json(responseBase({ gid: OWNER_GID, authenticated: true, tier: "owner", entitlements: ["*"] }));
     const subscription = await ensureFreeSubscription(principal.id);
     res.json({
       ok: true,
@@ -1147,6 +1168,7 @@ api.get("/render-state", async (req, res, next) => {
 
 api.post("/render-state", async (req, res, next) => {
   try {
+    await requireProviderAccess(req);
     const runtime = await mercuryRequest("/api/render-state", {
       method: "POST",
       requestId: req.requestId,
@@ -1226,6 +1248,7 @@ api.get("/syncori", async (req, res, next) => {
 
 api.post("/syncori", async (req, res, next) => {
   try {
+    await requireProviderAccess(req);
     const runtime = await orchestrateWithMercury(req, {
       capability: "syncori",
       intent: String(req.body?.action || "update SYNCORI state"),
@@ -1251,7 +1274,8 @@ api.post("/tae", async (req, res, next) => {
   try {
     const prompt = String(req.body?.prompt || req.body?.command || "").trim();
     if (!prompt) return res.status(422).json({ ok: false, error: "prompt is required", request_id: req.requestId });
-    await requireProviderAccess(req);
+    const taePrincipal = await requireProviderAccess(req);
+    const callerGid = taePrincipal?.gid || null;
 
     if (prompt.replace(/\.$/, "").toLowerCase() === DEMO_PHRASE.toLowerCase()) {
       const runtime = await mercuryRequest("/api/tae", {
@@ -1261,6 +1285,7 @@ api.post("/tae", async (req, res, next) => {
       });
       return res.json(
         responseBase({
+          gid: callerGid,
           request_id: req.body?.request_id || req.requestId,
           demo: true,
           message: runtime.message || CANONICAL_LINE,
@@ -1293,6 +1318,7 @@ api.post("/tae", async (req, res, next) => {
             },
           });
       return res.json(responseBase({
+        gid: callerGid,
         request_id: req.body?.request_id || req.requestId,
         manifest,
         orchestration: runtime.orchestration,
@@ -1329,6 +1355,7 @@ api.post("/tae", async (req, res, next) => {
     await requireProviderAccess(req);
     const result = await generateWithGoogle({
       prompt,
+      requestId: req.body?.request_id || req.requestId,
       capability: deepSearch ? "interweb" : "tae",
       systemInstruction:
         "You are TAE, the Timeline Augmentation and orchestration intelligence inside Agentic Mercury Time Runner. Coordinate the user request clearly and return useful production-grade results.",
@@ -1338,6 +1365,7 @@ api.post("/tae", async (req, res, next) => {
 
     res.json(
       responseBase({
+        gid: callerGid,
         request_id: req.body?.request_id || req.requestId,
         orchestration: runtime.orchestration,
         render_state: runtime.renderState,
@@ -1354,7 +1382,8 @@ api.post("/tae", async (req, res, next) => {
     } : {}),
   },
   deepsearch: result.deepsearch,
-        provider: { name: result.provider, model: result.model, model_class: result.model_class, lifecycle: result.model_lifecycle, location: result.location, fallback_used: result.fallback_used, attempted_models: result.attempted_models },
+        provider: { name: result.provider, model: result.model, model_class: result.model_class, lifecycle: result.model_lifecycle, location: result.location, fallback_used: result.fallback_used, fallback_reason: result.fallback_reason, attempted_models: result.attempted_models },
+        observability: result.observability,
       }),
     );
   } catch (error) {
@@ -1370,7 +1399,8 @@ api.post("/runtime", async (req, res, next) => {
     const manifest = inferManifest(intent, requestedCapability, req.body?.context || {});
     const capability = manifest.capability;
     const inlineImage = normalizeInlineImage(req.body?.payload || {});
-    await requireProviderAccess(req);
+    const runtimePrincipal = await requireProviderAccess(req);
+    const callerGid = runtimePrincipal?.gid || null;
 
     if (manifest.device_lane?.id === "heycyan" && !inlineImage) {
       const operation = manifest.device_lane.operation;
@@ -1390,6 +1420,7 @@ api.post("/runtime", async (req, res, next) => {
             payload: { device_lane: "heycyan", operation, proposal_only: true },
           });
       return res.json(responseBase({
+        gid: callerGid,
         request_id: requestId,
         manifest,
         capability: manifest.capability,
@@ -1428,6 +1459,7 @@ api.post("/runtime", async (req, res, next) => {
       await requireProviderAccess(req);
       const result = await generateWithGoogle({
         prompt: providerPrompt,
+        requestId,
         capability,
         image: inlineImage,
         systemInstruction:
@@ -1436,31 +1468,34 @@ api.post("/runtime", async (req, res, next) => {
       });
       return res.json(
         responseBase({
+          gid: callerGid,
           request_id: requestId,
           manifest, capability: manifest.capability, page: manifest.page, confidence: manifest.confidence, reason: manifest.reason, requires_confirmation: manifest.requires_confirmation,
           orchestration,
           render_state: runtime.renderState,
-          result: { text: result.text, model: result.model, model_class: result.model_class, model_lifecycle: result.model_lifecycle, provider: result.provider, location: result.location, fallback_used: result.fallback_used, tokens: result.tokens, media_input: result.media_input },
-          provider: { name: result.provider, model: result.model, model_class: result.model_class, lifecycle: result.model_lifecycle, location: result.location, fallback_used: result.fallback_used, attempted_models: result.attempted_models },
+          result: { text: result.text, model: result.model, model_class: result.model_class, model_lifecycle: result.model_lifecycle, provider: result.provider, location: result.location, fallback_used: result.fallback_used, fallback_reason: result.fallback_reason, tokens: result.tokens, media_input: result.media_input },
+          observability: result.observability,
+          provider: { name: result.provider, model: result.model, model_class: result.model_class, lifecycle: result.model_lifecycle, location: result.location, fallback_used: result.fallback_used, fallback_reason: result.fallback_reason, attempted_models: result.attempted_models },
+        observability: result.observability,
         }),
       );
     }
 
     if (capability === "identity") {
       const authenticated = sessionGid(req) === OWNER_GID;
-      return res.json(responseBase({ request_id: requestId, manifest, capability: manifest.capability, page: manifest.page, confidence: manifest.confidence, reason: manifest.reason, requires_confirmation: manifest.requires_confirmation, orchestration, render_state: runtime.renderState, result: { gid: authenticated ? OWNER_GID : null, mode: authenticated ? OWNER_MODE : "public", authenticated } }));
+      return res.json(responseBase({ gid: callerGid, request_id: requestId, manifest, capability: manifest.capability, page: manifest.page, confidence: manifest.confidence, reason: manifest.reason, requires_confirmation: manifest.requires_confirmation, orchestration, render_state: runtime.renderState, result: { gid: authenticated ? OWNER_GID : null, mode: authenticated ? OWNER_MODE : "public", authenticated } }));
     }
     if (capability === "syncori") {
-      return res.json(responseBase({ request_id: requestId, manifest, capability: manifest.capability, page: manifest.page, confidence: manifest.confidence, reason: manifest.reason, requires_confirmation: manifest.requires_confirmation, orchestration, render_state: runtime.renderState, result: { status: "online", engine: "SYNCORI Infinite Audio" } }));
+      return res.json(responseBase({ gid: callerGid, request_id: requestId, manifest, capability: manifest.capability, page: manifest.page, confidence: manifest.confidence, reason: manifest.reason, requires_confirmation: manifest.requires_confirmation, orchestration, render_state: runtime.renderState, result: { status: "online", engine: "SYNCORI Infinite Audio" } }));
     }
     if (capability === "iot") {
-      return res.json(responseBase({ request_id: requestId, manifest, capability: manifest.capability, page: manifest.page, confidence: manifest.confidence, reason: manifest.reason, requires_confirmation: manifest.requires_confirmation, orchestration, render_state: runtime.renderState, result: { status: "companion_required", execution: "android_companion_required", executed: false, devices: [], policy_version: HEYCYAN_POLICY_VERSION } }));
+      return res.json(responseBase({ gid: callerGid, request_id: requestId, manifest, capability: manifest.capability, page: manifest.page, confidence: manifest.confidence, reason: manifest.reason, requires_confirmation: manifest.requires_confirmation, orchestration, render_state: runtime.renderState, result: { status: "companion_required", execution: "android_companion_required", executed: false, devices: [], policy_version: HEYCYAN_POLICY_VERSION } }));
     }
     if (["tae", "demo"].includes(capability) && intent.replace(/\.$/, "").toLowerCase() === DEMO_PHRASE.toLowerCase()) {
-      return res.json(responseBase({ request_id: requestId, manifest, capability: manifest.capability, page: manifest.page, confidence: manifest.confidence, reason: manifest.reason, requires_confirmation: manifest.requires_confirmation, orchestration, render_state: runtime.renderState, result: { demo: true, message: CANONICAL_LINE } }));
+      return res.json(responseBase({ gid: callerGid, request_id: requestId, manifest, capability: manifest.capability, page: manifest.page, confidence: manifest.confidence, reason: manifest.reason, requires_confirmation: manifest.requires_confirmation, orchestration, render_state: runtime.renderState, result: { demo: true, message: CANONICAL_LINE } }));
     }
 
-    return res.json(responseBase({ request_id: requestId, manifest, capability: manifest.capability, page: manifest.page, confidence: manifest.confidence, reason: manifest.reason, requires_confirmation: manifest.requires_confirmation, orchestration, render_state: runtime.renderState, result: { accepted: true, execution: orchestration.execution || "local-runtime" } }));
+    return res.json(responseBase({ gid: callerGid, request_id: requestId, manifest, capability: manifest.capability, page: manifest.page, confidence: manifest.confidence, reason: manifest.reason, requires_confirmation: manifest.requires_confirmation, orchestration, render_state: runtime.renderState, result: { accepted: true, execution: orchestration.execution || "local-runtime" } }));
   } catch (error) {
     next(error);
   }
@@ -1483,6 +1518,7 @@ api.post("/generate", async (req, res, next) => {
     await requireProviderAccess(req);
     const result = await generateWithGoogle({
       prompt,
+      requestId: req.requestId,
       capability: String(req.body?.type || "scribe"),
       image: inlineImage,
       systemInstruction:
@@ -1490,7 +1526,7 @@ api.post("/generate", async (req, res, next) => {
         "You are Jahorin inside Agentic Mercury Time Runner. Produce useful, original, polished content that directly fulfills the user's request.",
       temperature: req.body?.temperature,
     });
-    res.json(responseBase({ type: String(req.body?.type || "text"), orchestration: runtime.orchestration, render_state: runtime.renderState, output: result.text, model: result.model, model_class: result.model_class, model_lifecycle: result.model_lifecycle, provider: result.provider, location: result.location, fallback_used: result.fallback_used, attempted_models: result.attempted_models, usage: result.usage, media_input: result.media_input }));
+    res.json(responseBase({ type: String(req.body?.type || "text"), orchestration: runtime.orchestration, render_state: runtime.renderState, output: result.text, model: result.model, model_class: result.model_class, model_lifecycle: result.model_lifecycle, provider: result.provider, location: result.location, fallback_used: result.fallback_used, attempted_models: result.attempted_models, fallback_reason: result.fallback_reason, observability: result.observability, usage: result.usage, media_input: result.media_input }));
   } catch (error) {
     next(error);
   }
@@ -1500,13 +1536,36 @@ api.get("/models", (_req, res) => {
   res.json(responseBase({ provider: VERTEX_PROVIDER, provider_boundary: "VERTEX_AI_ONLY", project: vertexProject, location: vertexLocation, models: vertexRouter.manifest() }));
 });
 
+api.post("/maat/substitution-proof", async (req, res, next) => {
+  try {
+    const principal = await requireProviderAccess(req);
+    if (principal?.kind !== "owner") throw httpError(403, "Prime Orchestrator authority required for Ma'at substitution proof");
+    const capability = String(req.body?.capability || "GENERAL_REASONING").trim().toUpperCase();
+    const expectedModel = vertexRouter.primaryModel(capability);
+    const routed = await vertexRouter.generateContent({
+      modelClass: capability,
+      contents: "Return exactly: Vertex fallback proof.",
+      config: { maxOutputTokens: 64 },
+      requirements: { disabledModels: [expectedModel] },
+      context: { requestId: req.requestId, correlationId: req.requestId },
+    });
+    if (!routed.fallbackUsed || routed.model === expectedModel) throw httpError(502, "Ma'at substitution proof did not leave the declared primary");
+    res.json(responseBase({
+      request_id: req.requestId,
+      proof_text: String(routed.response?.text || "").trim(),
+      provider: { name: routed.provider, expected_model: expectedModel, model: routed.model, lifecycle: routed.lifecycle, model_class: routed.modelClass, location: routed.location, fallback_used: routed.fallbackUsed, fallback_reason: routed.metadata?.fallbackReason || null, attempted_models: routed.attempted, rejected_models: routed.metadata?.rejectedModels || [] },
+      observability: routed.metadata || null,
+    }));
+  } catch (error) { next(error); }
+});
+
 api.post("/image", async (req, res, next) => {
   try {
     await requireProviderAccess(req);
     const prompt = String(req.body?.prompt || "").trim();
     if (!prompt) throw httpError(422, "prompt is required");
-    const result = await vertexRouter.generateImage({ prompt });
-    res.json(responseBase({ request_id: req.requestId, type: "image", provider: { name: result.provider, model: result.model, lifecycle: result.lifecycle, model_class: result.modelClass, location: result.location }, asset: { mime_type: result.mimeType, data: result.data }, text: result.text }));
+    const result = await vertexRouter.generateImage({ prompt, context: { requestId: req.requestId } });
+    res.json(responseBase({ request_id: req.requestId, type: "image", provider: { name: result.provider, model: result.model, lifecycle: result.lifecycle, model_class: result.modelClass, location: result.location, fallback_used: result.fallbackUsed, fallback_reason: result.metadata?.fallbackReason || null, attempted_models: result.attempted }, observability: result.metadata || null, asset: { mime_type: result.mimeType, data: result.data }, text: result.text }));
   } catch (error) { next(error); }
 });
 
@@ -1515,8 +1574,8 @@ api.post("/video", async (req, res, next) => {
     await requireProviderAccess(req);
     const prompt = String(req.body?.prompt || "").trim();
     if (!prompt) throw httpError(422, "prompt is required");
-    const result = await vertexRouter.generateVideo({ prompt, aspectRatio: String(req.body?.aspect_ratio || "16:9"), durationSeconds: Number(req.body?.duration_seconds || 8) });
-    res.json(responseBase({ request_id: req.requestId, type: "video", provider: { name: result.provider, model: result.model, lifecycle: result.lifecycle, model_class: result.modelClass, location: result.location, fallback_used: result.fallbackUsed, attempted_models: result.attempted }, asset: result.video }));
+    const result = await vertexRouter.generateVideo({ prompt, aspectRatio: String(req.body?.aspect_ratio || "16:9"), durationSeconds: Number(req.body?.duration_seconds || 8), context: { requestId: req.requestId } });
+    res.json(responseBase({ request_id: req.requestId, type: "video", provider: { name: result.provider, model: result.model, lifecycle: result.lifecycle, model_class: result.modelClass, location: result.location, fallback_used: result.fallbackUsed, attempted_models: result.attempted, fallback_reason: result.metadata?.fallbackReason || null }, observability: result.metadata || null, asset: result.video }));
   } catch (error) { next(error); }
 });
 
@@ -1525,8 +1584,8 @@ api.post("/audio", async (req, res, next) => {
     await requireProviderAccess(req);
     const prompt = String(req.body?.prompt || "").trim();
     if (!prompt) throw httpError(422, "prompt is required");
-    const result = await vertexRouter.generateAudio({ prompt });
-    res.json(responseBase({ request_id: req.requestId, type: "audio", provider: { name: result.provider, model: result.model, lifecycle: result.lifecycle, model_class: result.modelClass, location: result.location, fallback_used: result.fallbackUsed, attempted_models: result.attempted }, asset: { mime_type: result.mimeType, data: result.data }, outputs: result.outputs }));
+    const result = await vertexRouter.generateAudio({ prompt, context: { requestId: req.requestId } });
+    res.json(responseBase({ request_id: req.requestId, type: "audio", provider: { name: result.provider, model: result.model, lifecycle: result.lifecycle, model_class: result.modelClass, location: result.location, fallback_used: result.fallbackUsed, attempted_models: result.attempted, fallback_reason: result.metadata?.fallbackReason || null }, observability: result.metadata || null, asset: { mime_type: result.mimeType, data: result.data }, outputs: result.outputs }));
   } catch (error) { next(error); }
 });
 
@@ -1535,8 +1594,8 @@ api.post("/embeddings", async (req, res, next) => {
     await requireProviderAccess(req);
     const content = String(req.body?.content || req.body?.text || "").trim();
     if (!content) throw httpError(422, "content is required");
-    const result = await vertexRouter.embed({ content });
-    res.json(responseBase({ request_id: req.requestId, type: "embedding", provider: { name: result.provider, model: result.model, lifecycle: result.lifecycle, model_class: result.modelClass, location: result.location, fallback_used: result.fallbackUsed, attempted_models: result.attempted }, embeddings: result.embeddings }));
+    const result = await vertexRouter.embed({ content, context: { requestId: req.requestId } });
+    res.json(responseBase({ request_id: req.requestId, type: "embedding", provider: { name: result.provider, model: result.model, lifecycle: result.lifecycle, model_class: result.modelClass, location: result.location, fallback_used: result.fallbackUsed, attempted_models: result.attempted, fallback_reason: result.metadata?.fallbackReason || null }, observability: result.metadata || null, embeddings: result.embeddings }));
   } catch (error) { next(error); }
 });
 

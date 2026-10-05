@@ -30,18 +30,40 @@ export const neonConfigured = configured;
 export const supabaseConfigured = configured;
 export async function neonHealth() { if (!configured) return false; try { await request("/rest/v1/gid?select=gid&limit=1"); return true; } catch { return false; } }
 
+const OWNER_GID = "399152573423";
+function mintMemberGid() {
+  let gid;
+  do { gid = String(crypto.randomInt(100000000000, 1000000000000)); } while (gid === OWNER_GID);
+  return gid;
+}
+// public.gid (auth_user_id -> gid, service-role writable only) is the single authority for member GIDs.
+export async function gidForAuthUser(user) {
+  requireConfig();
+  if (!user?.id) throw Object.assign(new Error("Authenticated user required"), {status:401});
+  const lookup = async () => (await request(`/rest/v1/gid?auth_user_id=eq.${q(user.id)}&select=gid&limit=1`))?.[0]?.gid || null;
+  const existing = await lookup();
+  if (existing) return String(existing);
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const gid = mintMemberGid();
+    try {
+      await request("/rest/v1/gid",{method:"POST",body:{gid,auth_user_id:user.id}});
+    } catch (error) {
+      if (error.status !== 409) throw error;
+      const raced = await lookup();
+      if (raced) return String(raced);
+      continue;
+    }
+    await ensureNeonIdentity({gid,authUserId:user.id,identityScope:"consumer",displayName:user.user_metadata?.display_name || null});
+    return gid;
+  }
+  throw Object.assign(new Error("Unable to allocate a member GID"), {status:503});
+}
 export async function resolveAuthenticatedGid(accessToken) {
   requireConfig();
   if (!accessToken) throw Object.assign(new Error("Authenticated Supabase access token required"), {status:401});
   const users = await fetch(baseUrl + "/auth/v1/user", {headers:{apikey:secretKey,Authorization:`Bearer ${accessToken}`},signal:AbortSignal.timeout(10000)});
   if (!users.ok) throw Object.assign(new Error("Invalid or expired Supabase access token"), {status:401});
-  const user = await users.json();
-  const rows = await request(`/rest/v1/gid?auth_user_id=eq.${q(user.id)}&select=gid&limit=1`);
-  if (rows?.[0]?.gid) return String(rows[0].gid);
-  const gid = crypto.randomUUID().replace(/-/g,"").slice(0,12);
-  await request("/rest/v1/gid",{method:"POST",body:{gid,auth_user_id:user.id}});
-  await ensureNeonIdentity({gid,authUserId:user.id,identityScope:"consumer",displayName:user.user_metadata?.display_name || null});
-  return gid;
+  return gidForAuthUser(await users.json());
 }
 export async function ensureNeonIdentity({gid,authUserId=null,identityScope="consumer",displayName=null}) {
   if (!gid) throw Object.assign(new Error("gid is required"),{status:400});
@@ -67,6 +89,7 @@ export async function resolveRuntimeAuthorization(gid,capability,operation){
 }
 export async function recordRuntimeAuthorizationEvent(event={}) { return recordContinuityEvent(event.gid,"runtime_authorization",event); }
 
+export async function recordTwinEvent(gid,eventType,payload={}){return recordContinuityEvent(gid,eventType,payload);}
 export async function recordContinuityEvent(gid,eventType,payload={},objective_id=null,request_id=null){
   const rows=await request("/rest/v1/continuity_events",{method:"POST",body:{gid,event_type:eventType,payload,objective_id,request_id}});
   return rows?.[0]||null;

@@ -144,7 +144,7 @@ export function installJahorinRuntimeRoutes(api, {
       if (!gid) throw httpError(401, "Authenticated GID required", "AUTH_REQUIRED");
       const execution = await loadExecution({ supabaseRequest, gid, executionId: req.params.id });
       if (!execution) throw httpError(404, "Execution not found", "EXECUTION_NOT_FOUND");
-      if (TERMINAL_STATES.has(execution.state)) return res.json(responseBase({ execution }));
+      if (TERMINAL_STATES.has(execution.state)) return res.json(responseBase({ gid, execution }));
 
       const updated = await setExecution({
         supabaseRequest,
@@ -154,6 +154,22 @@ export function installJahorinRuntimeRoutes(api, {
       });
       await writeEvent({ supabaseRequest, gid, executionId: req.params.id, type: "execution.cancel_requested", payload: {}, requestId: req.requestId });
       return res.json(responseBase({ gid, execution: updated }));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  api.get("/runtime/executions", async (req, res, next) => {
+    try {
+      const principal = await authorize(req);
+      const gid = String(principal?.gid || "").trim();
+      if (!gid) throw httpError(401, "Authenticated GID required", "AUTH_REQUIRED");
+      const limit = Math.min(100, Math.max(1, Number.parseInt(String(req.query?.limit || "25"), 10) || 25));
+      const rows = await supabaseRequest(
+        `/rest/v1/jahorin_executions?gid=eq.${encodeURIComponent(gid)}&select=id,gid,capability,intent,state,request_id,error,started_at,completed_at,created_at,updated_at&order=created_at.desc&limit=${limit}`,
+        { service: true },
+      );
+      return res.json(responseBase({ gid, executions: Array.isArray(rows) ? rows : [] }));
     } catch (error) {
       next(error);
     }

@@ -5,6 +5,7 @@ import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { Pool } from "pg";
 import { RETROGRADE_VERSION, RGC_SYMBOL, USD_TO_RGC, STANDARD_TOKEN_UNITS_PER_RGC, allowanceForTier } from "./retrograde.js";
+import { trustedGidFromUser } from "./trusted-gid.js";
 
 const outerPort = Number(process.env.PORT || 8080);
 const innerPort = Number(process.env.SUBSCRIPTION_ENTITLEMENT_INNER_PORT || 8087);
@@ -18,7 +19,7 @@ const supabaseUrl = (process.env.SUPABASE_URL || "").replace(/\/$/, "");
 const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || "";
 const connectionString = process.env.NEON_DATABASE_URL || process.env.DATABASE_URL || "";
 const pool = connectionString
-  ? new Pool({ connectionString, max: Math.max(2, Number(process.env.NEON_POOL_MAX || 5)), idleTimeoutMillis: 30000, connectionTimeoutMillis: 8000 })
+  ? new Pool({ connectionString, max: Math.max(2, Number(process.env.NEON_POOL_MAX || 5)), idleTimeoutMillis: 30000, connectionTimeoutMillis: 30000 })
   : null;
 
 const child = spawn(process.execPath, ["retrograde-gateway.js"], {
@@ -103,7 +104,7 @@ async function bearerPrincipal(req) {
   return {
     kind: "member",
     user_id: user.id,
-    gid: user.user_metadata?.gid ? String(user.user_metadata.gid) : null,
+    gid: trustedGidFromUser(user),
     email: user.email || null,
   };
 }
@@ -398,7 +399,7 @@ async function handle(req, res) {
 
 const gateway = http.createServer((req, res) => void handle(req, res));
 
-function waitForPort(port, { timeout = 20000, interval = 100 } = {}) {
+function waitForPort(port, { timeout = 180000, interval = 100 } = {}) {
   const deadline = Date.now() + timeout;
   return new Promise((resolve, reject) => {
     const attempt = () => {

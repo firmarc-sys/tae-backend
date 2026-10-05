@@ -5,6 +5,7 @@ import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import Stripe from "stripe";
 import { Pool } from "pg";
+import { trustedGidFromUser } from "./trusted-gid.js";
 
 const outerPort = Number(process.env.PORT || 8080);
 const innerPort = Number(process.env.CONTROL_PLANE_INNER_PORT || 8084);
@@ -103,7 +104,7 @@ async function memberPrincipal(req) {
   });
   const user = await response.json().catch(() => null);
   if (!response.ok || !user?.id) throw Object.assign(new Error("Invalid member authentication"), { status: 401 });
-  return { id: user.id, email: user.email || null, gid: user.user_metadata?.gid ? String(user.user_metadata.gid) : null };
+  return { id: user.id, email: user.email || null, gid: trustedGidFromUser(user) };
 }
 
 function readBody(req, limit = 12 * 1024 * 1024) {
@@ -128,12 +129,18 @@ function proxyHeaders(req, raw = null) {
   if (raw) headers["content-length"] = String(raw.length);
   return headers;
 }
+function innerRequestTimeout(req) {
+  const pathname = new URL(req.url || "/", "http://localhost").pathname;
+  const providerPaths = new Set(["/api/runtime", "/api/tae", "/api/generate", "/api/image", "/api/video", "/api/audio", "/api/embeddings", "/api/voice/transcribe", "/api/maat/substitution-proof"]);
+  return providerPaths.has(pathname) ? 300_000 : 60_000;
+}
+
 async function innerJson(req, raw = null) {
   const response = await fetch(`http://127.0.0.1:${innerPort}${req.url}`, {
     method: req.method,
     headers: proxyHeaders(req, raw),
     body: ["GET", "HEAD"].includes(req.method || "GET") ? undefined : raw,
-    signal: AbortSignal.timeout(60000),
+    signal: AbortSignal.timeout(innerRequestTimeout(req)),
     redirect: "manual",
   });
   const text = await response.text();
@@ -205,8 +212,28 @@ async function handleRuntime(req, res, raw, id) {
   return json(res, response.status, { ...(payload || {}), provider_route: { id: route.id, capability: route.capability_id, operation: route.operation, provider: route.provider, model_alias: route.model_alias, fallback_alias: route.fallback_alias, registry_authority: true } }, id, passthroughHeaders(response));
 }
 
-async function recordTaeCommand({ prompt, sourceSurface, state, responsePayload }) {
-  const result = await db().query(`insert into public.tae_commands (command_text,normalized_route,source_surface,execution_state,response_payload) values ($1,'tae',$2,$3,$4::jsonb) returning id,command_text,normalized_route,source_surface,execution_state,created_at`, [prompt, sourceSurface || "mercury", state, JSON.stringify(responsePayload || {})]);
+let taeTenantColumn = null;
+function ensureTaeTenantColumn() {
+  taeTenantColumn ||= db().query(`alter table public.tae_commands add column if not exists gid text; create index if not exists tae_commands_gid_created_idx on public.tae_commands (gid, created_at desc)`).catch((error) => {
+    taeTenantColumn = null;
+    throw error;
+  });
+  return taeTenantColumn;
+}
+async function taeCallerGid(req) {
+  const cookieGid = sessionGid(req);
+  if (cookieGid) return cookieGid;
+  if (!bearerToken(req)) return null;
+  try {
+    const member = await memberPrincipal(req);
+    return await resolveGid({ gid: member.gid, authUserId: member.id });
+  } catch {
+    return null;
+  }
+}
+async function recordTaeCommand({ gid, prompt, sourceSurface, state, responsePayload }) {
+  await ensureTaeTenantColumn();
+  const result = await db().query(`insert into public.tae_commands (gid,command_text,normalized_route,source_surface,execution_state,response_payload) values ($1,$2,'tae',$3,$4,$5::jsonb) returning id,gid,command_text,normalized_route,source_surface,execution_state,created_at`, [gid, prompt, sourceSurface || "mercury", state, JSON.stringify(responsePayload || {})]);
   return result.rows[0] || null;
 }
 async function handleTae(req, res, raw, id) {
@@ -215,7 +242,10 @@ async function handleTae(req, res, raw, id) {
   const prompt = String(body.prompt || body.command || "").trim();
   if (!prompt) return json(res, 422, { ok: false, error: "prompt is required", request_id: id }, id);
   const { response, payload } = await innerJson(req, raw);
-  const command = await recordTaeCommand({ prompt, sourceSurface: body.source_surface || body?.context?.surface || "mercury", state: response.ok && payload?.ok !== false ? "completed" : "error", responsePayload: payload || { status: response.status } });
+  const gid = await taeCallerGid(req);
+  // Unauthenticated attempts are rejected upstream and are not persisted into tenant history.
+  if (!gid) return json(res, response.status, { ...(payload || {}) }, id, passthroughHeaders(response));
+  const command = await recordTaeCommand({ gid, prompt, sourceSurface: body.source_surface || body?.context?.surface || "mercury", state: response.ok && payload?.ok !== false ? "completed" : "error", responsePayload: payload || { status: response.status } });
   return json(res, response.status, { ...(payload || {}), tae_command: command, tae_persistence: "neon" }, id, passthroughHeaders(response));
 }
 
@@ -328,7 +358,7 @@ async function handleControl(req, res, raw, pathname, id) {
     return json(res, 200, { ok: true, count: result.rowCount, scenes: result.rows }, id);
   }
   if (req.method === "GET" && pathname === "/api/control/tae") {
-    const result = await db().query(`select id,command_text,normalized_route,source_surface,execution_state,response_payload,created_at from public.tae_commands order by created_at desc limit 100`);
+    const result = await db().query(`select id,gid,command_text,normalized_route,source_surface,execution_state,response_payload,created_at from public.tae_commands order by created_at desc limit 100`);
     return json(res, 200, { ok: true, commands: result.rows }, id);
   }
   if (req.method === "GET" && pathname === "/api/control/tiers") {

@@ -15,6 +15,17 @@ on:
       - 'device-fabric.js'
       - 'control-plane-gateway.js'
       - 'server.js'
+      - 'governance-gateway.js'
+      - 'uae-governance.js'
+      - 'heycyan-policy.js'
+      - 'numerology.js'
+      - 'retrograde-gateway.js'
+      - 'retrograde.js'
+      - 'autonomy-runtime.js'
+      - 'jahorin-runtime.js'
+      - 'supabase-runtime-store.js'
+      - 'trusted-gid.js'
+      - 'supabase/**'
       - 'thoth-voice.js'
       - 'vertex-model-registry.js'
       - 'vertex-model-router.js'
@@ -89,6 +100,8 @@ jobs:
           grep -q 'pathname === "/api/identity/authorize"' credential-gateway.js
           grep -q 'CREDENTIAL_REQUIRED' credential-gateway.js
           grep -q 'if (gid === OWNER_GID)' credential-gateway.js
+          grep -q 'OWNER_AUTH_NOT_CONFIGURED' credential-gateway.js
+          grep -q 'internalAuthorizeVerified(req)' production-gateway.js
           grep -q 'row.status !== "active"' credential-gateway.js
           grep -q 'ensureDeviceFabricSchema' secure-gateway.js
           grep -q 'REPLAY_REJECTED' device-fabric.js
@@ -258,9 +271,22 @@ jobs:
           test "$ready" = 1 || { cat /tmp/ready.json >&2 || true; exit 1; }
 
           curl -fsS "$ARI/api/credential-edge" > /tmp/credential-edge.json
-          node -e "const j=require('/tmp/credential-edge.json'); if(!(j.ok===true&&j.credential_gate==='gid-proof-v2'&&j.owner_access==='canonical-gid')) process.exit(1)"
+          node -e "const j=require('/tmp/credential-edge.json'); if(!(j.ok===true&&j.credential_gate==='gid-proof-v2'&&j.owner_access==='access-code')) process.exit(1)"
 
-          owner="$(curl -sS -c /tmp/owner.cookies -o /tmp/owner-authorize.json -w '%{http_code}' -H 'content-type: application/json' -d '{"gid":"399152573423"}' "$ARI/api/identity/authorize")"
+          owner_gid_only="$(curl -sS -o /tmp/owner-gid-only.json -w '%{http_code}' -H 'content-type: application/json' -d '{"gid":"399152573423"}' "$ARI/api/identity/authorize")"
+          test "$owner_gid_only" = 401
+          owner_wrong="$(curl -sS -o /tmp/owner-wrong.json -w '%{http_code}' -H 'content-type: application/json' -d '{"gid":"399152573423","password":"not-the-owner-access-code"}' "$ARI/api/identity/authorize")"
+          test "$owner_wrong" = 401
+          inner_bypass="$(curl -sS -o /tmp/inner-bypass.json -w '%{http_code}' -H 'content-type: application/json' -H 'x-ari-internal-authorize: forged' -d '{"gid":"399152573423"}' "$ARI/api/identity/authorize")"
+          test "$inner_bypass" = 401
+
+          umask 077
+          gcloud secrets versions access latest --secret="$OWNER_ACCESS_CODE_SECRET" --project="$GCP_PROJECT_ID" > /tmp/owner-access-code
+          test -s /tmp/owner-access-code
+          echo "::add-mask::$(cat /tmp/owner-access-code)"
+          node -e "const fs=require('fs'); fs.writeFileSync('/tmp/owner-authorize-body.json', JSON.stringify({gid:'399152573423',password:fs.readFileSync('/tmp/owner-access-code','utf8').replace(/\\r?\\n$/,'')}))"
+          owner="$(curl -sS -c /tmp/owner.cookies -o /tmp/owner-authorize.json -w '%{http_code}' -H 'content-type: application/json' --data-binary @/tmp/owner-authorize-body.json "$ARI/api/identity/authorize")"
+          rm -f /tmp/owner-access-code /tmp/owner-authorize-body.json
           test "$owner" = 200
           owner_identity="$(curl -sS -b /tmp/owner.cookies -o /tmp/owner-identity.json -w '%{http_code}' "$ARI/api/identity")"
           test "$owner_identity" = 200
@@ -274,7 +300,7 @@ jobs:
           test "$vedic" = 401
           runtime="$(curl -sS -o /tmp/anon-runtime.json -w '%{http_code}' -H 'content-type: application/json' -d '{"intent":"deny anonymous execution","capability":"scribe","request_id":"maat-anon"}' "$ARI/api/runtime")"
           test "$runtime" = 401
-          echo 'PASS live ARI authorizes the canonical Prime Orchestrator GID, requires member credentials, and rejects anonymous execution.'
+          echo 'PASS live ARI rejects GID-only and forged-header owner login, authorizes the owner only with the Secret Manager access code, requires member credentials, and rejects anonymous execution.'
 
       - name: Prove private-device authorization
         shell: bash

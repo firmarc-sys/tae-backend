@@ -13,7 +13,7 @@ const SESSION_COOKIE = "ari_session";
 const SESSION_TTL_SECONDS = Math.max(3600, Number(process.env.ARI_SESSION_TTL_SECONDS || 2592000));
 const sessionSecret = process.env.ARI_SESSION_SECRET || process.env.JWT_SECRET || "";
 const connectionString = process.env.NEON_DATABASE_URL || process.env.DATABASE_URL || "";
-const pool = connectionString ? new Pool({ connectionString, max: 5, idleTimeoutMillis: 30000, connectionTimeoutMillis: 8000 }) : null;
+const pool = connectionString ? new Pool({ connectionString, max: 5, idleTimeoutMillis: 30000, connectionTimeoutMillis: 30000 }) : null;
 const supabaseUrl = String(process.env.SUPABASE_URL || "").replace(/\/$/, "");
 const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || "";
 const publicDomain = String(process.env.PUBLIC_DOMAIN || process.env.FRONTEND_URL || "https://jahorin.space").replace(/\/$/, "");
@@ -240,7 +240,16 @@ async function handleSession(req, res) {
   return json(req, res, 200, { ok: true, authenticated: true, identity, tier: identity.tier, role: identity.role, entitlements: identity.entitlements, expires: session.expires });
 }
 
+function internalAuthorizeVerified(req) {
+  const expected = process.env.ARI_INTERNAL_AUTHORIZE_TOKEN || "";
+  const supplied = String(req.headers["x-ari-internal-authorize"] || "");
+  if (!expected || supplied.length !== expected.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(expected));
+}
+
 async function handleAuthorize(req, res) {
+  // Mints a session for a GID without a credential; only the credential edge may call it after verification.
+  if (!internalAuthorizeVerified(req)) return json(req, res, 403, { ok: false, authenticated: false, code: "CREDENTIAL_EDGE_REQUIRED", error: "Authorization must pass through the credential edge" });
   checkAuthRate(req);
   const body = await readBody(req);
   const gid = String(body?.gid || "").trim();
@@ -261,7 +270,7 @@ async function handleRegister(req, res) {
   const { response, payload } = await innerJson("/api/auth/signup", { method: "POST", body: { display_name: displayName, email, password, plan: "free" } });
   if (!response.ok) return json(req, res, response.status, { ok: false, code: "SIGNUP_FAILED", error: payload?.error || payload?.message || "GID signup failed" });
   const user = payload?.user || null;
-  const gid = String(user?.user_metadata?.gid || payload?.gid || "").trim();
+  const gid = String(payload?.gid || "").trim();
   if (!/^\d{12}$/.test(gid)) return json(req, res, 502, { ok: false, code: "GID_ISSUE_FAILED", error: "Identity provider did not issue a valid GID" });
   await ensureIdentity(gid, { authUserId: user?.id || null, displayName });
   const identity = await identitySnapshot(gid);
@@ -397,7 +406,7 @@ const gateway = http.createServer(async (req, res) => {
   }
 });
 
-function waitForPort(port, timeout = 30000) {
+function waitForPort(port, timeout = 180000) {
   const deadline = Date.now() + timeout;
   return new Promise((resolve, reject) => {
     const attempt = () => {

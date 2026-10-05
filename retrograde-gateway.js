@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { trustedGidFromUser } from "./trusted-gid.js";
 import http from 'node:http';
 import net from 'node:net';
 import crypto from 'node:crypto';
@@ -97,7 +98,8 @@ async function bearerGid(req) {
   });
   const user = await response.json().catch(() => null);
   if (!response.ok || !user?.id) throw Object.assign(new Error('Invalid member authentication'), { status: 401 });
-  if (user.user_metadata?.gid) return String(user.user_metadata.gid);
+  const trusted = trustedGidFromUser(user);
+  if (trusted) return trusted;
   const result = await db().query(`select gid from public.jahorin_identities where auth_user_id=$1 order by updated_at desc limit 1`, [String(user.id)]);
   return result.rows[0]?.gid ? String(result.rows[0].gid) : null;
 }

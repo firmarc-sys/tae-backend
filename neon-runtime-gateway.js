@@ -4,7 +4,12 @@ import net from "node:net";
 import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import {
-  neonConfigured,\n  supabaseConfigured,\n  resolveAuthenticatedGid,\n  createObjective,\n  getRuntimeState,\n  getUsage,
+  neonConfigured,
+  supabaseConfigured,
+  resolveAuthenticatedGid,
+  createObjective,
+  getRuntimeState,
+  getUsage,
   neonHealth,
   ensureNeonIdentity,
   resolveRuntimeAuthorization,
@@ -114,12 +119,18 @@ function proxyHeaders(req) {
   return headers;
 }
 
+function innerRequestTimeout(req) {
+  const pathname = new URL(req.url || "/", "http://localhost").pathname;
+  const providerPaths = new Set(["/api/runtime", "/api/tae", "/api/generate", "/api/image", "/api/video", "/api/audio", "/api/embeddings", "/api/voice/transcribe", "/api/maat/substitution-proof"]);
+  return providerPaths.has(pathname) ? 300_000 : 45_000;
+}
+
 async function innerJson(req, raw = null) {
   const response = await fetch(`http://127.0.0.1:${innerPort}${req.url}`, {
     method: req.method,
     headers: proxyHeaders(req),
     body: ["GET", "HEAD"].includes(req.method || "GET") ? undefined : raw,
-    signal: AbortSignal.timeout(45_000),
+    signal: AbortSignal.timeout(innerRequestTimeout(req)),
     redirect: "manual",
   });
   const text = await response.text();
@@ -317,7 +328,16 @@ async function handleTimeline(req, res, raw, pathname, id) {
   return json(res, 405, { ok: false, error: "Method not allowed", request_id: id }, id);
 }
 
-async function handleObjective(req,res,raw,id){\n  const gid=await requireGid(req);\n  if(req.method==="POST"){let body={};try{body=raw.length?JSON.parse(raw.toString("utf8")):{}}catch{return json(res,400,{ok:false,error:"Invalid JSON body",request_id:id},id)};const title=String(body.title||body.name||"").trim();if(!title)return json(res,400,{ok:false,error:"title is required",request_id:id},id);const objective=await createObjective(gid,{title,description:body.description||null,state:body.state||{}});await recordTimeline(gid,{intent:"create objective",capability:"objective",page:"runtime",request_id:id,state:objective});return json(res,201,base({gid,objective,persistence:"supabase",cloud_sync:true}),id)}\n  return json(res,405,{ok:false,error:"Method not allowed",request_id:id},id);\n}\nasync function handleRuntimeState(req,res,id){const gid=await requireGid(req);return json(res,200,base({gid,state:await getRuntimeState(gid),persistence:"supabase",cloud_sync:true}),id)}\nasync function handleUsage(req,res,id){const gid=await requireGid(req);return json(res,200,base({gid,usage:await getUsage(gid),persistence:"supabase"}),id)}\nasync function handleWhereAreWe(req,res,id){const gid=await requireGid(req);const state=await getRuntimeState(gid);const objectives=state?.projects||[];const latest=state?.recentEvents?.[0];const summary=objectives.length?\`You have ${objectives.length} active objective${objectives.length===1?"":"s"}. The latest objective is "${objectives[0].title}".`: "No objectives have been created yet.";return json(res,200,base({gid,summary,latest_event:latest||null,state,persistence:"supabase"}),id)}\n\nasync function handleState(req, res, pathname, id) {
+async function handleObjective(req,res,raw,id){
+  const gid=await requireGid(req);
+  if(req.method==="POST"){let body={};try{body=raw.length?JSON.parse(raw.toString("utf8")):{}}catch{return json(res,400,{ok:false,error:"Invalid JSON body",request_id:id},id)};const title=String(body.title||body.name||"").trim();if(!title)return json(res,400,{ok:false,error:"title is required",request_id:id},id);const objective=await createObjective(gid,{title,description:body.description||null,state:body.state||{}});await recordTimeline(gid,{intent:"create objective",capability:"objective",page:"runtime",request_id:id,state:objective});return json(res,201,base({gid,objective,persistence:"supabase",cloud_sync:true}),id)}
+  return json(res,405,{ok:false,error:"Method not allowed",request_id:id},id);
+}
+async function handleRuntimeState(req,res,id){const gid=await requireGid(req);return json(res,200,base({gid,state:await getRuntimeState(gid),persistence:"supabase",cloud_sync:true}),id)}
+async function handleUsage(req,res,id){const gid=await requireGid(req);return json(res,200,base({gid,usage:await getUsage(gid),persistence:"supabase"}),id)}
+async function handleWhereAreWe(req,res,id){const gid=await requireGid(req);const state=await getRuntimeState(gid);const objectives=state?.projects||[];const latest=state?.recentEvents?.[0];const summary=objectives.length?`You have ${objectives.length} active objective${objectives.length===1?"":"s"}. The latest objective is "${objectives[0].title}".`: "No objectives have been created yet.";return json(res,200,base({gid,summary,latest_event:latest||null,state,persistence:"supabase"}),id)}
+
+async function handleState(req, res, pathname, id) {
   const gid = await requireGid(req);
   const targetGid = decodeURIComponent(pathname.slice("/api/state/".length));
   if (!targetGid) return json(res, 400, { ok: false, error: "GID required", request_id: id }, id);
@@ -453,7 +473,8 @@ async function handle(req, res) {
     if (
       pathname === "/api/identity/guest" ||
       pathname === "/api/identity" ||
-      pathname === "/api/runtime" ||\n      pathname === "/api/runtime/objective" ||
+      pathname === "/api/runtime" ||
+      pathname === "/api/runtime/objective" ||
       pathname === "/api/timeline" ||
       pathname === "/api/twin" ||
       pathname.startsWith("/api/twin/")
@@ -461,7 +482,11 @@ async function handle(req, res) {
       raw = needsBody ? await readBody(req) : Buffer.alloc(0);
     }
 
-    if (pathname === "/api/runtime/objective") return await handleObjective(req,res,raw,id);\n    if (pathname === "/api/runtime/state" && req.method === "GET") return await handleRuntimeState(req,res,id);\n    if (pathname === "/api/runtime/usage" && req.method === "GET") return await handleUsage(req,res,id);\n    if (pathname === "/api/runtime/where-are-we" && req.method === "GET") return await handleWhereAreWe(req,res,id);\n    if (pathname === "/api/identity/guest" && req.method === "POST") return await handleIdentityGuest(req, res, raw, id);
+    if (pathname === "/api/runtime/objective") return await handleObjective(req,res,raw,id);
+    if (pathname === "/api/runtime/state" && req.method === "GET") return await handleRuntimeState(req,res,id);
+    if (pathname === "/api/runtime/usage" && req.method === "GET") return await handleUsage(req,res,id);
+    if (pathname === "/api/runtime/where-are-we" && req.method === "GET") return await handleWhereAreWe(req,res,id);
+    if (pathname === "/api/identity/guest" && req.method === "POST") return await handleIdentityGuest(req, res, raw, id);
     if (pathname === "/api/identity" && ["GET", "POST"].includes(req.method)) return await handleIdentity(req, res, raw, id);
     if (pathname === "/api/runtime" && req.method === "POST") return await handleRuntime(req, res, raw, id);
     if (pathname === "/api/timeline") return await handleTimeline(req, res, raw, pathname, id);
@@ -481,7 +506,7 @@ async function handle(req, res) {
 
 const gateway = http.createServer((req, res) => void handle(req, res));
 
-function waitForPort(port, { timeout = 20_000, interval = 100 } = {}) {
+function waitForPort(port, { timeout = 180000, interval = 100 } = {}) {
   const deadline = Date.now() + timeout;
   return new Promise((resolve, reject) => {
     const attempt = () => {
