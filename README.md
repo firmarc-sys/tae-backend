@@ -17,11 +17,11 @@ Architecture:
 - ARI — browser-facing REST gateway implemented by `server.js`
 - SYNCORI — Audio and Optics instrument suite
 
-Canonical frontend repository:
+Canonical frontend source repository:
 
-`firmarc-sys/trismegistus`
+`firmarc-sys/Jahorin-Frontend-GA`
 
-Canonical frontend Cloud Run service:
+Current production frontend Cloud Run service (unchanged until an approved rollout):
 
 `https://jtrismegistus-ga-689058655022.us-west1.run.app`
 
@@ -29,7 +29,7 @@ Production ARI hostname:
 
 `https://ari-689058655022.us-west1.run.app`
 
-The Trismegistus frontend reaches this service through same-origin `/api/*` proxying on its Cloud Run server. ARI remains the backend authority; provider credentials and protected execution stay server-side.
+Jahorin-Frontend-GA is the source repository for the next frontend release. The existing Cloud Run frontend service remains the deployed production surface until its release is built and rolled out. The frontend uses same-origin `/api/*` handlers to proxy authenticated requests to ARI; provider credentials and protected execution remain server-side.
 
 ## Deployed runtime
 
