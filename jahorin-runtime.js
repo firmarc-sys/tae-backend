@@ -69,6 +69,34 @@ export function installJahorinRuntimeRoutes(api, {
   execute,
   responseBase,
 }) {
+  api.get("/runtime/executions", async (req, res, next) => {
+    try {
+      const principal = await authorize(req);
+      const gid = String(principal?.gid || "").trim();
+      if (!gid) throw httpError(401, "Authenticated GID required", "AUTH_REQUIRED");
+
+      const requestedLimit = Number.parseInt(String(req.query?.limit || "25"), 10);
+      const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(100, requestedLimit)) : 25;
+      const requestedState = String(req.query?.state || "").trim();
+      if (requestedState && !EXECUTION_STATES.has(requestedState)) {
+        throw httpError(400, "Unsupported execution state", "INVALID_EXECUTION_STATE");
+      }
+
+      const stateFilter = requestedState ? `&state=eq.${encodeURIComponent(requestedState)}` : "";
+      const rows = await supabaseRequest(
+        `/rest/v1/jahorin_executions?gid=eq.${encodeURIComponent(gid)}&select=id,gid,capability,intent,state,result,error,request_id,created_at,updated_at,started_at,completed_at&order=created_at.desc&limit=${limit}${stateFilter}`,
+        { service: true },
+      );
+      return res.json(responseBase({
+        gid,
+        executions: Array.isArray(rows) ? rows : [],
+        pagination: { limit, state: requestedState || null },
+      }));
+    } catch (error) {
+      next(error);
+    }
+  });
+
   api.post("/runtime/executions", async (req, res, next) => {
     let principal;
     try {
