@@ -124,6 +124,46 @@ export function installJahorinRuntimeRoutes(api, {
     }
   });
 
+  api.get("/runtime/artifacts", async (req, res, next) => {
+    try {
+      const principal = await authorize(req);
+      const gid = String(principal?.gid || "").trim();
+      if (!gid) throw httpError(401, "Authenticated GID required", "AUTH_REQUIRED");
+      const requestedLimit = Number(req.query?.limit || 25);
+      const limit = Number.isFinite(requestedLimit) ? Math.min(100, Math.max(1, Math.floor(requestedLimit))) : 25;
+      const rows = await supabaseRequest(`/rest/v1/artifacts?gid=eq.${encodeURIComponent(gid)}&select=*&order=updated_at.desc&limit=${limit}`, { service: true });
+      return res.json(responseBase({ gid, artifacts: Array.isArray(rows) ? rows : [], limit }));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  api.post("/runtime/artifacts", async (req, res, next) => {
+    try {
+      const principal = await authorize(req);
+      const gid = String(principal?.gid || "").trim();
+      if (!gid) throw httpError(401, "Authenticated GID required", "AUTH_REQUIRED");
+      const title = String(req.body?.title || "").trim();
+      const content = String(req.body?.content || "");
+      const kind = String(req.body?.kind || "document").trim().toLowerCase();
+      if (!title || !content.trim()) throw httpError(422, "title and content are required", "ARTIFACT_FIELDS_REQUIRED");
+      if (title.length > 240 || content.length > 200000) throw httpError(413, "Artifact title or content exceeds the allowed size", "ARTIFACT_TOO_LARGE");
+      const allowedKinds = new Set(["document", "note", "transcript", "image", "audio", "video", "code", "other"]);
+      if (!allowedKinds.has(kind)) throw httpError(400, "Unsupported artifact kind", "INVALID_ARTIFACT_KIND");
+      const metadata = req.body?.metadata && typeof req.body.metadata === "object" && !Array.isArray(req.body.metadata) ? req.body.metadata : {};
+      const rows = await supabaseRequest("/rest/v1/artifacts", {
+        method: "POST",
+        service: true,
+        prefer: "return=representation",
+        body: { gid, kind, title, content, metadata, updated_at: now() },
+      });
+      const artifact = Array.isArray(rows) ? rows[0] : rows;
+      return res.status(201).json(responseBase({ gid, artifact }));
+    } catch (error) {
+      next(error);
+    }
+  });
+
   api.get("/runtime/executions", async (req, res, next) => {
     try {
       const principal = await authorize(req);
