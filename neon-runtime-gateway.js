@@ -501,7 +501,8 @@ async function handle(req, res) {
     if (
       pathname === "/api/identity/guest" ||
       pathname === "/api/identity" ||
-      pathname === "/api/runtime" ||\n      pathname === "/api/runtime/objective" ||
+      pathname === "/api/runtime" ||
+      pathname === "/api/runtime/objective" ||
       pathname === "/api/timeline" ||
       pathname === "/api/twin" ||
       pathname.startsWith("/api/twin/")
@@ -509,7 +510,11 @@ async function handle(req, res) {
       raw = needsBody ? await readBody(req) : Buffer.alloc(0);
     }
 
-    if (pathname === "/api/runtime/objective") return await handleObjective(req,res,raw,id);\n    if (pathname === "/api/runtime/state" && req.method === "GET") return await handleRuntimeState(req,res,id);\n    if (pathname === "/api/runtime/usage" && req.method === "GET") return await handleUsage(req,res,id);\n    if (pathname === "/api/runtime/where-are-we" && req.method === "GET") return await handleWhereAreWe(req,res,id);\n    if (pathname === "/api/identity/guest" && req.method === "POST") return await handleIdentityGuest(req, res, raw, id);
+    if (pathname === "/api/runtime/objective") return await handleObjective(req,res,raw,id);
+    if (pathname === "/api/runtime/state" && req.method === "GET") return await handleRuntimeState(req,res,id);
+    if (pathname === "/api/runtime/usage" && req.method === "GET") return await handleUsage(req,res,id);
+    if (pathname === "/api/runtime/where-are-we" && req.method === "GET") return await handleWhereAreWe(req,res,id);
+    if (pathname === "/api/identity/guest" && req.method === "POST") return await handleIdentityGuest(req, res, raw, id);
     if (pathname === "/api/identity" && ["GET", "POST"].includes(req.method)) return await handleIdentity(req, res, raw, id);
     if (pathname === "/api/runtime" && req.method === "POST") return await handleRuntime(req, res, raw, id);
     if (pathname === "/api/timeline") return await handleTimeline(req, res, raw, pathname, id);
