@@ -775,7 +775,10 @@ installJahorinRuntimeRoutes(api, {
 // Cost protection for consumer guest sessions.
 const rateBuckets = new Map();
 api.use((req, res, next) => {
-  if (req.method !== "POST" || !["/runtime", "/generate", "/tae", "/iot"].includes(req.path)) return next();
+  const mutating = ["POST", "PUT", "DELETE"].includes(req.method);
+  const runtimeMutation = req.path === "/runtime" || req.path.startsWith("/runtime/") ||
+    ["/generate", "/tae", "/iot"].includes(req.path);
+  if (!mutating || !runtimeMutation) return next();
   const key = String(req.get("x-forwarded-for") || req.ip || "unknown").split(",")[0].trim();
   const now = Date.now();
   const windowMs = 60_000;
