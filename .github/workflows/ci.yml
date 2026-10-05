@@ -20,6 +20,8 @@ jobs:
       - run: npm install --omit=dev
       - name: Check gateway syntax
         run: node --check server.js
+      - name: Verify durable execution history routes
+        run: node --check jahorin-runtime.js && node --test tests/jahorin-runtime-executions.test.js
       - name: Verify HeyCyan Optics policy
         run: npm run verify:heycyan
       - name: Run local ARI contract smoke
