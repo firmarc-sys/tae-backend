@@ -124,6 +124,74 @@ export function installJahorinRuntimeRoutes(api, {
     }
   });
 
+  api.get("/runtime/profile", async (req, res, next) => {
+    try {
+      const principal = await authorize(req);
+      const gid = String(principal?.gid || "").trim();
+      if (!gid) throw httpError(401, "Authenticated GID required", "AUTH_REQUIRED");
+      const rows = await supabaseRequest(`/rest/v1/jahorin_accounts?gid=eq.${encodeURIComponent(gid)}&select=gid,display_name,metadata,created_at,updated_at&limit=1`, { service: true });
+      const account = Array.isArray(rows) ? rows[0] : null;
+      if (!account) throw httpError(404, "Profile not found", "PROFILE_NOT_FOUND");
+      const profile = account.metadata && typeof account.metadata === "object" ? account.metadata.profile || null : null;
+      return res.json(responseBase({ gid, profile, display_name: account.display_name, created_at: account.created_at, updated_at: account.updated_at }));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  api.put("/runtime/profile", async (req, res, next) => {
+    try {
+      const principal = await authorize(req);
+      const gid = String(principal?.gid || "").trim();
+      if (!gid) throw httpError(401, "Authenticated GID required", "AUTH_REQUIRED");
+      const profile = req.body?.profile;
+      if (!profile || typeof profile !== "object" || Array.isArray(profile)) throw httpError(422, "profile object is required", "PROFILE_REQUIRED");
+      const serialized = JSON.stringify(profile);
+      if (serialized.length > 50000) throw httpError(413, "Profile exceeds the allowed size", "PROFILE_TOO_LARGE");
+      const existingRows = await supabaseRequest(`/rest/v1/jahorin_accounts?gid=eq.${encodeURIComponent(gid)}&select=metadata&limit=1`, { service: true });
+      const existing = Array.isArray(existingRows) ? existingRows[0] : null;
+      const metadata = existing?.metadata && typeof existing.metadata === "object" ? existing.metadata : {};
+      const displayName = typeof profile.displayName === "string" ? profile.displayName.slice(0, 80) : null;
+      let account;
+      if (existing) {
+        const rows = await supabaseRequest(`/rest/v1/jahorin_accounts?gid=eq.${encodeURIComponent(gid)}`, {
+          method: "PATCH", service: true, prefer: "return=representation",
+          body: { ...(displayName ? { display_name: displayName } : {}), metadata: { ...metadata, profile }, updated_at: now() },
+        });
+        account = Array.isArray(rows) ? rows[0] : rows;
+      } else {
+        const rows = await supabaseRequest("/rest/v1/jahorin_accounts", {
+          method: "POST", service: true, prefer: "return=representation",
+          body: { gid, ...(displayName ? { display_name: displayName } : {}), metadata: { profile } },
+        });
+        account = Array.isArray(rows) ? rows[0] : rows;
+      }
+      return res.json(responseBase({ gid, profile: account?.metadata?.profile || profile, display_name: account?.display_name || displayName }));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  api.delete("/runtime/profile", async (req, res, next) => {
+    try {
+      const principal = await authorize(req);
+      const gid = String(principal?.gid || "").trim();
+      if (!gid) throw httpError(401, "Authenticated GID required", "AUTH_REQUIRED");
+      const existingRows = await supabaseRequest(`/rest/v1/jahorin_accounts?gid=eq.${encodeURIComponent(gid)}&select=metadata&limit=1`, { service: true });
+      const existing = Array.isArray(existingRows) ? existingRows[0] : null;
+      if (!existing) throw httpError(404, "Profile not found", "PROFILE_NOT_FOUND");
+      const metadata = existing.metadata && typeof existing.metadata === "object" ? { ...existing.metadata } : {};
+      delete metadata.profile;
+      await supabaseRequest(`/rest/v1/jahorin_accounts?gid=eq.${encodeURIComponent(gid)}`, {
+        method: "PATCH", service: true, prefer: "return=minimal",
+        body: { metadata, updated_at: now() },
+      });
+      return res.json(responseBase({ gid, deleted: true }));
+    } catch (error) {
+      next(error);
+    }
+  });
+
   api.get("/runtime/artifacts", async (req, res, next) => {
     try {
       const principal = await authorize(req);
