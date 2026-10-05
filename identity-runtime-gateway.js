@@ -117,7 +117,7 @@ async function handleCreateGid(req, res, body, requestId) {
   }
 
   const user = signup?.user || null;
-  const gid = user?.user_metadata?.gid || signup?.gid || null;
+  const gid = signup?.gid || null;
   const session = signup?.access_token ? {
     access_token: signup.access_token,
     refresh_token: signup.refresh_token || null,
@@ -337,7 +337,7 @@ const gateway = http.createServer((req, res) => {
   return proxyStream(req, res);
 });
 
-function waitForPort(port, { timeout = 20000, interval = 100 } = {}) {
+function waitForPort(port, { timeout = 180000, interval = 100 } = {}) {
   const deadline = Date.now() + timeout;
   return new Promise((resolve, reject) => {
     const attempt = () => {

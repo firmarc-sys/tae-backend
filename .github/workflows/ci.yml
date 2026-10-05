@@ -95,3 +95,64 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build production Docker image
         run: docker build -t ari-gateway .
+
+  tenant-isolation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Source gate
+        run: npm run check
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start local Supabase and apply repository migrations
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f supabase/config.toml || supabase init --force
+          supabase start -x studio,imgproxy,inbucket,mailpit,edge-runtime,logflare,vector,realtime,storage-api,postgres-meta,supavisor
+          supabase status -o env > /tmp/supabase.env
+          set -a; . /tmp/supabase.env; set +a
+          {
+            echo "SUPABASE_URL=$API_URL"
+            echo "SUPABASE_ANON_KEY=$ANON_KEY"
+            echo "SUPABASE_SECRET_KEY=$SERVICE_ROLE_KEY"
+            echo "NEON_DATABASE_URL=$DB_URL"
+          } >> "$GITHUB_ENV"
+          echo "::add-mask::$SERVICE_ROLE_KEY"
+      - name: Start full credential-gateway chain
+        shell: bash
+        env:
+          PORT: '18080'
+          NODE_ENV: production
+          ARI_REQUIRE_AUTH: 'true'
+          JAHORIN_FREE_ACCESS: 'false'
+          ARI_SESSION_SECRET: ci-only-session-secret-not-production
+          OWNER_ACCESS_CODE: ci-only-owner-access-code
+          GOOGLE_CLOUD_PROJECT: ci-no-vertex
+          VERTEX_LOCATION: global
+          GOOGLE_GENAI_USE_VERTEXAI: 'true'
+        run: |
+          set -euo pipefail
+          nohup node credential-gateway.js > /tmp/chain.log 2>&1 &
+          for i in $(seq 1 90); do
+            code="$(curl -s -o /tmp/edge.json -w '%{http_code}' http://127.0.0.1:18080/api/credential-edge || true)"
+            [ "$code" = 200 ] && break
+            sleep 2
+          done
+          cat /tmp/edge.json || true
+          test "$code" = 200 || { tail -100 /tmp/chain.log; exit 1; }
+      - name: Prove tenant isolation through the public edge
+        env:
+          ARI: http://127.0.0.1:18080
+          OWNER_ACCESS_CODE: ci-only-owner-access-code
+        run: node scripts/prove-tenant-isolation.mjs
+      - name: Chain log
+        if: always()
+        run: tail -200 /tmp/chain.log || true

@@ -4,16 +4,20 @@ import net from "node:net";
 import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { Pool } from "pg";
+import { trustedGidFromUser } from "./trusted-gid.js";
 
 const outerPort = Number(process.env.PORT || 8080);
 const innerPort = Number(process.env.CREDENTIAL_GATEWAY_INNER_PORT || 8094);
 const OWNER_GID = String(process.env.SIOS_OWNER_GID || "399152573423");
-const INNER_CHAIN_READY_TIMEOUT_MS = Math.max(5000, Number(process.env.ARI_INNER_CHAIN_READY_TIMEOUT_MS || 30000));
+const INNER_CHAIN_READY_TIMEOUT_MS = Math.max(5000, Number(process.env.ARI_INNER_CHAIN_READY_TIMEOUT_MS || 180000));
 const INNER_CHAIN_READY_INTERVAL_MS = Math.max(100, Number(process.env.ARI_INNER_CHAIN_READY_INTERVAL_MS || 250));
 const connectionString = process.env.NEON_DATABASE_URL || process.env.DATABASE_URL || "";
-const pool = connectionString ? new Pool({ connectionString, max: 4, idleTimeoutMillis: 30000, connectionTimeoutMillis: 8000 }) : null;
+const pool = connectionString ? new Pool({ connectionString, max: 4, idleTimeoutMillis: 30000, connectionTimeoutMillis: 30000 }) : null;
 const supabaseUrl = String(process.env.SUPABASE_URL || "").replace(/\/$/, "");
 const supabaseServerKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+const ownerAccessCode = process.env.OWNER_ACCESS_CODE || process.env.SIOS_OWNER_ACCESS_CODE || "";
+// Per-process secret proving an /api/identity/authorize call came from this edge after credential verification.
+const internalAuthorizeToken = crypto.randomBytes(32).toString("hex");
 
 const allowedOrigins = new Set(
   (process.env.PRODUCTION_ALLOWED_ORIGINS || [
@@ -32,7 +36,7 @@ const allowedOrigins = new Set(
 let childReady = false;
 let childExit = null;
 const child = spawn(process.execPath, ["governance-gateway.js"], {
-  env: { ...process.env, PORT: String(innerPort) },
+  env: { ...process.env, PORT: String(innerPort), ARI_INTERNAL_AUTHORIZE_TOKEN: internalAuthorizeToken },
   stdio: "inherit",
 });
 child.on("exit", (code, signal) => {
@@ -219,7 +223,7 @@ async function verifyMemberPassword(gid, password) {
   if (!login.response.ok) return false;
   const authenticatedUser = login.payload?.user || null;
   if (!authenticatedUser?.id || String(authenticatedUser.id) !== binding.authUserId) return false;
-  const authenticatedGid = String(authenticatedUser?.user_metadata?.gid || "").trim();
+  const authenticatedGid = trustedGidFromUser(authenticatedUser);
   return !authenticatedGid || authenticatedGid === gid;
 }
 
@@ -231,6 +235,7 @@ async function mintInnerSession(req, res, gid) {
     headers: {
       ...(req.headers.origin ? { origin: req.headers.origin } : {}),
       "x-request-id": requestId(req),
+      "x-ari-internal-authorize": internalAuthorizeToken,
     },
   });
   const setCookie = response.headers.get("set-cookie");
@@ -244,10 +249,14 @@ async function handleAuthorize(req, res) {
   const password = String(body?.password || body?.credential || "");
   if (!/^\d{12}$/.test(gid)) return json(req, res, 400, { ok: false, authenticated: false, code: "INVALID_GID", error: "GID must be 12 digits" });
 
-  // Prime Orchestrator law: the canonical owner GID is itself the owner access key.
-  // This is the only public GID-only authorization path. All member identities still
-  // require their registered Supabase credential and active identity binding.
+  // The owner GID is public (it appears in health responses), so it can never be a credential on its own.
   if (gid === OWNER_GID) {
+    if (!ownerAccessCode) return json(req, res, 503, { ok: false, authenticated: false, code: "OWNER_AUTH_NOT_CONFIGURED", error: "Owner authorization is not configured" });
+    const a = Buffer.from(password);
+    const b = Buffer.from(ownerAccessCode);
+    if (!password || a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+      return json(req, res, 401, { ok: false, authenticated: false, code: "CREDENTIAL_NOT_AUTHORIZED", error: "GID credential not authorized" });
+    }
     return mintInnerSession(req, res, gid);
   }
 
@@ -257,13 +266,19 @@ async function handleAuthorize(req, res) {
   return mintInnerSession(req, res, gid);
 }
 
+function stripInternalHeaders(headers) {
+  const clean = { ...headers };
+  delete clean["x-ari-internal-authorize"];
+  return clean;
+}
+
 function proxyStream(req, res) {
   const upstream = http.request({
     hostname: "127.0.0.1",
     port: innerPort,
     path: req.url,
     method: req.method,
-    headers: { ...req.headers, host: `127.0.0.1:${innerPort}` },
+    headers: { ...stripInternalHeaders(req.headers), host: `127.0.0.1:${innerPort}` },
   }, (upstreamRes) => {
     res.writeHead(upstreamRes.statusCode || 502, upstreamRes.headers);
     upstreamRes.pipe(res);
@@ -285,7 +300,7 @@ const gateway = http.createServer(async (req, res) => {
       return json(req, res, readiness.ready ? 200 : 503, {
         ok: readiness.ready,
         credential_gate: "gid-proof-v2",
-        owner_access: "canonical-gid",
+        owner_access: "access-code",
         child_ready: childReady,
         chain_ready: readiness.ready,
         chain_status: readiness.status,
@@ -322,20 +337,23 @@ function waitForPort(port, { timeout = 120000, interval = 120 } = {}) {
   });
 }
 
-gateway.listen(outerPort, "0.0.0.0", () => {
-  console.log(`ARI credential edge listening on ${outerPort}; awaiting UAE governance inner ${innerPort}`);
-});
-
-waitForPort(innerPort)
-  .then(() => {
+async function startCredentialEdge() {
+  console.log(`ARI credential edge holding Cloud Run startup until the full UAE production chain is ready on ${innerPort}`);
+  try {
+    await waitForInnerChainReady();
     childReady = true;
-    console.log(`ARI UAE governance inner chain reachable on ${innerPort}`);
-  })
-  .catch((error) => {
+    gateway.listen(outerPort, "0.0.0.0", () => {
+      console.log(`ARI credential edge listening on ${outerPort}; full UAE production chain ready on ${innerPort}`);
+    });
+  } catch (error) {
     childReady = false;
-    childExit = { code: null, signal: null, at: new Date().toISOString(), error: error.message };
-    console.error(`ARI credential edge readiness failed: ${error.message}`);
-  });
+    childExit = childExit || { code: null, signal: null, at: new Date().toISOString(), error: error.message };
+    console.error(`ARI credential edge full-chain startup failed: ${error.message}`);
+    if (!child.killed) child.kill("SIGTERM");
+    process.exit(1);
+  }
+}
+void startCredentialEdge();
 
 function shutdown(signal) {
   console.log(`ARI credential gateway received ${signal}`);
