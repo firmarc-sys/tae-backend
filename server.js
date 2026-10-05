@@ -752,6 +752,24 @@ function inferManifest(intent = "", requestedCapability = "", context = {}) {
 
 const api = express.Router();
 
+// Cost protection for consumer guest sessions.
+const rateBuckets = new Map();
+api.use((req, res, next) => {
+  const mutating = ["POST", "PUT", "DELETE"].includes(req.method);
+  const runtimeMutation = req.path === "/runtime" || req.path.startsWith("/runtime/") ||
+    ["/generate", "/tae", "/iot"].includes(req.path);
+  if (!mutating || !runtimeMutation) return next();
+  const key = String(req.get("x-forwarded-for") || req.ip || "unknown").split(",")[0].trim();
+  const now = Date.now();
+  const windowMs = 60_000;
+  const max = 24;
+  const bucket = rateBuckets.get(key);
+  if (!bucket || now - bucket.started > windowMs) { rateBuckets.set(key, { started: now, count: 1 }); return next(); }
+  bucket.count += 1;
+  if (bucket.count > max) return res.status(429).json({ ok: false, error: "Rate limit exceeded. Try again shortly.", request_id: req.requestId });
+  next();
+});
+
 installJahorinRuntimeRoutes(api, {
   authorize: requireProviderAccess,
   supabaseRequest,
@@ -770,24 +788,6 @@ installJahorinRuntimeRoutes(api, {
       render_state: runtime?.renderState || null,
     };
   },
-});
-
-// Cost protection for consumer guest sessions.
-const rateBuckets = new Map();
-api.use((req, res, next) => {
-  const mutating = ["POST", "PUT", "DELETE"].includes(req.method);
-  const runtimeMutation = req.path === "/runtime" || req.path.startsWith("/runtime/") ||
-    ["/generate", "/tae", "/iot"].includes(req.path);
-  if (!mutating || !runtimeMutation) return next();
-  const key = String(req.get("x-forwarded-for") || req.ip || "unknown").split(",")[0].trim();
-  const now = Date.now();
-  const windowMs = 60_000;
-  const max = 24;
-  const bucket = rateBuckets.get(key);
-  if (!bucket || now - bucket.started > windowMs) { rateBuckets.set(key, { started: now, count: 1 }); return next(); }
-  bucket.count += 1;
-  if (bucket.count > max) return res.status(429).json({ ok: false, error: "Rate limit exceeded. Try again shortly.", request_id: req.requestId });
-  next();
 });
 
 api.get("/capabilities", (_req, res) => {
