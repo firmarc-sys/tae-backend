@@ -1,8 +1,10 @@
+import { N8N_CAPABILITY } from "./n8n-capability.js";
 import crypto from "node:crypto";
 
 const SCHEMA_VERSION = 1;
 
 const BASE_CAPABILITIES = Object.freeze([
+  N8N_CAPABILITY,
   {
     id: "system.orchestrate",
     domain: "intelligence",
