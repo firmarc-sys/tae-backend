@@ -15,6 +15,7 @@ export const N8N_CAPABILITY = Object.freeze({
     governance: "uae-governance-v1",
     requires_registered_workflow: true,
     direct_frontend_access: false,
+    workflow_registry_key: "workflow_ids",
   },
 });
 
