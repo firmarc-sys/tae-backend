@@ -14,6 +14,32 @@ function requireConfiguration() {
   if (!apiKey) throw configurationError("N8N_API_KEY is not configured");
 }
 
+export async function resolveRegisteredN8nWorkflow(db, workflowId) {
+  const workflow = n8nWorkflowId({ workflow_id: workflowId });
+  const result = await db().query(
+    `select id, metadata, enabled from public.capability_registry where id=$1 and enabled=true limit 1`,
+    ["automation.n8n"],
+  );
+  const capability = result.rows[0];
+  if (!capability) {
+    throw Object.assign(new Error("automation.n8n capability is not registered"), {
+      status: 503,
+      code: "N8N_CAPABILITY_NOT_REGISTERED",
+    });
+  }
+  const metadata = capability.metadata && typeof capability.metadata === "object" ? capability.metadata : {};
+  const workflowIds = Array.isArray(metadata.workflow_ids)
+    ? metadata.workflow_ids.map((value) => String(value).trim()).filter(Boolean)
+    : [];
+  if (!workflowIds.includes(workflow)) {
+    throw Object.assign(new Error("Requested n8n workflow is not registered"), {
+      status: 403,
+      code: "N8N_WORKFLOW_NOT_REGISTERED",
+    });
+  }
+  return { workflow_id: workflow, capability_id: capability.id };
+}
+
 export async function executeN8nWorkflow({ gid, requestId, taskId, sessionId, workflowId, idempotencyKey, input = {} }) {
   requireConfiguration();
   const workflow = n8nWorkflowId({ workflow_id: workflowId });
@@ -58,7 +84,7 @@ export async function executeN8nWorkflow({ gid, requestId, taskId, sessionId, wo
     }
     return {
       status: "completed",
-      verified: true,
+      verified: Boolean(body?.verified === true || body?.execution?.verified === true),
       workflow_id: workflow,
       idempotency_key: idem,
       n8n: body,
