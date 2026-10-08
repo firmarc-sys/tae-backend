@@ -1,6 +1,11 @@
 import crypto from "node:crypto";
 import { superAppManifest } from "./mxr-superapp-manifest.js";
-import { integrationReadiness } from "./mxr-integration-fabric.js";
+import {
+  executeMcp,
+  executeN8n,
+  executeRemoteRuntime,
+  integrationReadiness,
+} from "./mxr-integration-fabric.js";
 import {
   appendExecutionEvent,
   createExecution,
@@ -26,6 +31,56 @@ function now() {
 
 function idempotencyKey(req) {
   return String(req.get("idempotency-key") || req.body?.idempotency_key || "").trim().slice(0, 255);
+}
+
+async function executeExternalCapability({ capability, payload, context, gid, executionId, idempotencyKey: key }) {
+  if (capability.startsWith("n8n.")) {
+    return executeN8n({
+      workflowId: capability.slice(4),
+      payload,
+      tenantId: context?.tenant_id || context?.tenantId || null,
+      gid,
+      taskId: context?.task_id || context?.taskId || executionId,
+      idempotencyKey: key || executionId,
+    });
+  }
+  if (capability.startsWith("mcp.")) {
+    return executeMcp({
+      tool: capability.slice(4),
+      arguments: payload,
+      tenantId: context?.tenant_id || context?.tenantId || null,
+      gid,
+      taskId: context?.task_id || context?.taskId || executionId,
+    });
+  }
+  if (capability.startsWith("browser.")) {
+    return executeRemoteRuntime("browser", "/execute", {
+      execution_id: executionId,
+      capability,
+      operation: capability.slice(8),
+      payload,
+      context: { ...context, gid },
+    }, { "idempotency-key": key || executionId });
+  }
+  if (capability.startsWith("computer.")) {
+    return executeRemoteRuntime("computer-use", "/execute", {
+      execution_id: executionId,
+      capability,
+      operation: capability.slice(9),
+      payload,
+      context: { ...context, gid },
+    }, { "idempotency-key": key || executionId });
+  }
+  if (capability === "nova-life" || capability.startsWith("nova.")) {
+    return executeRemoteRuntime("nova", "/execute", {
+      execution_id: executionId,
+      capability,
+      operation: capability === "nova-life" ? "world.intent" : capability.slice(5),
+      payload,
+      context: { ...context, gid },
+    }, { "idempotency-key": key || executionId });
+  }
+  return null;
 }
 
 export function installJahorinRuntimeRoutes(api, {
@@ -104,15 +159,11 @@ export function installJahorinRuntimeRoutes(api, {
         requestId,
       });
 
-      void runExecution({ execute, req, gid, executionId, requestId, execution }).catch((error) => {
+      void runExecution({ execute, req, gid, executionId, requestId, execution, idempotencyKey: key }).catch((error) => {
         console.error("Jahorin execution worker failed", error);
       });
 
-      return res.status(202).json(responseBase({
-        gid,
-        request_id: requestId,
-        execution,
-      }));
+      return res.status(202).json(responseBase({ gid, request_id: requestId, execution }));
     } catch (error) {
       next(error);
     }
@@ -126,9 +177,7 @@ export function installJahorinRuntimeRoutes(api, {
       const execution = await getExecution(gid, req.params.id);
       if (!execution) throw httpError(404, "Execution not found", "EXECUTION_NOT_FOUND");
       return res.json(responseBase({ gid, execution }));
-    } catch (error) {
-      next(error);
-    }
+    } catch (error) { next(error); }
   });
 
   api.post("/runtime/executions/:id/cancel", async (req, res, next) => {
@@ -139,19 +188,10 @@ export function installJahorinRuntimeRoutes(api, {
       const execution = await getExecution(gid, req.params.id);
       if (!execution) throw httpError(404, "Execution not found", "EXECUTION_NOT_FOUND");
       if (TERMINAL_STATES.has(execution.state)) return res.json(responseBase({ execution }));
-
       const updated = await updateExecution(gid, req.params.id, { state: "cancel_requested" });
-      await appendExecutionEvent({
-        gid,
-        executionId: req.params.id,
-        type: "execution.cancel_requested",
-        payload: {},
-        requestId: req.requestId,
-      });
+      await appendExecutionEvent({ gid, executionId: req.params.id, type: "execution.cancel_requested", payload: {}, requestId: req.requestId });
       return res.json(responseBase({ gid, execution: updated }));
-    } catch (error) {
-      next(error);
-    }
+    } catch (error) { next(error); }
   });
 
   api.get("/runtime/executions/:id/events", async (req, res, next) => {
@@ -161,54 +201,42 @@ export function installJahorinRuntimeRoutes(api, {
       if (!gid) throw httpError(401, "Authenticated GID required", "AUTH_REQUIRED");
       const execution = await getExecution(gid, req.params.id);
       if (!execution) throw httpError(404, "Execution not found", "EXECUTION_NOT_FOUND");
-
       res.status(200);
-      res.set({
-        "content-type": "text/event-stream; charset=utf-8",
-        "cache-control": "no-cache, no-store, must-revalidate",
-        connection: "keep-alive",
-        "x-accel-buffering": "no",
-      });
+      res.set({ "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache, no-store, must-revalidate", connection: "keep-alive", "x-accel-buffering": "no" });
       res.flushHeaders?.();
-
       let cursor = new Date(0).toISOString();
       let closed = false;
-      const send = (event) => {
-        res.write(`id: ${event.event_id}\nevent: ${event.event_type}\ndata: ${JSON.stringify(event)}\n\n`);
-      };
+      const send = (event) => res.write(`id: ${event.event_id}\nevent: ${event.event_type}\ndata: ${JSON.stringify(event)}\n\n`);
       const poll = async () => {
         if (closed) return;
         const rows = await listExecutionEvents({ gid, executionId: req.params.id, after: cursor, limit: 100 });
-        for (const event of rows) {
-          cursor = event.created_at;
-          send(event);
-        }
+        for (const event of rows) { cursor = event.created_at; send(event); }
         const latest = await getExecution(gid, req.params.id);
-        if (latest && TERMINAL_STATES.has(latest.state)) {
-          closed = true;
-          clearInterval(timer);
-          res.end();
-        }
+        if (latest && TERMINAL_STATES.has(latest.state)) { closed = true; clearInterval(timer); res.end(); }
       };
       const timer = setInterval(() => void poll().catch(() => {}), 1000);
-      req.on("close", () => {
-        closed = true;
-        clearInterval(timer);
-      });
+      req.on("close", () => { closed = true; clearInterval(timer); });
       await poll();
     } catch (error) {
-      if (!res.headersSent) next(error);
-      else res.end();
+      if (!res.headersSent) next(error); else res.end();
     }
   });
 }
 
-async function runExecution({ execute, req, gid, executionId, requestId, execution }) {
+async function runExecution({ execute, req, gid, executionId, requestId, execution, idempotencyKey: key }) {
   await updateExecution(gid, executionId, { state: "running", started_at: now() });
   await appendExecutionEvent({ gid, executionId, type: "execution.started", payload: {}, requestId });
 
   try {
-    const result = await execute({
+    const external = await executeExternalCapability({
+      capability: execution.capability,
+      payload: execution.payload || {},
+      context: execution.context || {},
+      gid,
+      executionId,
+      idempotencyKey: key,
+    });
+    const result = external ?? await execute({
       req,
       gid,
       executionId,
@@ -221,29 +249,17 @@ async function runExecution({ execute, req, gid, executionId, requestId, executi
 
     const current = await getExecution(gid, executionId);
     if (current?.state === "cancel_requested") {
-      const cancelled = await updateExecution(gid, executionId, {
-        state: "cancelled",
-        result: { cancelled: true },
-        completed_at: now(),
-      });
+      const cancelled = await updateExecution(gid, executionId, { state: "cancelled", result: { cancelled: true }, completed_at: now() });
       await appendExecutionEvent({ gid, executionId, type: "execution.cancelled", payload: { result: result || null }, requestId });
       return cancelled;
     }
 
-    const completed = await updateExecution(gid, executionId, {
-      state: "completed",
-      result: result || {},
-      completed_at: now(),
-    });
+    const completed = await updateExecution(gid, executionId, { state: "completed", result: result || {}, completed_at: now() });
     await appendExecutionEvent({ gid, executionId, type: "execution.completed", payload: result || {}, requestId });
     return completed;
   } catch (error) {
     const failure = { code: error?.code || "EXECUTION_FAILED", message: error?.message || "Execution failed" };
-    const failed = await updateExecution(gid, executionId, {
-      state: "failed",
-      error: failure,
-      completed_at: now(),
-    });
+    const failed = await updateExecution(gid, executionId, { state: "failed", error: failure, completed_at: now() });
     await appendExecutionEvent({ gid, executionId, type: "execution.failed", payload: failure, requestId });
     return failed;
   }
