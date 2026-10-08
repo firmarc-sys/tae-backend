@@ -1,4 +1,6 @@
 import crypto from "node:crypto";
+import { superAppManifest } from "./mxr-superapp-manifest.js";
+import { integrationReadiness } from "./mxr-integration-fabric.js";
 
 const EXECUTION_STATES = new Set(["accepted","running","completed","failed","cancel_requested","cancelled"]);
 const TERMINAL_STATES = new Set(["completed","failed","cancelled"]);
@@ -69,6 +71,30 @@ export function installJahorinRuntimeRoutes(api, {
   execute,
   responseBase,
 }) {
+  api.get("/runtime/manifest", (_req, res) => {
+    return res.json(responseBase({
+      super_app: superAppManifest(),
+      integrations: integrationReadiness(),
+      contract: {
+        execution_create: "POST /api/runtime/executions",
+        execution_read: "GET /api/runtime/executions/:id",
+        execution_cancel: "POST /api/runtime/executions/:id/cancel",
+        execution_events: "GET /api/runtime/executions/:id/events",
+      },
+    }));
+  });
+
+  api.get("/runtime/readiness", (_req, res) => {
+    const integrations = integrationReadiness();
+    return res.json(responseBase({
+      ok: true,
+      runtimes: ["thoth", "jahorin", "trismegistus", "mercury"],
+      persistence: "neon-postgres",
+      integrations,
+      degraded: Object.entries(integrations).filter(([, ready]) => !ready).map(([name]) => name),
+    }));
+  });
+
   api.post("/runtime/executions", async (req, res, next) => {
     let principal;
     try {
@@ -109,7 +135,6 @@ export function installJahorinRuntimeRoutes(api, {
       const execution = Array.isArray(created) ? created[0] : created;
       await writeEvent({ supabaseRequest, gid, executionId, type: "execution.accepted", payload: { capability, intent }, requestId });
 
-      // Fire-and-track: the HTTP request only acknowledges durable acceptance.
       void runExecution({ supabaseRequest, execute, req, gid, executionId, requestId, execution }).catch((error) => {
         console.error("Jahorin execution worker failed", error);
       });
@@ -212,7 +237,7 @@ export function installJahorinRuntimeRoutes(api, {
 }
 
 async function runExecution({ supabaseRequest, execute, req, gid, executionId, requestId, execution }) {
-  const started = await setExecution({
+  await setExecution({
     supabaseRequest, gid, executionId,
     patch: { state: "running", started_at: now() },
   });
