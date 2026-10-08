@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { executeNovaCapability, novaLifeHealth } from './nova-life-runtime.js';
 
 function configured(value) {
   return Boolean(String(value || '').trim());
@@ -35,8 +36,12 @@ export function integrationReadiness() {
     mcp: configured(process.env.MCP_GATEWAY_URL) && configured(process.env.MCP_GATEWAY_TOKEN),
     browser: configured(process.env.BROWSER_RUNTIME_URL) && configured(process.env.BROWSER_RUNTIME_TOKEN),
     computer_use: configured(process.env.COMPUTER_USE_RUNTIME_URL) && configured(process.env.COMPUTER_USE_RUNTIME_TOKEN),
-    nova: configured(process.env.NOVA_RUNTIME_URL) && configured(process.env.NOVA_RUNTIME_TOKEN),
+    nova_external: configured(process.env.NOVA_RUNTIME_URL) && configured(process.env.NOVA_RUNTIME_TOKEN),
   };
+}
+
+export async function integrationReadinessAsync() {
+  return { ...integrationReadiness(), nova_native: await novaLifeHealth() };
 }
 
 export async function executeN8n({ workflowId, payload = {}, tenantId, gid, taskId, idempotencyKey }) {
@@ -72,6 +77,21 @@ export async function executeMcp({ tool, arguments: args = {}, tenantId, gid, ta
 }
 
 export async function executeRemoteRuntime(kind, path, body, headers = {}) {
+  if (kind === 'nova') {
+    const externalOrigin = String(process.env.NOVA_RUNTIME_URL || '').replace(/\/$/, '');
+    const externalToken = process.env.NOVA_RUNTIME_TOKEN || '';
+    if (!externalOrigin || !externalToken) {
+      const capability = String(body?.capability || (body?.operation ? `nova.${body.operation}` : 'nova-life'));
+      const result = await executeNovaCapability({
+        capability,
+        gid: String(body?.context?.gid || ''),
+        payload: body?.payload || {},
+        context: body?.context || {},
+      });
+      return { provider: 'nova-native', result };
+    }
+  }
+
   const config = {
     browser: [process.env.BROWSER_RUNTIME_URL, process.env.BROWSER_RUNTIME_TOKEN],
     'computer-use': [process.env.COMPUTER_USE_RUNTIME_URL, process.env.COMPUTER_USE_RUNTIME_TOKEN],
