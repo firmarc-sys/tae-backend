@@ -1,0 +1,85 @@
+name: Authorize Canonical Frontend Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/authorize-canonical-frontend-deploy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: authorize-canonical-frontend-deploy
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: project-7e6f2720-0291-4c91-8c3
+  GCP_PROJECT_NUMBER: '689058655022'
+  SERVICE_ACCOUNT: github-actions@project-7e6f2720-0291-4c91-8c3.iam.gserviceaccount.com
+  CANONICAL_REPO: firmarc-sys/JAHORIN-GA-PRODUCTION-RELEASE
+
+jobs:
+  authorize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate through existing TAE authority
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/${{ env.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github/providers/github
+          service_account: ${{ env.SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Authorize canonical frontend repository principal
+        shell: bash
+        run: |
+          set -euo pipefail
+          MEMBER="principalSet://iam.googleapis.com/projects/${GCP_PROJECT_NUMBER}/locations/global/workloadIdentityPools/github/attribute.repository/${CANONICAL_REPO}"
+
+          echo 'Current relevant service-account IAM bindings:'
+          gcloud iam service-accounts get-iam-policy "$SERVICE_ACCOUNT" \
+            --project="$GCP_PROJECT_ID" \
+            --format=json > /tmp/sa-policy-before.json
+          python3 - <<'PY'
+          import json
+          p=json.load(open('/tmp/sa-policy-before.json'))
+          for b in p.get('bindings',[]):
+              if b.get('role') in ('roles/iam.workloadIdentityUser','roles/iam.serviceAccountTokenCreator'):
+                  print(b.get('role'), *b.get('members',[]), sep='\n  ')
+          PY
+
+          gcloud iam service-accounts add-iam-policy-binding "$SERVICE_ACCOUNT" \
+            --project="$GCP_PROJECT_ID" \
+            --role='roles/iam.workloadIdentityUser' \
+            --member="$MEMBER" \
+            --quiet
+
+          gcloud iam service-accounts add-iam-policy-binding "$SERVICE_ACCOUNT" \
+            --project="$GCP_PROJECT_ID" \
+            --role='roles/iam.serviceAccountTokenCreator' \
+            --member="$MEMBER" \
+            --quiet
+
+          gcloud iam service-accounts get-iam-policy "$SERVICE_ACCOUNT" \
+            --project="$GCP_PROJECT_ID" \
+            --format=json > /tmp/sa-policy-after.json
+
+          python3 - <<'PY'
+          import json, os
+          p=json.load(open('/tmp/sa-policy-after.json'))
+          expected=f"principalSet://iam.googleapis.com/projects/{os.environ['GCP_PROJECT_NUMBER']}/locations/global/workloadIdentityPools/github/attribute.repository/{os.environ['CANONICAL_REPO']}"
+          roles={b.get('role'):set(b.get('members',[])) for b in p.get('bindings',[])}
+          for role in ('roles/iam.workloadIdentityUser','roles/iam.serviceAccountTokenCreator'):
+              if expected not in roles.get(role,set()):
+                  raise SystemExit(f'missing {role} binding for canonical frontend')
+          print('PASS canonical frontend repository is authorized for Google service-account impersonation')
+          PY
