@@ -135,7 +135,9 @@ async function main() {
   evidence.deployment.runtime_ready_model = ready.body?.model || null;
   console.log(`PASS readiness: Vertex AI / ${ready.body?.model || 'model-unreported'}`);
 
-  const auth = await call('/api/identity/authorize', { method: 'POST', json: { gid: OWNER_GID }, useCookie: false, timeoutMs: 30000 });
+  const ownerCredential = String(process.env.OWNER_ACCESS_CODE || process.env.SIOS_OWNER_ACCESS_CODE || '');
+  assert(ownerCredential, 'OWNER_ACCESS_CODE is required to prove Prime Orchestrator authorization');
+  const auth = await call('/api/identity/authorize', { method: 'POST', json: { gid: OWNER_GID, password: ownerCredential }, useCookie: false, timeoutMs: 30000 });
   assert(auth.status === 200, 'Prime Orchestrator authorization failed', safeErrorBody(auth.body));
   assert(cookie, 'Prime Orchestrator authorization did not issue a session cookie');
   const identity = await call('/api/identity');

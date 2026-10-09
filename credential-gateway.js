@@ -8,6 +8,7 @@ import { Pool } from "pg";
 const outerPort = Number(process.env.PORT || 8080);
 const innerPort = Number(process.env.CREDENTIAL_GATEWAY_INNER_PORT || 8094);
 const OWNER_GID = String(process.env.SIOS_OWNER_GID || "399152573423");
+const OWNER_ACCESS_CODE = String(process.env.OWNER_ACCESS_CODE || process.env.SIOS_OWNER_ACCESS_CODE || "");
 const INNER_CHAIN_READY_TIMEOUT_MS = Math.max(5000, Number(process.env.ARI_INNER_CHAIN_READY_TIMEOUT_MS || 30000));
 const INNER_CHAIN_READY_INTERVAL_MS = Math.max(100, Number(process.env.ARI_INNER_CHAIN_READY_INTERVAL_MS || 250));
 const connectionString = process.env.NEON_DATABASE_URL || process.env.DATABASE_URL || "";
@@ -208,6 +209,13 @@ async function waitForInnerChainReady() {
   );
 }
 
+function verifyOwnerAccessCode(password) {
+  if (!OWNER_ACCESS_CODE) return false;
+  const a = crypto.createHash("sha256").update(String(password)).digest();
+  const b = crypto.createHash("sha256").update(OWNER_ACCESS_CODE).digest();
+  return crypto.timingSafeEqual(a, b);
+}
+
 async function verifyMemberPassword(gid, password) {
   const binding = await authBindingForGid(gid);
   if (!binding?.authUserId) return false;
@@ -244,10 +252,12 @@ async function handleAuthorize(req, res) {
   const password = String(body?.password || body?.credential || "");
   if (!/^\d{12}$/.test(gid)) return json(req, res, 400, { ok: false, authenticated: false, code: "INVALID_GID", error: "GID must be 12 digits" });
 
-  // Prime Orchestrator law: the canonical owner GID is itself the owner access key.
-  // This is the only public GID-only authorization path. All member identities still
-  // require their registered Supabase credential and active identity binding.
+  // Prime Orchestrator: the owner GID is public knowledge, so it must also present a credential —
+  // the owner access code or the owner's registered member password.
   if (gid === OWNER_GID) {
+    if (!password) return json(req, res, 400, { ok: false, authenticated: false, code: "CREDENTIAL_REQUIRED", error: "GID credential is required" });
+    const ownerVerified = verifyOwnerAccessCode(password) || (await verifyMemberPassword(gid, password).catch(() => false));
+    if (!ownerVerified) return json(req, res, 401, { ok: false, authenticated: false, code: "CREDENTIAL_NOT_AUTHORIZED", error: "GID credential not authorized" });
     return mintInnerSession(req, res, gid);
   }
 
@@ -285,7 +295,7 @@ const gateway = http.createServer(async (req, res) => {
       return json(req, res, readiness.ready ? 200 : 503, {
         ok: readiness.ready,
         credential_gate: "gid-proof-v2",
-        owner_access: "canonical-gid",
+        owner_access: "canonical-gid+credential",
         child_ready: childReady,
         chain_ready: readiness.ready,
         chain_status: readiness.status,
