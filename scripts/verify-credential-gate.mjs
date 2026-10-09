@@ -1,35 +1,88 @@
 import fs from 'node:fs';
-
-function assert(condition, message) {
-  if (!condition) throw new Error(message);
-}
+import vm from 'node:vm';
+import assert from 'node:assert/strict';
 
 const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 const edge = fs.readFileSync('credential-gateway.js', 'utf8');
-const production = fs.readFileSync('production-gateway.js', 'utf8');
+assert.equal(pkg.scripts?.start, 'node credential-gateway.js');
+assert(!edge.includes('OWNER_GID'), 'No owner credential exemption is permitted');
+assert(edge.includes('owner_access: "credential-required"'));
+assert(edge.indexOf('pathname === "/api/identity/authorize"') < edge.indexOf('return proxyStream(req, res)'));
+assert(edge.indexOf('await waitForInnerChainReady();') < edge.indexOf('innerJson("/api/identity/authorize"'));
 
-assert(pkg.scripts?.start === 'node credential-gateway.js', 'credential gateway is not the public ARI start authority');
-assert(edge.includes('pathname === "/api/identity/authorize"'), 'credential gateway does not intercept GID authorization');
-assert(edge.includes('if (gid === OWNER_GID)'), 'Prime Orchestrator GID-only exception is missing');
-assert(edge.includes('return mintInnerSession(req, res, gid);'), 'Prime Orchestrator does not mint the canonical inner session');
-assert(edge.includes('CREDENTIAL_REQUIRED'), 'member credential requirement is missing');
-assert(edge.indexOf('if (gid === OWNER_GID)') < edge.indexOf('CREDENTIAL_REQUIRED'), 'owner exception must resolve before member credential enforcement');
-assert(edge.includes('/api/auth/login'), 'subscriber password proof is not delegated to Supabase auth');
-assert(edge.includes('auth_user_id'), 'GID is not bound to the registered auth user');
-assert(edge.includes('row.status !== "active"'), 'GID access must fail closed unless identity status is active');
-assert(edge.includes('user_metadata?.gid'), 'authenticated Supabase user GID continuity is not verified');
-assert(edge.includes('async function waitForInnerChainReady()'), 'credential edge does not wait for the full ARI chain before session mint');
-assert(edge.includes('innerJson("/api/ready")'), 'credential edge does not probe canonical ARI readiness');
-assert(edge.indexOf('await waitForInnerChainReady();') < edge.indexOf('innerJson("/api/identity/authorize"'), 'session mint can occur before full ARI readiness');
-assert(edge.includes('chain_ready: readiness.ready'), 'credential-edge health does not report full-chain readiness');
-assert(!edge.includes('console.log(password)'), 'credential material must never be logged');
-
-const legacyAuthorize = production.match(/async function handleAuthorize[\s\S]*?\n}\n\nasync function handleRegister/);
-assert(legacyAuthorize, 'inner production authorize handler not found');
-assert(edge.indexOf('pathname === "/api/identity/authorize"') < edge.indexOf('return proxyStream(req, res)'), 'credential intercept must occur before generic proxying');
-
-console.log("MA'AT credential boundary: PASS");
-console.log('Prime Orchestrator flow: canonical owner GID -> credential edge -> full ARI readiness -> internal session mint');
-console.log('Member flow: GID + credential -> credential edge -> Supabase proof -> full ARI readiness -> internal session mint');
-console.log('Cold-start law: no GID session mint is attempted until /api/ready confirms the complete inner chain.');
-console.log('Inner GID-only mint remains unreachable from the public Cloud Run edge except for the canonical Prime Orchestrator GID.');
+// Execute the actual credential functions with isolated dependencies. No live
+// database, owner session, external auth service or child process is used.
+function sourceFunction(name) {
+  const start = edge.indexOf(`async function ${name}(`);
+  assert(start >= 0, `Missing ${name}`);
+  const end = edge.indexOf('\n}\n', start);
+  assert(end > start);
+  return edge.slice(start, end + 2);
+}
+let count = 0;
+async function authorize(body, options = {}) {
+  const calls = [];
+  const ctx = vm.createContext({
+    checkAuthRate: () => {},
+    readBody: async () => body,
+    json: (_req, _res, status, payload) => ({ status, payload }),
+    db: () => ({ query: async (_sql, params) => {
+      calls.push(['binding', params[0]]);
+      return { rows: options.rows ?? [{ auth_user_id: 'bound-user', status: 'active' }] };
+    }}),
+    supabaseAdminUser: async () => ({ id: 'bound-user', email: 'test@example.invalid' }),
+    innerJson: async (path, args) => {
+      calls.push([path, args.body]);
+      if (options.unavailable) throw new Error('credential authority unavailable');
+      return { response: { ok: !options.wrongPassword }, payload: { user: {
+        id: options.wrongUser ? 'different-user' : 'bound-user',
+        user_metadata: { gid: 'user-editable-value' },
+      } } };
+    },
+    mintInnerSession: async (_req, _res, gid) => {
+      calls.push(['mint', gid]);
+      return { status: 200, payload: { authenticated: true } };
+    },
+  });
+  vm.runInContext(['authBindingForGid', 'verifyMemberPassword', 'handleAuthorize'].map(sourceFunction).join('\n'), ctx);
+  try {
+    const result = await ctx.handleAuthorize({}, {});
+    return { ...result, calls };
+  } catch (error) { return { error, calls }; }
+}
+for (const gid of ['399152573423', '123456789012']) {
+  for (const password of [undefined, '', null, 123, {}]) {
+    const result = await authorize({ gid, password });
+    assert.equal(result.status, 400);
+    assert.equal(result.payload.code, 'CREDENTIAL_REQUIRED');
+    assert.equal(result.calls.length, 0, 'Missing/invalid proof must not reach any authority');
+    count++;
+  }
+  for (const options of [
+    { wrongPassword: true }, { wrongUser: true }, { rows: [] },
+    { rows: [{ auth_user_id: 'bound-user', status: 'disabled' }] },
+    { rows: [{ status: 'active' }] },
+  ]) {
+    const result = await authorize({ gid, password: 'test-proof' }, options);
+    assert.equal(result.status, 401);
+    assert(!result.calls.some(([kind]) => kind === 'mint'));
+    count++;
+  }
+  const outage = await authorize({ gid, password: 'test-proof' }, { unavailable: true });
+  assert(outage.error);
+  assert(!outage.calls.some(([kind]) => kind === 'mint'));
+  count++;
+  for (const proof of [{ password: 'test-proof' }, { credential: 'test-proof' }]) {
+    const result = await authorize({ gid, ...proof });
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.calls.map(([kind]) => kind), ['binding', '/api/auth/login', 'mint']);
+    assert.equal(result.calls[1][1].password, 'test-proof');
+    count++;
+  }
+}
+const invalid = await authorize({ gid: 'invalid', password: 'test-proof' });
+assert.equal(invalid.status, 400);
+assert.equal(invalid.calls.length, 0);
+count++;
+console.log(`MA'AT credential boundary: PASS (${count} behavioral cases)`);
+console.log('All identities require active server-side binding and matching password-authenticated user before session mint.');
