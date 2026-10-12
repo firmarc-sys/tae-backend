@@ -45,6 +45,7 @@ function redacted(value) {
   return out;
 }
 
+
 async function ensureAutonomyTask({ gid, taskId, sessionId, workflowId, idempotencyKey, input, policy }) {
   if (!runtimeDbFactory || !taskId) return;
   const intent = String(input?.intent || input?.prompt || input?.query || input?.goal || workflowId || "automation").trim().slice(0, 4000);
@@ -109,6 +110,14 @@ async function beginInvocation({ gid, taskId, sessionId, workflowId, idempotency
       status: 409,
       code: "N8N_INVOCATION_IN_PROGRESS",
       invocation_id: row.invocation_id,
+    });
+  }
+  if (row && policy?.requires_human_approval && !["verified", "approval_required"].includes(String(row.status))) {
+    throw Object.assign(new Error("A prior high-risk invocation did not reach verified completion; reconcile its external side effect before retrying"), {
+      status: 409,
+      code: "N8N_HIGH_RISK_RETRY_REQUIRES_RECONCILIATION",
+      invocation_id: row.invocation_id,
+      prior_status: row.status,
     });
   }
 
@@ -328,12 +337,6 @@ export async function executeN8nWorkflow({
         request: envelope,
       });
 
-      await persistMemoryCandidates(runtimeDbFactory, {
-        gid,
-        taskId,
-        candidates: body?.memory_candidates,
-      }).catch(() => []);
-
       if (!thoth.verified) {
         const error = Object.assign(new Error("Thoth rejected n8n completion because required evidence was missing or inconsistent"), {
           status: 502,
@@ -351,6 +354,12 @@ export async function executeN8nWorkflow({
         await recordTaskPhase({ gid, taskId, agent: "thoth", phase: "failed", eventType: "verification_failed", payload: { checks: thoth.checks }, status: "failed" });
         throw error;
       }
+
+      await persistMemoryCandidates(runtimeDbFactory, {
+        gid,
+        taskId,
+        candidates: body?.memory_candidates,
+      });
 
       await finishInvocation({
         invocationId: invocation.invocation_id,
