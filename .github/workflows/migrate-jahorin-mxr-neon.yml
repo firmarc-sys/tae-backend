@@ -1,0 +1,104 @@
+name: Apply Jahorin MXR Neon Migration
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'sql/2026-10-07_jahorin_mxr_superapp.sql'
+      - '.github/workflows/migrate-jahorin-mxr-neon.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: jahorin-mxr-neon-migration
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: project-7e6f2720-0291-4c91-8c3
+  GCP_PROJECT_NUMBER: '689058655022'
+  NEON_DATABASE_SECRET: ari-neon-database-url
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout canonical TAE backend
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install canonical dependencies
+        run: npm ci
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/${{ env.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github/providers/github
+          service_account: github-actions@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Apply idempotent MXR schema to production Neon
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          gcloud secrets versions access latest \
+            --secret="$NEON_DATABASE_SECRET" \
+            --project="$GCP_PROJECT_ID" > /tmp/neon-database-url
+          test -s /tmp/neon-database-url
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import pg from 'pg';
+          const connectionString = fs.readFileSync('/tmp/neon-database-url','utf8').trim();
+          const sql = fs.readFileSync('sql/2026-10-07_jahorin_mxr_superapp.sql','utf8');
+          const client = new pg.Client({ connectionString, ssl: { rejectUnauthorized: false } });
+          await client.connect();
+          try {
+            await client.query('begin');
+            await client.query(sql);
+            await client.query('commit');
+            const expected = [
+              'jahorin_executions',
+              'jahorin_execution_events',
+              'jahorin_runtime_checkpoints',
+              'nova_worlds',
+              'nova_player_state'
+            ];
+            const result = await client.query(
+              `select table_name from information_schema.tables where table_schema='public' and table_name = any($1::text[])`,
+              [expected]
+            );
+            const actual = new Set(result.rows.map(r => r.table_name));
+            const missing = expected.filter(name => !actual.has(name));
+            if (missing.length) throw new Error(`migration verification failed; missing tables: ${missing.join(', ')}`);
+            const constraint = await client.query(
+              `select pg_get_constraintdef(c.oid) as def from pg_constraint c join pg_class t on t.oid=c.conrelid join pg_namespace n on n.oid=t.relnamespace where n.nspname='public' and t.relname='jahorin_executions' and c.conname='jahorin_executions_state_check'`
+            );
+            const definition = constraint.rows[0]?.def || '';
+            for (const state of ['verified','cancel_requested','rolled_back']) {
+              if (!definition.includes(state)) throw new Error(`execution truth constraint missing state: ${state}`);
+            }
+            console.log('PASS Jahorin MXR production Neon migration applied and verified');
+          } catch (error) {
+            try { await client.query('rollback'); } catch {}
+            throw error;
+          } finally {
+            await client.end();
+          }
+          NODE
+
+      - name: Remove transient database credential
+        if: always()
+        run: rm -f /tmp/neon-database-url

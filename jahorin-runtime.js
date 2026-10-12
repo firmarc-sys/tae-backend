@@ -1,7 +1,22 @@
 import crypto from "node:crypto";
+import { superAppManifest } from "./mxr-superapp-manifest.js";
+import {
+  executeMcp,
+  executeN8n,
+  executeRemoteRuntime,
+  integrationReadiness,
+} from "./mxr-integration-fabric.js";
+import {
+  appendExecutionEvent,
+  createExecution,
+  executionStoreHealth,
+  findIdempotentExecution,
+  getExecution,
+  listExecutionEvents,
+  updateExecution,
+} from "./jahorin-execution-store.js";
 
-const EXECUTION_STATES = new Set(["accepted","running","completed","failed","cancel_requested","cancelled"]);
-const TERMINAL_STATES = new Set(["completed","failed","cancelled"]);
+const TERMINAL_STATES = new Set(["completed", "verified", "failed", "cancelled", "rolled_back"]);
 
 function httpError(status, message, code = "RUNTIME_ERROR") {
   const error = new Error(message);
@@ -18,61 +33,92 @@ function idempotencyKey(req) {
   return String(req.get("idempotency-key") || req.body?.idempotency_key || "").trim().slice(0, 255);
 }
 
-async function writeEvent({ supabaseRequest, gid, executionId, type, payload = {}, requestId }) {
-  return supabaseRequest("/rest/v1/jahorin_execution_events", {
-    method: "POST",
-    service: true,
-    prefer: "return=representation",
-    body: {
-      execution_id: executionId,
-      gid,
-      event_type: type,
+async function executeExternalCapability({ capability, payload, context, gid, executionId, idempotencyKey: key }) {
+  if (capability.startsWith("n8n.")) {
+    return executeN8n({
+      workflowId: capability.slice(4),
       payload,
-      request_id: requestId || null,
-    },
-  });
-}
-
-async function loadExecution({ supabaseRequest, gid, executionId }) {
-  const rows = await supabaseRequest(
-    `/rest/v1/jahorin_executions?id=eq.${encodeURIComponent(executionId)}&gid=eq.${encodeURIComponent(gid)}&select=*&limit=1`,
-    { service: true },
-  );
-  return Array.isArray(rows) ? rows[0] || null : null;
-}
-
-async function setExecution({ supabaseRequest, gid, executionId, patch }) {
-  const rows = await supabaseRequest(
-    `/rest/v1/jahorin_executions?id=eq.${encodeURIComponent(executionId)}&gid=eq.${encodeURIComponent(gid)}`,
-    {
-      method: "PATCH",
-      service: true,
-      prefer: "return=representation",
-      body: { ...patch, updated_at: now() },
-    },
-  );
-  return Array.isArray(rows) ? rows[0] || null : rows;
-}
-
-async function findIdempotent({ supabaseRequest, gid, key }) {
-  if (!key) return null;
-  const rows = await supabaseRequest(
-    `/rest/v1/jahorin_executions?gid=eq.${encodeURIComponent(gid)}&idempotency_key=eq.${encodeURIComponent(key)}&select=*&limit=1`,
-    { service: true },
-  );
-  return Array.isArray(rows) ? rows[0] || null : null;
+      tenantId: context?.tenant_id || context?.tenantId || null,
+      gid,
+      taskId: context?.task_id || context?.taskId || executionId,
+      idempotencyKey: key || executionId,
+    });
+  }
+  if (capability.startsWith("mcp.")) {
+    return executeMcp({
+      tool: capability.slice(4),
+      arguments: payload,
+      tenantId: context?.tenant_id || context?.tenantId || null,
+      gid,
+      taskId: context?.task_id || context?.taskId || executionId,
+    });
+  }
+  if (capability.startsWith("browser.")) {
+    return executeRemoteRuntime("browser", "/execute", {
+      execution_id: executionId,
+      capability,
+      operation: capability.slice(8),
+      payload,
+      context: { ...context, gid },
+    }, { "idempotency-key": key || executionId });
+  }
+  if (capability.startsWith("computer.")) {
+    return executeRemoteRuntime("computer-use", "/execute", {
+      execution_id: executionId,
+      capability,
+      operation: capability.slice(9),
+      payload,
+      context: { ...context, gid },
+    }, { "idempotency-key": key || executionId });
+  }
+  if (capability === "nova-life" || capability.startsWith("nova.")) {
+    return executeRemoteRuntime("nova", "/execute", {
+      execution_id: executionId,
+      capability,
+      operation: capability === "nova-life" ? "world.intent" : capability.slice(5),
+      payload,
+      context: { ...context, gid },
+    }, { "idempotency-key": key || executionId });
+  }
+  return null;
 }
 
 export function installJahorinRuntimeRoutes(api, {
   authorize,
-  supabaseRequest,
   execute,
   responseBase,
 }) {
+  api.get("/runtime/manifest", (_req, res) => {
+    return res.json(responseBase({
+      super_app: superAppManifest(),
+      integrations: integrationReadiness(),
+      contract: {
+        execution_create: "POST /api/runtime/executions",
+        execution_read: "GET /api/runtime/executions/:id",
+        execution_cancel: "POST /api/runtime/executions/:id/cancel",
+        execution_events: "GET /api/runtime/executions/:id/events",
+      },
+    }));
+  });
+
+  api.get("/runtime/readiness", async (_req, res) => {
+    const integrations = integrationReadiness();
+    const neon = await executionStoreHealth();
+    return res.status(neon ? 200 : 503).json(responseBase({
+      ok: neon,
+      runtimes: ["thoth", "jahorin", "trismegistus", "mercury"],
+      persistence: { provider: "neon-postgres", ready: neon },
+      integrations,
+      degraded: [
+        ...(!neon ? ["neon"] : []),
+        ...Object.entries(integrations).filter(([, ready]) => !ready).map(([name]) => name),
+      ],
+    }));
+  });
+
   api.post("/runtime/executions", async (req, res, next) => {
-    let principal;
     try {
-      principal = await authorize(req);
+      const principal = await authorize(req);
       const gid = String(principal?.gid || "").trim();
       if (!gid) throw httpError(401, "Authenticated GID required", "AUTH_REQUIRED");
 
@@ -84,41 +130,40 @@ export function installJahorinRuntimeRoutes(api, {
       const key = idempotencyKey(req);
       const requestId = String(req.body?.request_id || req.requestId || crypto.randomUUID());
 
-      const existing = await findIdempotent({ supabaseRequest, gid, key });
-      if (existing) return res.status(200).json(responseBase({ gid, request_id: requestId, execution: existing, idempotent_replay: true }));
+      const existing = await findIdempotentExecution(gid, key);
+      if (existing) {
+        return res.status(200).json(responseBase({
+          gid,
+          request_id: requestId,
+          execution: existing,
+          idempotent_replay: true,
+        }));
+      }
 
       const executionId = crypto.randomUUID();
-      const created = await supabaseRequest("/rest/v1/jahorin_executions", {
-        method: "POST",
-        service: true,
-        prefer: "return=representation",
-        body: {
-          id: executionId,
-          gid,
-          capability,
-          intent,
-          payload: req.body?.payload || {},
-          context: req.body?.context || {},
-          request_id: requestId,
-          idempotency_key: key || null,
-          state: "accepted",
-          created_at: now(),
-          updated_at: now(),
-        },
+      const execution = await createExecution({
+        id: executionId,
+        gid,
+        capability,
+        intent,
+        payload: req.body?.payload || {},
+        context: req.body?.context || {},
+        requestId,
+        idempotencyKey: key || null,
       });
-      const execution = Array.isArray(created) ? created[0] : created;
-      await writeEvent({ supabaseRequest, gid, executionId, type: "execution.accepted", payload: { capability, intent }, requestId });
+      await appendExecutionEvent({
+        gid,
+        executionId,
+        type: "execution.accepted",
+        payload: { capability, intent },
+        requestId,
+      });
 
-      // Fire-and-track: the HTTP request only acknowledges durable acceptance.
-      void runExecution({ supabaseRequest, execute, req, gid, executionId, requestId, execution }).catch((error) => {
+      void runExecution({ execute, req, gid, executionId, requestId, execution, idempotencyKey: key }).catch((error) => {
         console.error("Jahorin execution worker failed", error);
       });
 
-      return res.status(202).json(responseBase({
-        gid,
-        request_id: requestId,
-        execution: { ...execution, state: "accepted" },
-      }));
+      return res.status(202).json(responseBase({ gid, request_id: requestId, execution }));
     } catch (error) {
       next(error);
     }
@@ -129,12 +174,10 @@ export function installJahorinRuntimeRoutes(api, {
       const principal = await authorize(req);
       const gid = String(principal?.gid || "").trim();
       if (!gid) throw httpError(401, "Authenticated GID required", "AUTH_REQUIRED");
-      const execution = await loadExecution({ supabaseRequest, gid, executionId: req.params.id });
+      const execution = await getExecution(gid, req.params.id);
       if (!execution) throw httpError(404, "Execution not found", "EXECUTION_NOT_FOUND");
       return res.json(responseBase({ gid, execution }));
-    } catch (error) {
-      next(error);
-    }
+    } catch (error) { next(error); }
   });
 
   api.post("/runtime/executions/:id/cancel", async (req, res, next) => {
@@ -142,21 +185,13 @@ export function installJahorinRuntimeRoutes(api, {
       const principal = await authorize(req);
       const gid = String(principal?.gid || "").trim();
       if (!gid) throw httpError(401, "Authenticated GID required", "AUTH_REQUIRED");
-      const execution = await loadExecution({ supabaseRequest, gid, executionId: req.params.id });
+      const execution = await getExecution(gid, req.params.id);
       if (!execution) throw httpError(404, "Execution not found", "EXECUTION_NOT_FOUND");
       if (TERMINAL_STATES.has(execution.state)) return res.json(responseBase({ execution }));
-
-      const updated = await setExecution({
-        supabaseRequest,
-        gid,
-        executionId: req.params.id,
-        patch: { state: "cancel_requested" },
-      });
-      await writeEvent({ supabaseRequest, gid, executionId: req.params.id, type: "execution.cancel_requested", payload: {}, requestId: req.requestId });
+      const updated = await updateExecution(gid, req.params.id, { state: "cancel_requested" });
+      await appendExecutionEvent({ gid, executionId: req.params.id, type: "execution.cancel_requested", payload: {}, requestId: req.requestId });
       return res.json(responseBase({ gid, execution: updated }));
-    } catch (error) {
-      next(error);
-    }
+    } catch (error) { next(error); }
   });
 
   api.get("/runtime/executions/:id/events", async (req, res, next) => {
@@ -164,62 +199,44 @@ export function installJahorinRuntimeRoutes(api, {
       const principal = await authorize(req);
       const gid = String(principal?.gid || "").trim();
       if (!gid) throw httpError(401, "Authenticated GID required", "AUTH_REQUIRED");
-      const execution = await loadExecution({ supabaseRequest, gid, executionId: req.params.id });
+      const execution = await getExecution(gid, req.params.id);
       if (!execution) throw httpError(404, "Execution not found", "EXECUTION_NOT_FOUND");
-
       res.status(200);
-      res.set({
-        "content-type": "text/event-stream; charset=utf-8",
-        "cache-control": "no-cache, no-store, must-revalidate",
-        connection: "keep-alive",
-        "x-accel-buffering": "no",
-      });
+      res.set({ "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache, no-store, must-revalidate", connection: "keep-alive", "x-accel-buffering": "no" });
       res.flushHeaders?.();
-
       let cursor = new Date(0).toISOString();
       let closed = false;
-      const send = (event) => {
-        res.write(`id: ${event.event_id}\nevent: ${event.event_type}\ndata: ${JSON.stringify(event)}\n\n`);
-      };
+      const send = (event) => res.write(`id: ${event.event_id}\nevent: ${event.event_type}\ndata: ${JSON.stringify(event)}\n\n`);
       const poll = async () => {
         if (closed) return;
-        const rows = await supabaseRequest(
-          `/rest/v1/jahorin_execution_events?execution_id=eq.${encodeURIComponent(req.params.id)}&gid=eq.${encodeURIComponent(gid)}&created_at=gt.${encodeURIComponent(cursor)}&select=*&order=created_at.asc&limit=100`,
-          { service: true },
-        );
-        for (const event of Array.isArray(rows) ? rows : []) {
-          cursor = event.created_at;
-          send(event);
-        }
-        const latest = await loadExecution({ supabaseRequest, gid, executionId: req.params.id });
-        if (latest && TERMINAL_STATES.has(latest.state)) {
-          closed = true;
-          clearInterval(timer);
-          res.end();
-        }
+        const rows = await listExecutionEvents({ gid, executionId: req.params.id, after: cursor, limit: 100 });
+        for (const event of rows) { cursor = event.created_at; send(event); }
+        const latest = await getExecution(gid, req.params.id);
+        if (latest && TERMINAL_STATES.has(latest.state)) { closed = true; clearInterval(timer); res.end(); }
       };
       const timer = setInterval(() => void poll().catch(() => {}), 1000);
-      req.on("close", () => {
-        closed = true;
-        clearInterval(timer);
-      });
+      req.on("close", () => { closed = true; clearInterval(timer); });
       await poll();
     } catch (error) {
-      if (!res.headersSent) next(error);
-      else res.end();
+      if (!res.headersSent) next(error); else res.end();
     }
   });
 }
 
-async function runExecution({ supabaseRequest, execute, req, gid, executionId, requestId, execution }) {
-  const started = await setExecution({
-    supabaseRequest, gid, executionId,
-    patch: { state: "running", started_at: now() },
-  });
-  await writeEvent({ supabaseRequest, gid, executionId, type: "execution.started", payload: {}, requestId });
+async function runExecution({ execute, req, gid, executionId, requestId, execution, idempotencyKey: key }) {
+  await updateExecution(gid, executionId, { state: "running", started_at: now() });
+  await appendExecutionEvent({ gid, executionId, type: "execution.started", payload: {}, requestId });
 
   try {
-    const result = await execute({
+    const external = await executeExternalCapability({
+      capability: execution.capability,
+      payload: execution.payload || {},
+      context: execution.context || {},
+      gid,
+      executionId,
+      idempotencyKey: key,
+    });
+    const result = external ?? await execute({
       req,
       gid,
       executionId,
@@ -230,32 +247,20 @@ async function runExecution({ supabaseRequest, execute, req, gid, executionId, r
       context: execution.context || {},
     });
 
-    const current = await loadExecution({ supabaseRequest, gid, executionId });
+    const current = await getExecution(gid, executionId);
     if (current?.state === "cancel_requested") {
-      const cancelled = await setExecution({
-        supabaseRequest, gid, executionId,
-        patch: { state: "cancelled", result: { cancelled: true }, completed_at: now() },
-      });
-      await writeEvent({ supabaseRequest, gid, executionId, type: "execution.cancelled", payload: { result: result || null }, requestId });
+      const cancelled = await updateExecution(gid, executionId, { state: "cancelled", result: { cancelled: true }, completed_at: now() });
+      await appendExecutionEvent({ gid, executionId, type: "execution.cancelled", payload: { result: result || null }, requestId });
       return cancelled;
     }
 
-    const completed = await setExecution({
-      supabaseRequest, gid, executionId,
-      patch: { state: "completed", result: result || {}, completed_at: now() },
-    });
-    await writeEvent({ supabaseRequest, gid, executionId, type: "execution.completed", payload: result || {}, requestId });
+    const completed = await updateExecution(gid, executionId, { state: "completed", result: result || {}, completed_at: now() });
+    await appendExecutionEvent({ gid, executionId, type: "execution.completed", payload: result || {}, requestId });
     return completed;
   } catch (error) {
-    const failed = await setExecution({
-      supabaseRequest, gid, executionId,
-      patch: {
-        state: "failed",
-        error: { code: error?.code || "EXECUTION_FAILED", message: error?.message || "Execution failed" },
-        completed_at: now(),
-      },
-    });
-    await writeEvent({ supabaseRequest, gid, executionId, type: "execution.failed", payload: failed?.error || {}, requestId });
+    const failure = { code: error?.code || "EXECUTION_FAILED", message: error?.message || "Execution failed" };
+    const failed = await updateExecution(gid, executionId, { state: "failed", error: failure, completed_at: now() });
+    await appendExecutionEvent({ gid, executionId, type: "execution.failed", payload: failure, requestId });
     return failed;
   }
 }

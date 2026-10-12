@@ -1,0 +1,35 @@
+name: Prove Jahorin MXR Runtime Readiness
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/prove-mxr-runtime-readiness.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prove:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Prove /api/runtime/readiness on live ARI
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL='https://ari-689058655022.us-west1.run.app/api/runtime/readiness'
+          code="$(curl -sS --connect-timeout 5 --max-time 20 -o /tmp/runtime-readiness.json -w '%{http_code}' "$URL")"
+          test "$code" = 200 || { cat /tmp/runtime-readiness.json >&2 || true; exit 1; }
+          node - <<'NODE'
+          const j=require('/tmp/runtime-readiness.json');
+          const runtimes=Array.isArray(j.runtimes) ? j.runtimes : (j.data?.runtimes || []);
+          const persistence=j.persistence || j.data?.persistence || {};
+          const expected=['thoth','jahorin','trismegistus','mercury'];
+          if (j.ok !== true && j.data?.ok !== true) throw new Error('runtime readiness is not ok');
+          for (const runtime of expected) if (!runtimes.includes(runtime)) throw new Error(`missing runtime ${runtime}`);
+          if (persistence.provider !== 'neon-postgres' || persistence.ready !== true) throw new Error(`Neon persistence not ready: ${JSON.stringify(persistence)}`);
+          console.log('PASS live /api/runtime/readiness');
+          console.log(JSON.stringify(j));
+          NODE
