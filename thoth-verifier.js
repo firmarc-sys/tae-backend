@@ -45,17 +45,17 @@ export function verifyN8nExecution({
 
   switch (policy?.action_kind) {
     case "research":
-      push(checks, "research_evidence", hasEvidence(evidence, "research_result") || Array.isArray(body?.result?.sources), "research has source/result evidence");
+      push(checks, "research_evidence", hasEvidence(evidence, "research_result") && Array.isArray(body?.result?.sources) && body.result.sources.length > 0, "research includes at least one source and research-result evidence");
       break;
     case "document":
-      push(checks, "document_evidence", hasEvidence(evidence, "document_result") || typeof body?.result?.content === "string", "document content or document evidence exists");
+      push(checks, "document_evidence", hasEvidence(evidence, "document_result") && typeof body?.result?.content === "string" && body.result.content.trim().length > 0, "document includes non-empty content and document evidence");
       break;
     case "private_code":
-      push(checks, "private_code_evidence", hasEvidence(evidence, "code_artifact") || typeof body?.result?.code === "string", "private code artifact exists");
+      push(checks, "private_code_evidence", hasEvidence(evidence, "code_artifact") && typeof body?.result?.code === "string" && body.result.code.trim().length > 0, "private-code workflow includes a non-empty artifact and code evidence");
       push(checks, "no_deploy_claim", body?.result?.deployed !== true, "private-code workflow did not claim deployment");
       break;
     case "memory":
-      push(checks, "memory_evidence", hasEvidence(evidence, "memory_write") || Array.isArray(body.memory_candidates), "memory workflow emitted a memory candidate or write evidence");
+      push(checks, "memory_evidence", hasEvidence(evidence, "memory_write") && Array.isArray(body.memory_candidates) && body.memory_candidates.some((candidate) => candidate?.persist === true && String(candidate?.content || "").trim().length > 0), "memory workflow emitted a non-empty persistent candidate and memory evidence");
       break;
     case "email":
       push(checks, "email_evidence", hasEvidence(evidence, "email_sent") || Boolean(body?.result?.message_id), "email provider returned a message identifier");
