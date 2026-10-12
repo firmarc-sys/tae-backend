@@ -5,6 +5,8 @@ import { calculateBirthNumerology } from './numerology.js';
 const SIGNS=['Aries','Taurus','Gemini','Cancer','Leo','Virgo','Libra','Scorpio','Sagittarius','Capricorn','Aquarius','Pisces'];
 const NAKSHATRAS=['Ashwini','Bharani','Krittika','Rohini','Mrigashira','Ardra','Punarvasu','Pushya','Ashlesha','Magha','Purva Phalguni','Uttara Phalguni','Hasta','Chitra','Swati','Vishakha','Anuradha','Jyeshtha','Mula','Purva Ashadha','Uttara Ashadha','Shravana','Dhanishta','Shatabhisha','Purva Bhadrapada','Uttara Bhadrapada','Revati'];
 const BODIES={sun:Astronomy.Body.Sun,moon:Astronomy.Body.Moon,mercury:Astronomy.Body.Mercury,venus:Astronomy.Body.Venus,mars:Astronomy.Body.Mars,jupiter:Astronomy.Body.Jupiter,saturn:Astronomy.Body.Saturn};
+const PROFILE_POLICY_VERSION='local-first-v1';
+const NOTICE_VERSION='2026-10-12';
 
 const norm=(x)=>((x%360)+360)%360;
 const rad=(d)=>d*Math.PI/180;
@@ -53,6 +55,13 @@ function ascendantLongitude(date,latitude,longitude){
   return lambda;
 }
 function houseFor(sign,ascSign){ return ((SIGNS.indexOf(sign)-SIGNS.indexOf(ascSign)+12)%12)+1; }
+function ageFromBirthDate(birthDate, now=new Date()){
+  const [y,m,d]=birthDate.split('-').map(Number);
+  let age=now.getUTCFullYear()-y;
+  const month=now.getUTCMonth()+1, day=now.getUTCDate();
+  if(month<m || (month===m && day<d)) age-=1;
+  return age;
+}
 
 function offsetMinutesAt(timeZone,date){
   const parts=new Intl.DateTimeFormat('en-US',{timeZone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).formatToParts(date);
@@ -68,7 +77,7 @@ function localToUtc(dateText,timeText,timeZone){
 }
 
 async function geocode(place){
-  const q=String(place||'').trim(); if(!q) throw Object.assign(new Error('birthplace is required'),{status:400});
+  const q=String(place||'').trim(); if(!q) return null;
   const url=new URL('https://nominatim.openstreetmap.org/search'); url.searchParams.set('q',q); url.searchParams.set('format','jsonv2'); url.searchParams.set('limit','1');
   const r=await fetch(url,{headers:{'user-agent':process.env.NOMINATIM_USER_AGENT||'Jahorin-ARI/1.0 (birth-chart geocoder)'},signal:AbortSignal.timeout(8000)});
   if(!r.ok) throw Object.assign(new Error('birthplace lookup failed'),{status:502});
@@ -80,58 +89,125 @@ async function geocode(place){
 export async function ensureVedicSchema(pool){
   await pool.query(`create table if not exists public.jahorin_vedic_profiles (
     gid text primary key,
-    birth_data jsonb not null,
-    calculation jsonb not null,
-    chart jsonb not null,
+    birth_data jsonb not null default '{}'::jsonb,
+    calculation jsonb not null default '{}'::jsonb,
+    chart jsonb not null default '{}'::jsonb,
     interpretation jsonb not null default '{}'::jsonb,
     validation jsonb not null default '{}'::jsonb,
     consent boolean not null default false,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now()
   )`);
+  await pool.query(`alter table public.jahorin_vedic_profiles add column if not exists personalization jsonb not null default '{}'::jsonb`);
+  await pool.query(`alter table public.jahorin_vedic_profiles add column if not exists data_policy jsonb not null default '{}'::jsonb`);
+  await pool.query(`alter table public.jahorin_vedic_profiles add column if not exists legal_consent jsonb not null default '{}'::jsonb`);
 }
 
 export async function calculateVedicProfile(input){
   const birthDate=String(input?.birth_date||'').trim();
-  const birthTime=String(input?.birth_time||'12:00').trim();
-  const timePrecision=['exact','estimated','unknown'].includes(input?.time_precision)?input.time_precision:'estimated';
-  if(!/^\d{4}-\d{2}-\d{2}$/.test(birthDate)) throw Object.assign(new Error('birth_date must be YYYY-MM-DD'),{status:400});
-  if(!/^\d{2}:\d{2}(:\d{2})?$/.test(birthTime)) throw Object.assign(new Error('birth_time must be HH:MM'),{status:400});
-  let location;
+  const suppliedTime=String(input?.birth_time||'').trim();
+  const birthTime=suppliedTime||'12:00';
+  const timePrecision=suppliedTime ? (['exact','estimated','unknown'].includes(input?.time_precision)?input.time_precision:'estimated') : 'unknown';
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(birthDate)) throw Object.assign(new Error('birth_date must be YYYY-MM-DD'),{status:400,code:'BIRTH_DATE_REQUIRED'});
+  if(suppliedTime && !/^\d{2}:\d{2}(:\d{2})?$/.test(birthTime)) throw Object.assign(new Error('birth_time must be HH:MM'),{status:400});
+  const age=ageFromBirthDate(birthDate);
+  if(age<18) throw Object.assign(new Error('Jahorin is available only to users age 18 or older'),{status:403,code:'AGE_RESTRICTED'});
+
+  let location=null;
   if(Number.isFinite(Number(input?.latitude))&&Number.isFinite(Number(input?.longitude))){
     const latitude=Number(input.latitude),longitude=Number(input.longitude), timeZone=String(input?.time_zone||tzLookup(latitude,longitude));
     location={place:String(input?.birthplace||''),resolved_place:String(input?.birthplace||''),latitude,longitude,time_zone:timeZone};
-  } else location=await geocode(input?.birthplace);
-  const date=localToUtc(birthDate,birthTime,location.time_zone), ay=lahiriAyanamsa(date);
+  } else if(String(input?.birthplace||'').trim()) location=await geocode(input.birthplace);
+
+  const date=location ? localToUtc(birthDate,birthTime,location.time_zone) : new Date(`${birthDate}T12:00:00.000Z`);
+  const ay=lahiriAyanamsa(date);
   const planets={};
   for(const [name,body] of Object.entries(BODIES)){ const tropical=tropicalLongitude(body,date), sidereal=norm(tropical-ay); planets[name]={...longitudeMeta(sidereal),tropical_longitude:Number(tropical.toFixed(6))}; }
-  const asc=longitudeMeta(norm(ascendantLongitude(date,location.latitude,location.longitude)-ay));
-  for(const p of Object.values(planets)) p.house=houseFor(p.sign,asc.sign);
+
+  let asc=null;
+  if(location){
+    asc=longitudeMeta(norm(ascendantLongitude(date,location.latitude,location.longitude)-ay));
+    for(const p of Object.values(planets)) p.house=houseFor(p.sign,asc.sign);
+  }
+
   const meanRahu=longitudeMeta(norm(meanNodeTropical(date)-ay)), trueRahu=longitudeMeta(norm(trueNodeTropical(date)-ay));
   const meanKetu=longitudeMeta(norm(meanRahu.longitude+180)), trueKetu=longitudeMeta(norm(trueRahu.longitude+180));
-  meanRahu.house=houseFor(meanRahu.sign,asc.sign); trueRahu.house=houseFor(trueRahu.sign,asc.sign); meanKetu.house=houseFor(meanKetu.sign,asc.sign); trueKetu.house=houseFor(trueKetu.sign,asc.sign);
+  if(asc){
+    meanRahu.house=houseFor(meanRahu.sign,asc.sign); trueRahu.house=houseFor(trueRahu.sign,asc.sign); meanKetu.house=houseFor(meanKetu.sign,asc.sign); trueKetu.house=houseFor(trueKetu.sign,asc.sign);
+  }
   const numerology=calculateBirthNumerology(birthDate);
-  const chart={ascendant:asc,planets,lunar_nodes:{rahu:{mean:meanRahu,true:trueRahu},ketu:{mean:meanKetu,true:trueKetu}},house_system:'whole_sign'};
+  const chart={ascendant:asc,planets,lunar_nodes:{rahu:{mean:meanRahu,true:trueRahu},ketu:{mean:meanKetu,true:trueKetu}},house_system:asc?'whole_sign':null};
   return {
-    birth:{date:birthDate,local_time:birthTime,time_precision:timePrecision,birthplace:location.place,resolved_place:location.resolved_place,latitude:location.latitude,longitude:location.longitude,time_zone:location.time_zone,utc:date.toISOString()},
-    calculation:{zodiac:'sidereal',ayanamsa:'lahiri',ayanamsa_degrees:Number(ay.toFixed(6)),ephemeris:'astronomy-engine',node_methods:['mean','true-approx'],numerology,calculated_at:new Date().toISOString()},
+    birth:{date:birthDate,local_time:suppliedTime||null,time_precision:timePrecision,birthplace:location?.place||null,resolved_place:location?.resolved_place||null,latitude:location?.latitude??null,longitude:location?.longitude??null,time_zone:location?.time_zone||null,utc:date.toISOString(),age_18_plus:true},
+    calculation:{zodiac:'sidereal',ayanamsa:'lahiri',ayanamsa_degrees:Number(ay.toFixed(6)),ephemeris:'astronomy-engine',node_methods:['mean','true-approx'],numerology,calculated_at:new Date().toISOString(),precision:location?(suppliedTime?'full':'location_date_only'):'date_only'},
     chart,
-    interpretation:{framework:'vedic_astrology_plus_birth_date_numerology',status:'interpretive_not_diagnostic',growth_direction:`Rahu in ${trueRahu.sign}`,familiar_patterns:`Ketu in ${trueKetu.sign}`,numerology_summary:`Life Path ${numerology.life_path.number}: ${numerology.life_path.theme}.`,reflection_prompt:`Does the ${trueRahu.sign}–${trueKetu.sign} lunar-node axis and Life Path ${numerology.life_path.number} resonate with how you experience your growth and familiar patterns?`},
-    validation:{resonance:'unanswered',notes:null}
+    interpretation:{framework:'vedic_astrology_plus_birth_date_numerology',status:'interpretive_not_diagnostic_not_predictive',growth_direction:`Rahu in ${trueRahu.sign}`,familiar_patterns:`Ketu in ${trueKetu.sign}`,numerology_summary:`Life Path ${numerology.life_path.number}: ${numerology.life_path.theme}.`,reflection_prompt:`Does the ${trueRahu.sign}–${trueKetu.sign} lunar-node axis and Life Path ${numerology.life_path.number} resonate with how you experience your growth and familiar patterns?`},
+    validation:{resonance:'unanswered',notes:null},
+    personalization:{framework:'rahu_ketu',rahu_sign:trueRahu.sign,ketu_sign:trueKetu.sign,growth_direction:`Rahu in ${trueRahu.sign}`,familiar_patterns:`Ketu in ${trueKetu.sign}`,numerology_life_path:numerology.life_path.number,mode:'standard',enabled:true},
+  };
+}
+
+function publicProfile(row){
+  if(!row) return null;
+  const birthData=row.birth_data&&typeof row.birth_data==='object'?row.birth_data:{};
+  const legacySensitiveDataPresent=Boolean(birthData.date||birthData.local_time||birthData.birthplace||birthData.latitude||birthData.longitude||birthData.resolved_place);
+  return {
+    gid:row.gid,
+    personalization:row.personalization||{},
+    interpretation:row.interpretation||{},
+    validation:row.validation||{},
+    data_policy:row.data_policy||{storage:'local_first',raw_birth_data_persisted:false},
+    legal_consent:row.legal_consent||{},
+    consent:row.consent===true,
+    legacy_sensitive_data_present:legacySensitiveDataPresent,
+    created_at:row.created_at,
+    updated_at:row.updated_at,
   };
 }
 
 export async function getVedicProfile(pool,gid){
-  await ensureVedicSchema(pool); const r=await pool.query('select gid,birth_data,calculation,chart,interpretation,validation,consent,created_at,updated_at from public.jahorin_vedic_profiles where gid=$1 limit 1',[gid]); return r.rows[0]||null;
+  await ensureVedicSchema(pool);
+  const r=await pool.query('select gid,birth_data,calculation,chart,interpretation,validation,personalization,data_policy,legal_consent,consent,created_at,updated_at from public.jahorin_vedic_profiles where gid=$1 limit 1',[gid]);
+  return publicProfile(r.rows[0]||null);
 }
+
 export async function saveVedicProfile(pool,gid,input){
-  await ensureVedicSchema(pool); const profile=await calculateVedicProfile(input); const consent=input?.consent===true;
-  if(!consent) throw Object.assign(new Error('explicit consent is required to persist birth-chart data'),{status:400,code:'CONSENT_REQUIRED'});
-  const r=await pool.query(`insert into public.jahorin_vedic_profiles(gid,birth_data,calculation,chart,interpretation,validation,consent) values($1,$2::jsonb,$3::jsonb,$4::jsonb,$5::jsonb,$6::jsonb,true) on conflict(gid) do update set birth_data=excluded.birth_data,calculation=excluded.calculation,chart=excluded.chart,interpretation=excluded.interpretation,validation=excluded.validation,consent=true,updated_at=now() returning *`,[gid,JSON.stringify(profile.birth),JSON.stringify(profile.calculation),JSON.stringify(profile.chart),JSON.stringify(profile.interpretation),JSON.stringify(profile.validation)]);
-  return r.rows[0];
+  await ensureVedicSchema(pool);
+  const consent=input?.consent===true || input?.legal_consent?.accepted===true;
+  if(!consent) throw Object.assign(new Error('explicit consent is required to calculate and retain personalization'),{status:400,code:'CONSENT_REQUIRED'});
+
+  const profile=await calculateVedicProfile(input);
+  const localOnlyBirth={storage:'local_only',persisted:false,time_provided:Boolean(profile.birth.local_time),place_provided:Boolean(profile.birth.birthplace),policy_version:PROFILE_POLICY_VERSION};
+  const minimumCalculation={zodiac:profile.calculation.zodiac,ayanamsa:profile.calculation.ayanamsa,node_methods:profile.calculation.node_methods,precision:profile.calculation.precision,calculated_at:profile.calculation.calculated_at};
+  const minimumChart={lunar_nodes:{rahu:{sign:profile.personalization.rahu_sign},ketu:{sign:profile.personalization.ketu_sign}},precision:profile.calculation.precision};
+  const dataPolicy={storage:'local_first',raw_birth_data_persisted:false,backend_retention:'minimum_derived_personalization_only',policy_version:PROFILE_POLICY_VERSION,user_deletable:true};
+  const legalConsent={accepted:true,notice_version:String(input?.legal_consent?.notice_version||NOTICE_VERSION),age_18_plus:true,terms_version:input?.legal_consent?.terms_version||null,privacy_version:input?.legal_consent?.privacy_version||null,accepted_at:new Date().toISOString(),method:'self_reported_birth_date'};
+
+  const r=await pool.query(`insert into public.jahorin_vedic_profiles(gid,birth_data,calculation,chart,interpretation,validation,personalization,data_policy,legal_consent,consent)
+    values($1,$2::jsonb,$3::jsonb,$4::jsonb,$5::jsonb,$6::jsonb,$7::jsonb,$8::jsonb,$9::jsonb,true)
+    on conflict(gid) do update set birth_data=excluded.birth_data,calculation=excluded.calculation,chart=excluded.chart,interpretation=excluded.interpretation,validation=excluded.validation,personalization=excluded.personalization,data_policy=excluded.data_policy,legal_consent=excluded.legal_consent,consent=true,updated_at=now()
+    returning gid,birth_data,calculation,chart,interpretation,validation,personalization,data_policy,legal_consent,consent,created_at,updated_at`,[gid,JSON.stringify(localOnlyBirth),JSON.stringify(minimumCalculation),JSON.stringify(minimumChart),JSON.stringify(profile.interpretation),JSON.stringify(profile.validation),JSON.stringify(profile.personalization),JSON.stringify(dataPolicy),JSON.stringify(legalConsent)]);
+  return publicProfile(r.rows[0]);
 }
+
 export async function validateVedicProfile(pool,gid,input){
-  await ensureVedicSchema(pool); const resonance=['yes','partial','no','unanswered'].includes(input?.resonance)?input.resonance:'unanswered'; const notes=String(input?.notes||'').slice(0,2000)||null;
-  const r=await pool.query(`update public.jahorin_vedic_profiles set validation=jsonb_build_object('resonance',$2::text,'notes',$3::text,'validated_at',now()),updated_at=now() where gid=$1 returning *`,[gid,resonance,notes]);
-  if(!r.rows[0]) throw Object.assign(new Error('Vedic profile not found'),{status:404}); return r.rows[0];
+  await ensureVedicSchema(pool);
+  const resonance=['yes','partial','no','unanswered'].includes(input?.resonance)?input.resonance:'unanswered';
+  const notes=String(input?.notes||'').slice(0,2000)||null;
+  const mode=resonance==='no'?'disabled':resonance==='partial'?'light':'standard';
+  const enabled=resonance!=='no';
+  const r=await pool.query(`update public.jahorin_vedic_profiles
+    set validation=jsonb_build_object('resonance',$2::text,'notes',$3::text,'validated_at',now()),
+        personalization=coalesce(personalization,'{}'::jsonb)||jsonb_build_object('mode',$4::text,'enabled',$5::boolean),
+        updated_at=now()
+    where gid=$1
+    returning gid,birth_data,calculation,chart,interpretation,validation,personalization,data_policy,legal_consent,consent,created_at,updated_at`,[gid,resonance,notes,mode,enabled]);
+  if(!r.rows[0]) throw Object.assign(new Error('Vedic profile not found'),{status:404});
+  return publicProfile(r.rows[0]);
+}
+
+export async function deleteVedicProfile(pool,gid){
+  await ensureVedicSchema(pool);
+  const r=await pool.query('delete from public.jahorin_vedic_profiles where gid=$1 returning gid',[gid]);
+  return {deleted:Boolean(r.rows[0]),gid:String(gid)};
 }
