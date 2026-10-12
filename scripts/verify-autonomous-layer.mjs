@@ -67,6 +67,18 @@ const verification = verifyN8nExecution({
 assert.equal(verification.verified, true);
 assert.equal(verification.agent, "thoth");
 
+const emptyResearch = verifyN8nExecution({
+  workflowId: "jahorin-research-v1",
+  policy,
+  responseBody: {
+    workflow_id: "jahorin-research-v1",
+    status: "completed",
+    result: { sources: [] },
+    evidence: [{ kind: "research_result", source: "wepwawet" }],
+  },
+});
+assert.equal(emptyResearch.verified, false);
+
 const falseClaim = verifyN8nExecution({
   workflowId: "jahorin-email-v1",
   policy: n8nWorkflowPolicy("jahorin-email-v1"),
