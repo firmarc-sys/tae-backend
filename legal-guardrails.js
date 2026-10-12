@@ -6,7 +6,7 @@ const PERSONALIZATION_TERMS = [
 ];
 
 const SIGNIFICANT_DECISION_TERMS = [
-  'employment','hire','hiring','fire','firing','promotion','demotion','job eligibility','candidate ranking',
+  'employment','job','candidate','hire','hiring','fire','firing','promotion','demotion','job eligibility','candidate ranking',
   'housing','tenant','rental','mortgage','credit','loan','lending','insurance','coverage','premium',
   'healthcare','medical eligibility','treatment eligibility','education','admission','admissions','school eligibility',
   'benefits eligibility','government benefit','eligibility decision','approve applicant','deny applicant','screen applicant',
