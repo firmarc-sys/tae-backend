@@ -4,7 +4,8 @@ import net from 'node:net';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { Pool } from 'pg';
-import { deleteVedicProfile, getVedicProfile, saveVedicProfile, validateVedicProfile } from './vedic-profile.js';
+import { getVedicProfile, saveVedicProfile, validateVedicProfile } from './vedic-profile.js';
+import { deleteVedicProfileWithReceipt } from './deletion-receipts.js';
 
 const outerPort=Number(process.env.PORT||8080);
 const innerPort=Number(process.env.VEDIC_GATEWAY_INNER_PORT||8095);
@@ -35,7 +36,7 @@ const server=http.createServer(async(req,res)=>{
     if(req.method==='GET'){const profile=await getVedicProfile(db(),gid);return json(req,res,200,{ok:true,profile})}
     if(req.method==='POST'){const input=await body(req);const profile=await saveVedicProfile(db(),gid,input);return json(req,res,201,{ok:true,profile})}
     if(req.method==='PATCH'){const input=await body(req);const profile=await validateVedicProfile(db(),gid,input);return json(req,res,200,{ok:true,profile})}
-    if(req.method==='DELETE'){const result=await deleteVedicProfile(db(),gid);return json(req,res,200,{ok:true,...result})}
+    if(req.method==='DELETE'){const result=await deleteVedicProfileWithReceipt(db(),gid);return json(req,res,200,{ok:true,...result})}
     return json(req,res,405,{ok:false,error:'Method not allowed'});
   }catch(error){console.error('ARI Vedic gateway error',error);return json(req,res,Number(error?.status||500),{ok:false,code:error?.code||'VEDIC_PROFILE_ERROR',error:error?.message||'Vedic profile request failed'})}
 });
