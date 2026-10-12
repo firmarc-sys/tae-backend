@@ -5,6 +5,7 @@ import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import Stripe from "stripe";
 import { Pool } from "pg";
+import { executeN8nWorkflow, resolveRegisteredN8nWorkflow } from "./n8n-adapter.js";
 
 const outerPort = Number(process.env.PORT || 8080);
 const innerPort = Number(process.env.CONTROL_PLANE_INNER_PORT || 8084);
@@ -192,6 +193,50 @@ async function handleRuntime(req, res, raw, id) {
   try { body = raw.length ? JSON.parse(raw.toString("utf8")) : {}; } catch { return json(res, 400, { ok: false, code: "INVALID_JSON", error: "Invalid JSON body", request_id: id }, id); }
   const capability = canonicalCapability(body.capability || body?.payload?.capability || "");
   const operation = canonicalOperation(capability, body);
+
+  if (capability === "automation.n8n") {
+    const gid = sessionGid(req);
+    if (!gid) return json(res, 401, { ok: false, code: "AUTH_REQUIRED", error: "Authenticated GID required for n8n execution", request_id: body.request_id || id }, id);
+    if (![ "execute", "status" ].includes(operation)) {
+      return json(res, 400, { ok: false, code: "N8N_OPERATION_UNSUPPORTED", error: `Unsupported n8n operation: ${operation}`, request_id: body.request_id || id }, id);
+    }
+    const workflowId = body.workflow_id || body?.payload?.workflow_id;
+    if (operation === "status") {
+      return json(res, 501, { ok: false, code: "N8N_STATUS_NOT_IMPLEMENTED", error: "n8n status inspection requires an execution evidence provider", request_id: body.request_id || id }, id);
+    }
+    const registered = await resolveRegisteredN8nWorkflow(db, workflowId);
+    const execution = await executeN8nWorkflow({
+      gid,
+      requestId: body.request_id || id,
+      taskId: body.task_id || body?.context?.task_id || null,
+      sessionId: body.session_id || body?.context?.session_id || null,
+      workflowId: registered.workflow_id,
+      idempotencyKey: body.idempotency_key || body?.context?.idempotency_key || null,
+      input: body.input || body.payload?.input || body.payload || {},
+    });
+    await db().query(
+      `insert into public.continuity_events (gid,event_type,payload,request_id)
+       values ($1,$2,$3::jsonb,$4)`,
+      [gid, execution.verified ? "n8n_execution_verified" : "n8n_execution_completed", JSON.stringify({
+        capability,
+        operation,
+        workflow_id: execution.workflow_id,
+        task_id: body.task_id || body?.context?.task_id || null,
+        session_id: body.session_id || body?.context?.session_id || null,
+        idempotency_key: execution.idempotency_key,
+        status: execution.status,
+        verified: execution.verified,
+      }), body.request_id || id],
+    );
+    return json(res, 200, {
+      ok: true,
+      capability,
+      operation,
+      execution,
+      provider_route: { capability: "automation.n8n", operation, provider: "n8n", registry_authority: true },
+    }, id);
+  }
+
   const route = await resolveProviderRoute(capability, operation);
   if (!route) return json(res, 503, { ok: false, code: "PROVIDER_UNAVAILABLE", error: `No enabled provider route for ${capability}.${operation}`, request_id: body.request_id || id }, id);
   if (!providerAvailable(route.provider) || route.provider !== runtimeProvider) {

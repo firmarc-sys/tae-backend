@@ -1,0 +1,60 @@
+{
+  "name": "Jahorin — Realtime Guided Turn",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "jahorin/jahorin-realtime-v1",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "3ca3d29e-3e97-41ba-b52f-0e12ab671e5b",
+      "name": "Jahorin Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [0, 0],
+      "webhookId": "42309f03-2bca-4e02-bfa9-b1fcb6d0a8d1",
+      "credentials": {"httpHeaderAuth": {"name": "Jahorin TAE Webhook"}}
+    },
+    {
+      "parameters": {
+        "jsCode": "const req = $json;\nconst body = req.body ?? req;\nconst required = ['tenant_id','workflow_id','invocation_id','idempotency_key','schema_version'];\nfor (const key of required) {\n  if (!body[key]) throw new Error(`Missing ${key}`);\n}\nif (!String(body.schema_version).startsWith('2.')) throw new Error('Unsupported Jahorin n8n schema');\nreturn [{\n  json: {\n    ...body,\n    received_at: new Date().toISOString(),\n    phase: 'acting',\n    input: body.input ?? {},\n    memory_context: Array.isArray(body.memory_context) ? body.memory_context : [],\n  }\n}];"
+      },
+      "id": "81cfb68e-544b-4f25-bfaa-4f8fd1e2b8b8",
+      "name": "Normalize TAE Envelope",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [250, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json.input ?? {};\nconst intent = String(input.intent ?? input.prompt ?? input.query ?? '').trim();\nreturn [{\n  json: {\n    workflow_id: $json.workflow_id,\n    status: 'completed',\n    result: {\n      phase: 'guided',\n      intent,\n      task_id: $json.task_id ?? null,\n      next: input.next ?? null,\n      message: input.guidance ?? 'Jahorin is guiding this task.',\n    },\n    evidence: [{\n      kind: 'realtime_turn',\n      source: 'n8n',\n      at: new Date().toISOString(),\n      invocation_id: $json.invocation_id,\n    }],\n    memory_candidates: [{\n      persist: true,\n      provenance: 'task_summary',\n      kind: 'task_summary',\n      scope: 'session',\n      importance: 0.35,\n      content: intent ? `Turn intent: ${intent}` : 'Realtime Jahorin turn completed.',\n    }],\n  }\n}];"
+      },
+      "id": "a286be9b-49f1-4a5e-805e-eab634f1cf50",
+      "name": "Execute Registered Step",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 0]
+    },
+    {
+      "parameters": {"respondWith": "firstIncomingItem", "options": {}},
+      "id": "a275f130-3506-4a80-a6d1-2afe42d622fd",
+      "name": "Respond to TAE",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [750, 0]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Jahorin Webhook": {"main": [[{"node": "Normalize TAE Envelope", "type": "main", "index": 0}]]},
+    "Normalize TAE Envelope": {"main": [[{"node": "Execute Registered Step", "type": "main", "index": 0}]]},
+    "Execute Registered Step": {"main": [[{"node": "Respond to TAE", "type": "main", "index": 0}]]}
+  },
+  "active": false,
+  "settings": {"executionOrder": "v1"},
+  "versionId": "830dfdcc-9021-416c-ad6d-5678ced85ff4",
+  "meta": {"jahorin": {"workflow_id": "jahorin-realtime-v1", "action_kind": "conversation", "authority": "TAE", "completion_gate": "Thoth"}},
+  "tags": []
+}

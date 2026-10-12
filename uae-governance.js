@@ -1,3 +1,5 @@
+import { n8nWorkflowPolicy } from "./n8n-capability.js";
+
 export const UAE_GOVERNANCE_VERSION = "uae-governance-v1";
 
 export const UAE_CONSTITUTION = Object.freeze({
@@ -138,6 +140,7 @@ const CAPABILITY_JURISDICTION = Object.freeze({
   syncori: { primary: "bes", council: "action" },
   iot: { primary: "hephaestus", council: "action", delegates: ["shu", "ptah"] },
   automation: { primary: "hephaestus", council: "action" },
+  "automation.n8n": { primary: "hephaestus", council: "action" },
   deploy: { primary: "hephaestus", council: "action", delegates: ["ptah"] },
   novafin: { primary: "hapi", council: "action", delegates: ["maat"] },
 });
@@ -171,16 +174,38 @@ function operationMatches(operation, terms) {
   return terms.some((term) => value === term || value.includes(term));
 }
 
+function workflowIdFromBody(body = {}) {
+  return String(
+    body.workflow_id
+    || body?.payload?.workflow_id
+    || body?.input?.workflow_id
+    || body?.payload?.input?.workflow_id
+    || "",
+  ).trim();
+}
+
+function automationWorkflowRisk(operation, body = {}) {
+  const op = normalize(operation);
+  if (READ_ONLY_OPERATIONS.has(op)) return "low";
+  const workflowId = workflowIdFromBody(body);
+  if (!workflowId) return "high";
+  let policy = null;
+  try { policy = n8nWorkflowPolicy(workflowId); } catch { policy = null; }
+  if (!policy) return "high";
+  return ["low", "moderate", "high", "critical"].includes(policy.risk) ? policy.risk : "high";
+}
+
 export function resolveJurisdiction(capability) {
   return CAPABILITY_JURISDICTION[normalize(capability)] || null;
 }
 
-export function classifyGovernanceRisk(capability, operation) {
+export function classifyGovernanceRisk(capability, operation, body = {}) {
   const cap = normalize(capability);
   const op = normalize(operation);
   if (READ_ONLY_OPERATIONS.has(op) || op.startsWith("read.") || op.endsWith(".read")) return "low";
+  if (cap === "automation" || cap === "automation.n8n") return automationWorkflowRisk(op, body);
   if (operationMatches(op, CRITICAL_RISK_TERMS)) return "critical";
-  if (["iot", "deploy", "automation"].includes(cap) && !READ_ONLY_OPERATIONS.has(op)) return "high";
+  if (["iot", "deploy"].includes(cap) && !READ_ONLY_OPERATIONS.has(op)) return "high";
   if (cap === "code" && operationMatches(op, ["execute", "run", "deploy", "commit", "merge", "delete"])) return "high";
   if (operationMatches(op, HIGH_RISK_TERMS)) return "high";
   return "moderate";
@@ -197,6 +222,10 @@ export function hasExplicitHumanConfirmation(body = {}) {
     body?.governance?.human_confirmed,
     body?.payload?.confirmed,
     body?.payload?.user_confirmation,
+    body?.payload?.human_confirmation,
+    body?.payload?.input?.confirmed,
+    body?.payload?.input?.user_confirmation,
+    body?.payload?.input?.human_confirmation,
   ];
   return values.some((value) => value === true || normalize(value) === "confirmed");
 }
@@ -225,7 +254,7 @@ function intentId(body = {}) {
 
 export function evaluateUaeGovernance({ gid, capability, operation, body = {}, requestId = null } = {}) {
   const jurisdiction = resolveJurisdiction(capability);
-  const risk = classifyGovernanceRisk(capability, operation);
+  const risk = classifyGovernanceRisk(capability, operation, body);
   const agent = requestedAgent(body);
   const humanConfirmed = hasExplicitHumanConfirmation(body);
 
@@ -239,6 +268,7 @@ export function evaluateUaeGovernance({ gid, capability, operation, body = {}, r
     request_id: requestId || body.request_id || null,
     intent_id: intentId(body),
     gid: gid ? String(gid) : null,
+    workflow_id: workflowIdFromBody(body) || null,
   };
 
   if (!gid) {
@@ -307,6 +337,8 @@ export function publicGovernanceManifest() {
       high_risk_policy: "explicit_human_confirmation_required",
       self_authorization: "prohibited",
       provenance: "request_and_authorization_event_recorded_before_execution",
+      automation_policy: "registered_workflow_specific_risk",
+      completion_gate: "thoth_verification_required",
     },
   };
 }
