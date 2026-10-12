@@ -4,7 +4,7 @@ import net from 'node:net';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { Pool } from 'pg';
-import { getVedicProfile, saveVedicProfile, validateVedicProfile } from './vedic-profile.js';
+import { deleteVedicProfile, getVedicProfile, saveVedicProfile, validateVedicProfile } from './vedic-profile.js';
 
 const outerPort=Number(process.env.PORT||8080);
 const innerPort=Number(process.env.VEDIC_GATEWAY_INNER_PORT||8095);
@@ -19,7 +19,7 @@ function parseCookies(header=''){return Object.fromEntries(String(header).split(
 function safe(a,b){const x=Buffer.from(String(a)),y=Buffer.from(String(b));return x.length===y.length&&crypto.timingSafeEqual(x,y)}
 function sessionGid(req){if(!sessionSecret)return null;const token=parseCookies(req.headers.cookie||'').ari_session;if(!token)return null;const [gid,expRaw,sig]=token.split('.',3),exp=Number(expRaw);if(!gid||!sig||!Number.isFinite(exp)||exp<=Math.floor(Date.now()/1000))return null;const expected=crypto.createHmac('sha256',sessionSecret).update(`${gid}.${exp}`).digest('hex');return safe(sig,expected)?gid:null}
 function originFor(req){const o=String(req.headers.origin||'').trim();if(!o)return null;return allowedOrigins.has(o)?o:false}
-function headers(req){const o=originFor(req);return {'content-type':'application/json; charset=utf-8','cache-control':'no-store','strict-transport-security':'max-age=31536000; includeSubDomains','x-content-type-options':'nosniff','x-frame-options':'DENY','referrer-policy':'no-referrer',...(o?{'access-control-allow-origin':o,'access-control-allow-credentials':'true','access-control-allow-headers':'content-type,x-request-id,x-csrf-token,authorization','access-control-allow-methods':'GET,POST,PATCH,OPTIONS','vary':'Origin'}:{})}}
+function headers(req){const o=originFor(req);return {'content-type':'application/json; charset=utf-8','cache-control':'no-store','strict-transport-security':'max-age=31536000; includeSubDomains','x-content-type-options':'nosniff','x-frame-options':'DENY','referrer-policy':'no-referrer',...(o?{'access-control-allow-origin':o,'access-control-allow-credentials':'true','access-control-allow-headers':'content-type,x-request-id,x-csrf-token,authorization','access-control-allow-methods':'GET,POST,PATCH,DELETE,OPTIONS','vary':'Origin'}:{})}}
 function json(req,res,status,body){const data=Buffer.from(JSON.stringify({...body,request_id:body?.request_id||String(req.headers['x-request-id']||crypto.randomUUID())}));res.writeHead(status,{...headers(req),'content-length':String(data.length)});res.end(data)}
 async function body(req,limit=1024*1024){const chunks=[];let size=0;for await(const c of req){size+=c.length;if(size>limit)throw Object.assign(new Error('request body too large'),{status:413});chunks.push(c)}if(!chunks.length)return {};try{return JSON.parse(Buffer.concat(chunks).toString('utf8'))}catch{throw Object.assign(new Error('invalid JSON'),{status:400})}}
 function db(){if(!pool)throw Object.assign(new Error('Neon profile authority is not configured'),{status:503});return pool}
@@ -35,6 +35,7 @@ const server=http.createServer(async(req,res)=>{
     if(req.method==='GET'){const profile=await getVedicProfile(db(),gid);return json(req,res,200,{ok:true,profile})}
     if(req.method==='POST'){const input=await body(req);const profile=await saveVedicProfile(db(),gid,input);return json(req,res,201,{ok:true,profile})}
     if(req.method==='PATCH'){const input=await body(req);const profile=await validateVedicProfile(db(),gid,input);return json(req,res,200,{ok:true,profile})}
+    if(req.method==='DELETE'){const result=await deleteVedicProfile(db(),gid);return json(req,res,200,{ok:true,...result})}
     return json(req,res,405,{ok:false,error:'Method not allowed'});
   }catch(error){console.error('ARI Vedic gateway error',error);return json(req,res,Number(error?.status||500),{ok:false,code:error?.code||'VEDIC_PROFILE_ERROR',error:error?.message||'Vedic profile request failed'})}
 });
