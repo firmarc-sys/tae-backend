@@ -1,3 +1,5 @@
+import { evaluateSensitivePersonalizationGuardrail, legalGuardrailManifest } from './legal-guardrails.js';
+
 export const UAE_GOVERNANCE_VERSION = "uae-governance-v1";
 
 export const UAE_CONSTITUTION = Object.freeze({
@@ -32,6 +34,8 @@ export const UAE_CONSTITUTION = Object.freeze({
     "revoke_authority",
     "export_personal_state",
     "delete_or_quarantine_memory",
+    "delete_sensitive_personalization",
+    "local_first_sensitive_data",
     "require_confirmation",
     "choose_provider_when_supported",
     "shutdown_personal_ecosystem",
@@ -261,6 +265,19 @@ export function evaluateUaeGovernance({ gid, capability, operation, body = {}, r
     };
   }
 
+  const legalGuardrail = evaluateSensitivePersonalizationGuardrail({ capability, operation, body });
+  if (!legalGuardrail.allowed) {
+    return {
+      allowed: false,
+      reason_code: legalGuardrail.reason_code,
+      ...base,
+      confirmation_required: false,
+      jurisdiction,
+      requested_agent: agent || jurisdiction.primary,
+      legal_guardrail: legalGuardrail,
+    };
+  }
+
   const permittedAgents = [jurisdiction.primary, ...(jurisdiction.delegates || []), "jahorin", "maat"];
   if (agent && !permittedAgents.includes(agent)) {
     return {
@@ -302,10 +319,13 @@ export function publicGovernanceManifest() {
     constitution: UAE_CONSTITUTION,
     agents: UAE_AGENT_REGISTRY,
     jurisdictions: CAPABILITY_JURISDICTION,
+    legal_guardrails: legalGuardrailManifest(),
     enforcement: {
       default_policy: "deny_unknown_jurisdiction",
       high_risk_policy: "explicit_human_confirmation_required",
       self_authorization: "prohibited",
+      sensitive_personalization_consequential_decisions: "prohibited",
+      sensitive_birth_data: "local_first_minimum_backend_retention",
       provenance: "request_and_authorization_event_recorded_before_execution",
     },
   };
