@@ -45,9 +45,48 @@ function redacted(value) {
   return out;
 }
 
-async function beginInvocation({ gid, taskId, workflowId, idempotencyKey, input, policy }) {
+async function ensureAutonomyTask({ gid, taskId, sessionId, workflowId, idempotencyKey, input, policy }) {
+  if (!runtimeDbFactory || !taskId) return;
+  const intent = String(input?.intent || input?.prompt || input?.query || input?.goal || workflowId || "automation").trim().slice(0, 4000);
+  await runtimeDbFactory().query(
+    `insert into public.autonomy_tasks
+      (task_id,gid,session_id,intent,mode,workflow_id,risk,status,plan,idempotency_key,updated_at)
+     values ($1,$2,$3,$4,'guided',$5,$6,'running',$7::jsonb,$8,now())
+     on conflict (task_id) do update
+       set session_id=coalesce(excluded.session_id,public.autonomy_tasks.session_id),
+           workflow_id=excluded.workflow_id,
+           risk=excluded.risk,
+           status='running',
+           plan=public.autonomy_tasks.plan || excluded.plan,
+           updated_at=now()`,
+    [String(taskId), String(gid), sessionId ? String(sessionId) : null, intent || workflowId, workflowId, policy?.risk || "low", JSON.stringify({ agent: policy?.agent || "jahorin", action_kind: policy?.action_kind || null }), idempotencyKey],
+  );
+}
+
+async function recordTaskPhase({ gid, taskId, agent = "jahorin", phase, eventType = "phase", payload = {}, status = null }) {
+  if (!runtimeDbFactory || !taskId || !phase) return;
+  const db = runtimeDbFactory();
+  await db.query(
+    `insert into public.autonomy_task_events (task_id,gid,event_type,agent,phase,payload)
+     values ($1,$2,$3,$4,$5,$6::jsonb)`,
+    [String(taskId), String(gid), eventType, agent, phase, JSON.stringify(redacted(payload || {}))],
+  );
+  if (status) {
+    await db.query(
+      `update public.autonomy_tasks
+       set status=$2, updated_at=now(), completed_at=case when $2 in ('verified','failed','cancelled') then now() else completed_at end
+       where task_id=$1`,
+      [String(taskId), status],
+    );
+  }
+}
+
+async function beginInvocation({ gid, taskId, sessionId, workflowId, idempotencyKey, input, policy }) {
   if (!runtimeDbFactory) throw configurationError("Database context is required for durable n8n execution");
   const db = runtimeDbFactory();
+  await ensureAutonomyTask({ gid, taskId, sessionId, workflowId, idempotencyKey, input, policy });
+  await recordTaskPhase({ gid, taskId, agent: "jahorin", phase: "understanding", payload: { workflow_id: workflowId } });
+  await recordTaskPhase({ gid, taskId, agent: policy?.agent || "jahorin", phase: "planning", payload: { risk: policy?.risk || "low" } });
   const existing = await db.query(
     `select invocation_id,status,response_payload,thoth_verification,approval_id,attempts
      from public.automation_invocations
@@ -213,7 +252,7 @@ export async function executeN8nWorkflow({
   if (!policy) throw Object.assign(new Error("n8n workflow policy is undefined"), { status: 403, code: "N8N_WORKFLOW_POLICY_UNDEFINED" });
 
   const idem = String(idempotencyKey || "").trim() || crypto.randomUUID();
-  const invocation = await beginInvocation({ gid, taskId, workflowId: workflow, idempotencyKey: idem, input, policy });
+  const invocation = await beginInvocation({ gid, taskId, sessionId, workflowId: workflow, idempotencyKey: idem, input, policy });
   if (invocation.replay) {
     return {
       status: "completed",
@@ -244,6 +283,8 @@ export async function executeN8nWorkflow({
       approval,
       memoryContext,
     });
+
+    await recordTaskPhase({ gid, taskId, agent: policy.agent, phase: "acting", payload: { workflow_id: workflow } });
 
     const controller = new AbortController();
     const timeoutMs = Math.max(1000, Number(policy.timeout_ms || defaultTimeoutMs));
@@ -276,6 +317,8 @@ export async function executeN8nWorkflow({
       }
 
       if (approval?.approval_id) await markApprovalConsumed(approval.approval_id);
+      await recordTaskPhase({ gid, taskId, agent: policy.agent, phase: "observing", payload: { workflow_id: workflow } });
+      await recordTaskPhase({ gid, taskId, agent: "thoth", phase: "verifying", payload: { workflow_id: workflow }, status: "verifying" });
 
       const thoth = verifyN8nExecution({
         workflowId: workflow,
@@ -305,6 +348,7 @@ export async function executeN8nWorkflow({
           approvalId: approval?.approval_id || null,
           error,
         });
+        await recordTaskPhase({ gid, taskId, agent: "thoth", phase: "failed", eventType: "verification_failed", payload: { checks: thoth.checks }, status: "failed" });
         throw error;
       }
 
@@ -315,6 +359,8 @@ export async function executeN8nWorkflow({
         thoth,
         approvalId: approval?.approval_id || null,
       });
+
+      await recordTaskPhase({ gid, taskId, agent: "thoth", phase: "completed", eventType: "verified", payload: { attestation_hash: thoth.attestation_hash }, status: "verified" });
 
       if (runtimeDbFactory) {
         await runtimeDbFactory().query(
@@ -340,10 +386,12 @@ export async function executeN8nWorkflow({
       if (error?.name === "AbortError") {
         const timeoutError = Object.assign(new Error("n8n request timed out"), { status: 504, code: "N8N_TIMEOUT" });
         await finishInvocation({ invocationId: invocation.invocation_id, status: "failed", approvalId: approval?.approval_id || null, error: timeoutError });
+        await recordTaskPhase({ gid, taskId, agent: policy.agent, phase: "failed", eventType: "timeout", payload: { code: timeoutError.code }, status: "failed" });
         throw timeoutError;
       }
       if (error?.code !== "THOTH_VERIFICATION_FAILED") {
         await finishInvocation({ invocationId: invocation.invocation_id, status: "failed", approvalId: approval?.approval_id || null, error });
+        await recordTaskPhase({ gid, taskId, agent: policy.agent, phase: "failed", eventType: "execution_failed", payload: { code: error?.code || null, message: error?.message || String(error) }, status: "failed" }).catch(() => {});
       }
       throw error;
     } finally {
@@ -352,6 +400,7 @@ export async function executeN8nWorkflow({
   } catch (error) {
     if (error?.code === "HUMAN_CONFIRMATION_REQUIRED") {
       await finishInvocation({ invocationId: invocation.invocation_id, status: "approval_required", approvalId: null, error });
+      await recordTaskPhase({ gid, taskId, agent: "maat", phase: "approval_required", eventType: "approval_required", payload: { action_kind: policy.action_kind }, status: "approval_required" }).catch(() => {});
     }
     throw error;
   }
