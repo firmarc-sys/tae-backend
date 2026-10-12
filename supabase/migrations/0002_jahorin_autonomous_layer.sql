@@ -23,11 +23,13 @@ create table if not exists public.autonomy_tasks (
 create index if not exists autonomy_tasks_gid_created_idx on public.autonomy_tasks(gid,created_at desc);
 create index if not exists autonomy_tasks_status_idx on public.autonomy_tasks(status,updated_at desc);
 
+create sequence if not exists public.autonomy_task_event_seq;
+
 create table if not exists public.autonomy_task_events (
   event_id uuid primary key default gen_random_uuid(),
   task_id text not null references public.autonomy_tasks(task_id) on delete cascade,
   gid text not null references public.gid(gid) on delete cascade,
-  sequence integer not null,
+  sequence bigint not null default nextval('public.autonomy_task_event_seq'),
   event_type text not null,
   agent text,
   phase text,
