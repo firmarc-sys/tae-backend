@@ -1,0 +1,58 @@
+{
+  "schema_version": "1.0",
+  "authority": "TAE/UAE",
+  "frontend_direct_access": false,
+  "completion_gate": "Thoth",
+  "workflows": [
+    {
+      "id": "jahorin-realtime-v1",
+      "risk": "low",
+      "approval": false,
+      "agent": "Jahorin"
+    },
+    {
+      "id": "jahorin-research-v1",
+      "risk": "low",
+      "approval": false,
+      "agent": "Wepwawet"
+    },
+    {
+      "id": "jahorin-scribe-v1",
+      "risk": "low",
+      "approval": false,
+      "agent": "Thoth"
+    },
+    {
+      "id": "jahorin-code-private-v1",
+      "risk": "moderate",
+      "approval": false,
+      "agent": "TA"
+    },
+    {
+      "id": "jahorin-memory-v1",
+      "risk": "low",
+      "approval": false,
+      "agent": "Thoth"
+    },
+    {
+      "id": "jahorin-email-v1",
+      "risk": "high",
+      "approval": true,
+      "agent": "TA"
+    },
+    {
+      "id": "jahorin-deploy-v1",
+      "risk": "high",
+      "approval": true,
+      "agent": "TA"
+    },
+    {
+      "id": "jahorin-money-v1",
+      "risk": "critical",
+      "approval": true,
+      "agent": "TA"
+    }
+  ],
+  "production_webhook_pattern": "/webhook/jahorin/{workflow_id}",
+  "test_webhook_forbidden": true
+}
