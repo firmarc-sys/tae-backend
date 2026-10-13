@@ -9,6 +9,7 @@ __pycache__/
 .env.local
 .env.*
 !.env.example
+nova-life-state/
 dist-build/
 dist-live/
 dist/

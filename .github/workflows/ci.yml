@@ -20,6 +20,8 @@ jobs:
       - run: npm install --omit=dev
       - name: Check gateway syntax
         run: node --check server.js
+      - name: Verify Nova Life live beta
+        run: npm run verify:nova-life
       - name: Verify HeyCyan Optics policy
         run: npm run verify:heycyan
       - name: Run local ARI contract smoke

@@ -7,6 +7,8 @@ import Stripe from "stripe";
 import { VertexModelRouter, VERTEX_PROVIDER, modelClassForCapability } from "./vertex-model-router.js";
 import { installThothVoiceRoutes, thothVoiceReadiness } from "./thoth-voice.js";
 import { installJahorinRuntimeRoutes } from "./jahorin-runtime.js";
+import { installNovaLifeRoutes } from "./nova-life/routes.js";
+import { identityExperience } from "./nova-life/access.js";
 import { hasExplicitHumanConfirmation } from "./uae-governance.js";
 import {
   HEYCYAN_DEVICE_LANE,
@@ -752,6 +754,11 @@ function inferManifest(intent = "", requestedCapability = "", context = {}) {
 
 const api = express.Router();
 
+installNovaLifeRoutes(api, {
+  authorize: requireProviderAccess,
+  responseBase,
+});
+
 installJahorinRuntimeRoutes(api, {
   authorize: requireProviderAccess,
   supabaseRequest,
@@ -863,10 +870,10 @@ api.get("/ready", async (_req, res) => {
 api.get("/identity", async (req, res) => {
   const gid = sessionGid(req);
   if (gid === OWNER_GID) {
-    return res.json(responseBase({ authenticated: true, identity_scope: "prime", clearance: OWNER_MODE, tier: "owner", entitlements: ["*"] }));
+    return res.json(responseBase({ authenticated: true, identity_scope: "prime", clearance: OWNER_MODE, tier: "owner", entitlements: ["*"], nova_life: identityExperience({ kind: "owner", gid, tier: "owner", entitlements: ["*"] }) }));
   }
   if (gid) {
-    return res.json(responseBase({ gid, mode: "consumer", authenticated: true, identity_scope: "consumer", clearance: "member", tier: "free", entitlements: TIER_CONFIG.free.entitlements }));
+    return res.json(responseBase({ gid, mode: "consumer", authenticated: true, identity_scope: "consumer", clearance: "member", tier: "free", entitlements: TIER_CONFIG.free.entitlements, nova_life: identityExperience({ kind: "guest", gid, tier: "free", entitlements: TIER_CONFIG.free.entitlements }) }));
   }
 
   const token = bearerToken(req);
@@ -892,7 +899,7 @@ api.get("/identity", async (req, res) => {
     }
   }
 
-  return res.json(responseBase({ authenticated: false, identity_scope: "display", clearance: "public", tier: "free", entitlements: TIER_CONFIG.free.entitlements }));
+  return res.json(responseBase({ authenticated: false, identity_scope: "display", clearance: "public", tier: "free", entitlements: TIER_CONFIG.free.entitlements, nova_life: identityExperience(null) }));
 });
 
 api.post("/identity", async (req, res) => {

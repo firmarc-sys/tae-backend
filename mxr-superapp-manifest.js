@@ -29,7 +29,8 @@ export const CAPABILITY_WORLDS = Object.freeze([
   { id: 'ptah', runtime: 'jahorin', route: '/api/runtime', capability: 'code' },
   { id: 'horus', runtime: 'jahorin', route: '/api/runtime', capability: 'optics' },
   { id: 'hathor', runtime: 'jahorin', route: '/api/runtime', capability: 'syncori' },
-  { id: 'nova-life', runtime: 'jahorin', route: '/api/runtime', capability: 'nova-life' },
+  { id: 'nova-life', runtime: 'jahorin', route: '/api/nova-life', capability: 'nova-life' },
+  { id: 'forge', runtime: 'jahorin', route: '/api/nova-life/forge', capability: 'forge' },
 ]);
 
 export const LIVE_AUTHORITIES = Object.freeze({
