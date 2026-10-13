@@ -112,6 +112,12 @@ Session behavior:
 
 `.github/workflows/ari-live-deploy-watch.yml` validates the actual Cloud Run hostname after repository changes. It verifies the canonical ARI route surface, real provider generation, GID security configuration, and the TAE demo seam.
 
+## Nova Life Live Beta
+
+Nova Life is the shared developmental world on the existing GID session. It is not a second login and it is not a production cutover. The implementation lives in `nova-life/` and is mounted at `/api/nova-life`. See `NOVA_LIFE_ARCHITECTURE.md` and `MIGRATION_TO_UAE.md`.
+
+Run `npm run verify:nova-life` before migrating the branch into private UAE. Do not apply `sql/2026-10-13_nova_life_live_beta.sql` to production from this mission.
+
 ## External infrastructure requirements
 
 A source commit can be correct while production remains unready if Google Cloud configuration is missing. `/api/ready` and the live deployment watch must remain truthful about these states.
