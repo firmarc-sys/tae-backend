@@ -1,0 +1,122 @@
+/**
+ * Agentic OS Design System — Foundation Tokens
+ *
+ * Canon source: J.A.I "Liquid Dock" home screen reference screenshots.
+ * These are the shared primitives every CSIOS surface (J.A.I, Vault, Gateway,
+ * NovaLife, Syncori, TAE, TheMySpace, Vulgate…) inherits from. Screen-specific
+ * accent colors override --color-accent / --color-accent-glow at the
+ * container level; everything else stays constant so surfaces read as one
+ * family instead of unrelated skins.
+ */
+
+:root {
+  /* ── Color: void / ink scale ─────────────────────────────────── */
+  --color-void: #000000;
+  --color-ink-950: #05060a;
+  --color-ink-900: #0a0610;
+  --color-ink-800: #12141c;
+  --color-ink-700: #1b1e28;
+
+  /* ── Color: accent (default = J.A.I violet, override per-surface) */
+  --color-accent: #d46bff;
+  --color-accent-strong: #eecbff;
+  --color-accent-dim: #3a0f52;
+  --color-accent-glow: rgba(212, 107, 255, 0.45);
+  --color-accent-glow-soft: rgba(212, 107, 255, 0.18);
+
+  /* ── Color: text ──────────────────────────────────────────────── */
+  --color-text-primary: rgba(255, 255, 255, 0.96);
+  --color-text-secondary: rgba(232, 220, 240, 0.75);
+  --color-text-tertiary: rgba(232, 220, 240, 0.5);
+  --color-text-disabled: rgba(232, 220, 240, 0.3);
+
+  /* ── Color: glass / chrome material ──────────────────────────── */
+  --glass-fill: rgba(255, 255, 255, 0.06);
+  --glass-fill-strong: rgba(255, 255, 255, 0.1);
+  --glass-border: rgba(255, 255, 255, 0.12);
+  --glass-border-bright: rgba(255, 255, 255, 0.28);
+  --glass-sheen: rgba(255, 255, 255, 0.32);
+  --chrome-highlight: rgba(255, 255, 255, 0.28);
+  --chrome-shadow: rgba(0, 0, 0, 0.75);
+
+  /* ── Typography ───────────────────────────────────────────────── */
+  --font-display: "Marcellus", "Iowan Old Style", serif;
+  --font-body: "Archivo", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: "Space Mono", ui-monospace, "SFMono-Regular", monospace;
+  /* legacy alias — referenced pre-existing in App.tsx */
+  --font-main: var(--font-body);
+
+  /* ── Spacing scale (4px base) ─────────────────────────────────── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* ── Radii ────────────────────────────────────────────────────── */
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-lg: 24px;
+  --radius-xl: 36px;
+  --radius-pill: 999px;
+
+  /* ── Elevation / materials ────────────────────────────────────── */
+  --shadow-glass-sm: 0 8px 24px -8px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  --shadow-glass-lg: 0 24px 64px -16px rgba(0, 0, 0, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  --shadow-liquid-dock:
+    0 30px 80px -20px rgba(0, 0, 0, 0.85),
+    0 0 0 1px rgba(255, 255, 255, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    inset 0 -2px 8px rgba(0, 0, 0, 0.6);
+  --blur-glass: 20px;
+  --blur-glass-soft: 12px;
+
+  /* ── Motion ───────────────────────────────────────────────────── */
+  --duration-fast: 0.2s;
+  --duration-base: 0.4s;
+  --duration-slow: 0.8s;
+  --duration-ambient: 5s;
+  --ease-standard: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-emphasized: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* ── Z-index scale ────────────────────────────────────────────── */
+  --z-base: 0;
+  --z-content: 10;
+  --z-chrome: 20;
+  --z-overlay: 30;
+  --z-dock: 40;
+  --z-toast: 50;
+}
+
+/* ── Reusable keyframe library ──────────────────────────────────── */
+@keyframes ds-orb-breathe {
+  0%, 100% { transform: scale(1); opacity: 0.92; }
+  50% { transform: scale(1.05); opacity: 1; }
+}
+@keyframes ds-spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes ds-spin-reverse {
+  to { transform: rotate(-360deg); }
+}
+@keyframes ds-twinkle {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 0.9; }
+}
+@keyframes ds-rise {
+  0% { opacity: 0; transform: translateY(12px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+@keyframes ds-pulse-ring {
+  0% { transform: translate(-50%, -50%) scale(0.7); opacity: 0.65; }
+  80%, 100% { transform: translate(-50%, -50%) scale(1.4); opacity: 0; }
+}
+@keyframes ds-sheet-up {
+  0% { transform: translateY(100%); }
+  100% { transform: translateY(0); }
+}
