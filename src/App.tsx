@@ -2,11 +2,11 @@ import { useEffect, useMemo, useState } from 'react'
 import { AnimatePresence } from 'framer-motion'
 import { RuntimeProvider } from './contexts/RuntimeContext'
 import { BootScreen } from './components/BootScreen'
-import { Onboarding } from './components/Onboarding'
+import { WelcomeInterview } from './components/WelcomeInterview'
+import { SpokenWelcome } from './components/SpokenWelcome'
 import { RuntimeShell } from './components/RuntimeShell'
 import { OpeningCinematic } from './components/OpeningCinematic'
 import { RuntimeVerification } from './components/RuntimeVerification'
-import { PortraitFrame } from './components/PortraitFrame'
 import type { SIOSIdentity } from './lib/identity'
 import { OWNER_IDENTITY, applyIdentityColors, isOwner } from './lib/identity'
 import { clearIdentity, loadIdentity, saveIdentity, saveSession } from './lib/storage'
@@ -17,7 +17,7 @@ import { tae } from './runtime/TAE'
 import { getAccessState, type RuntimePageId, updateSubscriberRecord } from './lib/runtimeAccess'
 import { RUNTIME_PAGES } from './lib/runtimePages'
 
-type AppPhase = 'boot' | 'onboarding' | 'runtime'
+type AppPhase = 'boot' | 'voice-welcome' | 'onboarding' | 'runtime'
 
 export default function App() {
   const [phase, setPhase] = useState<AppPhase>('boot')
@@ -118,10 +118,14 @@ export default function App() {
   return (
     <RuntimeProvider identity={identity}>
       <div className="relative h-screen w-full overflow-hidden bg-black text-white" style={{ fontFamily: 'var(--font-main)' }}>
-        <PortraitFrame>
+        <div className={phase === 'runtime'
+          ? 'mx-auto h-[100dvh] w-full max-w-[430px] overflow-hidden bg-black shadow-[0_0_0_1px_rgba(255,255,255,0.04)]'
+          : 'relative h-full w-full overflow-hidden'}>
+          <div className="relative h-full w-full overflow-hidden">
           <AnimatePresence mode="wait">
-            {phase === 'boot' && <BootScreen key="boot" onComplete={() => setPhase('onboarding')} />}
-            {phase === 'onboarding' && <Onboarding key="onboarding" onComplete={handleOnboardingComplete} />}
+            {phase === 'boot' && <BootScreen key="boot" onComplete={() => setPhase('voice-welcome')} />}
+            {phase === 'voice-welcome' && <SpokenWelcome key="voice-welcome" onComplete={() => setPhase('onboarding')} />}
+            {phase === 'onboarding' && <WelcomeInterview key="onboarding" onComplete={handleOnboardingComplete} />}
             {phase === 'runtime' && identity && (
               <RuntimeShell
                 key="runtime"
@@ -145,7 +149,8 @@ export default function App() {
               Logout
             </button>
           )}
-        </PortraitFrame>
+          </div>
+        </div>
       </div>
     </RuntimeProvider>
   )
