@@ -9,9 +9,18 @@ type VoicePhase = 'ready' | 'speaking' | 'complete' | 'text-only'
 
 const LINES = [
   'I am Jahorin.',
-  'As I speak, your space takes form.',
-  'The interface responds to intention.',
-  'Meet Jahorin. Tell me what you want to create.',
+  'Before there is a window, a menu, or a command, there is your intention.',
+  'Watch. Nine fragments of living mercury rise from still water.',
+  'They find one another and become a single presence.',
+  'The orb unfolds. Its surface becomes a viewport.',
+  'Light becomes structure. Structure becomes a place where your ideas can take form.',
+  'This is the United Agentic Ecosystem.',
+  'A connected space for searching, building, writing, creating, and exploring through one conversation.',
+  'You do not need to know which tool to open.',
+  'Tell me what you want to achieve, and we will discover the way forward together.',
+  'This interface adapts to the space around you, because it begins with you.',
+  'But before we create your world, I would like to know who you are.',
+  'Shall we begin?',
 ] as const
 
 const LAST_LINE = LINES[LINES.length - 1]
@@ -148,9 +157,10 @@ export function SpokenWelcome({ onComplete }: SpokenWelcomeProps) {
     speakNext()
   }, [revealWithoutSpeech, stopVoice])
 
-  const material = lineIndex >= 0
-  const viewport = lineIndex >= 1
-  const intent = lineIndex >= 2
+  const fragments = lineIndex >= 2
+  const material = lineIndex >= 3
+  const viewport = lineIndex >= 4
+  const intent = lineIndex >= 8
   const complete = phase === 'complete' || phase === 'text-only'
   const spokenLine = lineIndex >= 0 ? LINES[lineIndex] : ''
   const transcript = spokenLine.slice(0, revealed)
@@ -170,6 +180,38 @@ export function SpokenWelcome({ onComplete }: SpokenWelcomeProps) {
 
       <main className="relative z-10 mx-auto grid min-h-[calc(100dvh-110px)] w-full max-w-[1280px] items-center gap-5 px-6 pb-10 pt-5 sm:px-12 lg:grid-cols-[1.1fr_0.9fr] lg:gap-16">
         <div className="relative mx-auto flex h-[min(39vh,380px)] w-full max-w-[570px] items-center justify-center sm:h-[min(44vh,480px)] lg:h-[min(70vh,660px)]">
+          {/* Nine fragments visibly converge into the same mercury body when the narration names it. */}
+          <AnimatePresence>
+            {fragments && Array.from({ length: 9 }, (_, i) => {
+              const angle = (i / 9) * Math.PI * 2
+              const radiusX = 80 + (i % 3) * 32
+              const radiusY = 70 + (i % 3) * 25
+              return (
+                <motion.div
+                  key={i}
+                  initial={{
+                    x: Math.cos(angle) * radiusX,
+                    y: 120 + Math.sin(angle) * radiusY,
+                    opacity: 0,
+                    scale: 0.2,
+                  }}
+                  animate={{
+                    x: material ? 0 : Math.cos(angle) * radiusX,
+                    y: material ? 0 : Math.sin(angle) * radiusY,
+                    opacity: material ? 0 : 0.95,
+                    scale: material ? 0.1 : 1,
+                  }}
+                  exit={{ opacity: 0, scale: 0.1 }}
+                  transition={{ duration: material ? 1.5 : 1.2, ease: [0.16, 1, 0.3, 1] }}
+                  className="pointer-events-none absolute h-7 w-7 rounded-full sm:h-9 sm:w-9"
+                  style={{
+                    background: 'radial-gradient(circle at 25% 22%,white 0%,#bccdda 23%,#26384a 75%,#d5e2eb 100%)',
+                    boxShadow: '0 0 20px rgba(191,221,247,0.42),inset -3px -5px 8px #07101c',
+                  }}
+                />
+              )
+            })}
+          </AnimatePresence>
           <AnimatePresence>
             {material && (
               <motion.div
